@@ -335,6 +335,7 @@ function mapTaskFromApi(t: any): Task {
     agentName: t.agentName,
     taskPath: t.taskPath,
     error: t.error,
+    output: t.output,
     subtasks: subtasks.length ? subtasks : undefined
   }
 }
@@ -661,6 +662,18 @@ onUnmounted(() => {
 .detail-value.task-content {
   white-space: pre-wrap;
   line-height: 1.5;
+}
+
+.detail-value.output-content {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  max-height: 400px;
+  overflow-y: auto;
+  background: #f8fafc;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  font-size: 0.85rem;
 }
 
 .detail-value.error {

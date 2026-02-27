@@ -37,7 +37,10 @@
     <div class="charts-container">
       <!-- TPM 图表 - 上方 -->
       <div class="chart-card" data-type="tpm">
-        <h3>TPM 趋势 (最近20分钟)</h3>
+        <div class="chart-header">
+          <h3>TPM 趋势 (最近20分钟)</h3>
+          <span class="chart-datetime">{{ currentDateTime }}</span>
+        </div>
         <div class="chart-wrapper">
           <div class="chart-bars">
             <div 
@@ -66,7 +69,10 @@
 
       <!-- RPM 图表 - 下方 -->
       <div class="chart-card" data-type="rpm">
-        <h3>RPM 趋势 (最近20分钟)</h3>
+        <div class="chart-header">
+          <h3>RPM 趋势 (最近20分钟)</h3>
+          <span class="chart-datetime">{{ currentDateTime }}</span>
+        </div>
         <div class="chart-wrapper">
           <div class="chart-bars">
             <div 
@@ -121,13 +127,15 @@ const currentTpm = ref(0)
 const currentRpm = ref(0)
 const tpmHistory = ref<number[]>([])
 const rpmHistory = ref<number[]>([])
-const timestamps = ref<string[]>([])
+const timestamps = ref<(string | number)[]>([])
 const maxTpm = ref(100)
 const maxRpm = ref(10)
 const totalTokens = ref(0)
 const totalRequests = ref(0)
+const currentDateTime = ref('')
 
 let monitorInterval: any = null
+let dateTimeInterval: any = null
 
 // 格式化数字（带单位）
 function formatNumber(num: number): string {
@@ -139,12 +147,18 @@ function formatNumber(num: number): string {
   return num.toString()
 }
 
-// 格式化时间戳
-function formatTimestamp(time: string): string {
-  // 后端返回的是 HH:MM 格式（UTC时间）
-  const [hours, minutes] = time.split(':').map(Number)
+// 格式化时间戳（支持数字毫秒或 HH:MM 字符串）
+function formatTimestamp(time: string | number): string {
+  if (typeof time === 'number') {
+    return new Date(time).toLocaleString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    })
+  }
+  // 兼容旧格式 HH:MM（UTC）
+  const [hours, minutes] = String(time).split(':').map(Number)
   const now = new Date()
-  // 构造今天的UTC时间
   const utcDate = new Date(Date.UTC(
     now.getUTCFullYear(),
     now.getUTCMonth(),
@@ -154,8 +168,6 @@ function formatTimestamp(time: string): string {
     0,
     0
   ))
-  
-  // 使用 toLocaleString 格式化为 Asia/Shanghai 时区
   return utcDate.toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai',
     hour: '2-digit',
@@ -168,6 +180,19 @@ function formatTimestamp(time: string): string {
 function getBarHeight(value: number, max: number): number {
   if (max === 0) return 0
   return Math.max((value / max) * 100, 5) // 最小高度 5%
+}
+
+// 更新当前日期时间
+function updateDateTime() {
+  const now = new Date()
+  currentDateTime.value = now.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
 }
 
 
@@ -223,17 +248,24 @@ async function updateMetrics() {
 
 onMounted(() => {
   // 初始化
+  updateDateTime()
   updateMetrics()
   
   // 每 10 秒更新一次指标
   monitorInterval = setInterval(() => {
     updateMetrics()
   }, 10000)
+  
+  // 每秒更新时间
+  dateTimeInterval = setInterval(updateDateTime, 1000)
 })
 
 onUnmounted(() => {
   if (monitorInterval) {
     clearInterval(monitorInterval)
+  }
+  if (dateTimeInterval) {
+    clearInterval(dateTimeInterval)
   }
 })
 </script>
@@ -318,14 +350,27 @@ h2 {
   width: 100%;
 }
 
-.chart-card h3 {
-  margin: 0 0 16px 0;
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.chart-header h3 {
+  margin: 0;
   font-size: 1.125rem;
   font-weight: 600;
   color: #111827;
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.chart-datetime {
+  font-size: 0.9rem;
+  color: #6b7280;
+  font-weight: 500;
 }
 
 .chart-wrapper {

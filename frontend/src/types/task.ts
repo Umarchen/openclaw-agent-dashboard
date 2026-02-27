@@ -5,14 +5,17 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cance
 export interface Task {
   id: string
   name: string
+  task?: string // 完整任务内容（用于显示全量）
   status: TaskStatus
   progress: number // 0-100
   startTime?: number
   endTime?: number
   agentId?: string
   agentName?: string
+  taskPath?: string
   subtasks?: Task[]
   error?: string
+  output?: string // 任务成功时 Agent 的输出内容
   metadata?: Record<string, unknown>
 }
 

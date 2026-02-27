@@ -5,7 +5,6 @@
       <div class="controls">
         <button @click="refreshData">刷新</button>
         <button @click="showSettings = true">⚙️ 设置</button>
-        <span class="auto-refresh">自动刷新: {{ autoRefreshSeconds }}s</span>
         <span class="connection-status" :class="connectionState.status">
           {{ connectionLabel }}
         </span>
@@ -13,37 +12,18 @@
     </header>
 
     <main>
-      <!-- 协作流程展示区域 -->
+      <!-- 协作流程（主 Agent + 子 Agents 合并展示，含连线）-->
       <section class="collaboration-section">
-        <CollaborationFlowSection />
+        <CollaborationFlowSection
+          :main-agent="mainAgent"
+          :sub-agents="subAgents"
+          @agent-click="onAgentNodeClick"
+        />
       </section>
 
       <!-- 任务状态展示区域 -->
       <section class="task-status-section">
         <TaskStatusSection />
-      </section>
-
-      <!-- 主 Agent -->
-      <section class="main-agent">
-        <h2>主 Agent</h2>
-        <AgentCard
-          v-if="mainAgent"
-          :agent="mainAgent"
-          @click="showAgentDetail(mainAgent)"
-        />
-      </section>
-
-      <!-- 子 Agents -->
-      <section class="sub-agents">
-        <h2>子 Agents</h2>
-        <div class="agent-grid">
-          <AgentCard
-            v-for="agent in subAgents"
-            :key="agent.id"
-            :agent="agent"
-            @click="showAgentDetail(agent)"
-          />
-        </div>
       </section>
 
       <!-- 性能数据展示区域 -->
@@ -87,7 +67,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, provide } from 'vue'
-import AgentCard from './components/AgentCard.vue'
 import ApiStatusCard from './components/ApiStatusCard.vue'
 import AgentDetailPanel from './components/AgentDetailPanel.vue'
 import WorkflowView from './components/WorkflowView.vue'
@@ -135,8 +114,6 @@ const agents = ref<Agent[]>([])
 const apiStatusList = ref<ApiStatus[]>([])
 const selectedAgent = ref<Agent | null>(null)
 const showSettings = ref(false)
-const autoRefreshSeconds = ref(10)
-let refreshInterval: any = null
 
 // 连接状态
 const connectionState = ref<ConnectionState>({
@@ -185,29 +162,23 @@ function showAgentDetail(agent: Agent) {
   selectedAgent.value = agent
 }
 
-function onSettingsChanged(settings: any) {
-  if (settings.refreshInterval) {
-    autoRefreshSeconds.value = settings.refreshInterval
-    startAutoRefresh()
+function onAgentNodeClick(node: { id: string; name: string; status: string }) {
+  const agent = node.id === 'main' ? mainAgent.value : subAgents.value.find(a => a.id === node.id)
+  if (agent) {
+    showAgentDetail(agent)
+  } else {
+    // 协作流程中的 Agent 可能尚未在 /api/agents 中，用节点信息构造
+    showAgentDetail({
+      id: node.id,
+      name: node.name,
+      role: node.id === 'main' ? '主 Agent' : '子 Agent',
+      status: (node.status === 'error' ? 'down' : node.status) as 'idle' | 'working' | 'down'
+    })
   }
 }
 
-function startAutoRefresh() {
-  // 清除现有定时器
-  if (refreshInterval) {
-    clearInterval(refreshInterval)
-  }
-  
-  // 启动新定时器
-  let seconds = autoRefreshSeconds.value
-  refreshInterval = setInterval(() => {
-    seconds--
-    if (seconds <= 0) {
-      refreshData()
-      seconds = autoRefreshSeconds.value
-    }
-    autoRefreshSeconds.value = seconds
-  }, 1000)
+function onSettingsChanged(_settings: any) {
+  refreshData()
 }
 
 // 监听连接状态变化
@@ -215,34 +186,32 @@ function handleConnectionStateChange(state: ConnectionState) {
   connectionState.value = state
 }
 
+let unsubState: (() => void) | null = null
+let unsubAgents: (() => void) | null = null
+let unsubApiStatus: (() => void) | null = null
+
 onMounted(() => {
-  // 初始化数据
   refreshData()
-  startAutoRefresh()
-  
-  // 建立 WebSocket 连接
   realtimeManager.connect()
-  
-  // 监听连接状态
-  const unsubscribe = realtimeManager.onStateChange(handleConnectionStateChange)
-  
-  // 存储取消订阅函数
-  ;(window as any).__unsubscribeConnection = unsubscribe
+  unsubState = realtimeManager.onStateChange(handleConnectionStateChange)
+  unsubAgents = realtimeManager.subscribe('agents', (data: unknown) => {
+    if (Array.isArray(data)) {
+      agents.value = data as Agent[]
+      const main = (data as Agent[]).find(a => a.id === 'main')
+      mainAgent.value = main || null
+      subAgents.value = (data as Agent[]).filter(a => a.id !== 'main')
+    }
+  })
+  unsubApiStatus = realtimeManager.subscribe('api-status', (data: unknown) => {
+    if (Array.isArray(data)) apiStatusList.value = data as ApiStatus[]
+  })
 })
 
 onUnmounted(() => {
-  if (refreshInterval) {
-    clearInterval(refreshInterval)
-  }
-  
-  // 断开连接
+  unsubState?.()
+  unsubAgents?.()
+  unsubApiStatus?.()
   realtimeManager.disconnect()
-  
-  // 取消订阅
-  const unsubscribe = (window as any).__unsubscribeConnection
-  if (unsubscribe) {
-    unsubscribe()
-  }
 })
 </script>
 
@@ -312,11 +281,6 @@ button:hover {
   background: #3a8eef;
 }
 
-.auto-refresh {
-  font-size: 0.9rem;
-  opacity: 0.8;
-}
-
 .connection-status {
   font-size: 0.85rem;
   padding: 0.25rem 0.75rem;
@@ -351,19 +315,8 @@ main {
   margin-bottom: 2rem;
 }
 
-.main-agent {
-  margin-bottom: 2rem;
-}
 
-.sub-agents {
-  margin-bottom: 2rem;
-}
 
-.agent-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1rem;
-}
 
 .performance-section {
   margin-bottom: 2rem;
@@ -411,10 +364,6 @@ h2 {
   .controls {
     width: 100%;
     justify-content: space-between;
-  }
-  
-  .agent-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -1,7 +1,7 @@
 // 协作流程类型定义
 
 export type NodeStatus = 'idle' | 'working' | 'active' | 'completed' | 'error'
-export type NodeType = 'agent' | 'task' | 'tool'
+export type NodeType = 'agent' | 'task' | 'tool' | 'model'
 
 export interface CollaborationNode {
   id: string
@@ -13,7 +13,7 @@ export interface CollaborationNode {
   metadata?: Record<string, unknown>
 }
 
-export type EdgeType = 'delegates' | 'calls' | 'returns' | 'error'
+export type EdgeType = 'delegates' | 'calls' | 'returns' | 'error' | 'model'
 
 export interface CollaborationEdge {
   id: string
@@ -24,9 +24,23 @@ export interface CollaborationEdge {
   animated?: boolean
 }
 
+export interface ModelCall {
+  id: string
+  agentId: string
+  model: string
+  sessionId: string
+  trigger: string
+  tokens: number
+  timestamp: number
+  time: string
+}
+
 export interface CollaborationFlow {
   nodes: CollaborationNode[]
   edges: CollaborationEdge[]
   activePath: string[]
   lastUpdate: number
+  agentModels?: Record<string, { primary?: string; fallbacks?: string[] }>
+  models?: string[]
+  recentCalls?: ModelCall[]
 }

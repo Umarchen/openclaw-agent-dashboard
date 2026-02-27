@@ -5,7 +5,7 @@
     </div>
     <div class="info">
       <div class="name">{{ agent.name }}</div>
-      <div class="status">
+      <div class="status-pill" :class="`status-${agent.status}`">
         <span class="status-dot" :class="`status-${agent.status}`"></span>
         <span class="status-text">{{ statusText }}</span>
       </div>
@@ -14,6 +14,12 @@
       </div>
       <div v-if="agent.lastActiveFormatted" class="last-active">
         活跃: {{ agent.lastActiveFormatted }}
+      </div>
+      <div v-if="modelInfo && (modelInfo.primary || modelInfo.fallbacks?.length)" class="model-info">
+        <span class="model-primary">{{ shortModelId(modelInfo.primary || '') || '—' }}</span>
+        <span v-if="modelInfo.fallbacks?.length" class="model-fallbacks">
+          → {{ modelInfo.fallbacks.map(shortModelId).join(', ') }}
+        </span>
       </div>
     </div>
   </div>
@@ -31,6 +37,7 @@ interface Agent {
 
 const props = defineProps<{
   agent: Agent
+  modelInfo?: { primary?: string; fallbacks?: string[] }
 }>()
 
 defineEmits<{
@@ -55,6 +62,11 @@ const statusText = computed(() => {
   }
   return statusMap[props.agent.status] || '未知'
 })
+
+function shortModelId(id: string): string {
+  const parts = id.split('/')
+  return parts[parts.length - 1] || id
+}
 </script>
 
 <style scoped>
@@ -89,31 +101,52 @@ const statusText = computed(() => {
 }
 
 .name {
-  font-size: 1.2rem;
+  font-size: 1.125rem;
   font-weight: 600;
+  letter-spacing: 0.02em;
   margin-bottom: 0.5rem;
   color: #333;
 }
 
-.status {
-  display: flex;
+.status-pill {
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
   margin-bottom: 0.5rem;
 }
 
+.status-pill.status-idle {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-pill.status-working {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.status-pill.status-down {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .status-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .status-dot.status-idle {
-  background: #4ade80;
+  background: #22c55e;
 }
 
 .status-dot.status-working {
-  background: #fbbf24;
+  background: #3b82f6;
 }
 
 .status-dot.status-down {
@@ -121,8 +154,8 @@ const statusText = computed(() => {
 }
 
 .status-text {
-  font-size: 0.9rem;
-  color: #666;
+  font-size: inherit;
+  color: inherit;
 }
 
 .task {
@@ -134,5 +167,22 @@ const statusText = computed(() => {
 .last-active {
   font-size: 0.85rem;
   color: #999;
+}
+
+.model-info {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-top: 0.35rem;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
+}
+
+.model-primary {
+  font-weight: 500;
+  color: #475569;
+}
+
+.model-fallbacks {
+  margin-left: 0.25rem;
+  color: #94a3b8;
 }
 </style>

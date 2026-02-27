@@ -22,19 +22,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 前端静态文件
-frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
-if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
-
-# 导入路由
+# 导入路由（必须在 StaticFiles 之前注册，否则 /api 会被静态服务拦截）
 import sys
-from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from api import agents, subagents, workflow, api_status, websocket, performance, collaboration
 
-# 注册路由
+# 注册 API 路由
 app.include_router(agents.router, prefix="/api", tags=["agents"])
 app.include_router(subagents.router, prefix="/api", tags=["subagents"])
 app.include_router(workflow.router, prefix="/api", tags=["workflow"])
@@ -48,3 +42,9 @@ app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
 async def health_check():
     """健康检查"""
     return {"status": "healthy"}
+
+
+# 前端静态文件（必须放在 API 路由之后，否则会拦截 /api 请求）
+frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")

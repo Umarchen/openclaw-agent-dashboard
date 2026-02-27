@@ -24,7 +24,7 @@ export interface PerformanceData {
   aggregates: PerformanceAggregates
 }
 
-export type TimeRange = '5m' | '15m' | '1h' | '6h'
+export type TimeRange = '5m' | '15m' | '20m' | '1h' | '6h'
 
 export interface PerformanceAlert {
   id: string

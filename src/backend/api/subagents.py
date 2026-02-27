@@ -11,8 +11,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 from data.subagent_reader import (
     load_subagent_runs,
     get_active_runs,
-    get_agent_runs
+    get_agent_runs,
+    get_agent_output_for_run
 )
+from data.task_history import merge_with_history
 import time
 
 router = APIRouter()
@@ -167,43 +169,117 @@ def _map_run_status(run: Dict[str, Any]) -> str:
     return 'completed'
 
 
+def _extract_task_summary(task_raw: str) -> str:
+    """从完整任务文本提取首行摘要（不截断）"""
+    if not task_raw or not task_raw.strip():
+        return 'Unknown Task'
+    lines = [ln.strip() for ln in task_raw.split('\n') if ln.strip()]
+    first = lines[0] if lines else task_raw.strip()
+    # 去除 markdown 粗体
+    if first.startswith('**') and '**' in first[2:]:
+        first = first.split('**', 2)[-1].strip()
+    return first
+
+
+def _extract_task_path(task_raw: str) -> str | None:
+    """从任务文本提取项目路径"""
+    if not task_raw:
+        return None
+    import re
+    # 匹配 **项目路径：** `path` 或 项目路径：path
+    m = re.search(r'\*\*项目路径[：:]\*\*\s*`([^`]+)`', task_raw)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r'项目路径[：:]\s*`?([^`\n]+)`?', task_raw)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _sanitize_task_display(text: str) -> str:
+    """去除任务展示中的 Markdown 符号：** 粗体、路径的 `` 反引号"""
+    if not text or not isinstance(text, str):
+        return text or ''
+    import re
+    # 去除 ** 粗体标记
+    s = re.sub(r'\*\*', '', text)
+    # 去除路径等外层的反引号：`path` -> path
+    s = re.sub(r'`([^`]+)`', r'\1', s)
+    return s
+
+
+def _format_error_message(raw: str) -> str:
+    """将原始错误信息转为更明确的用户可读描述"""
+    if not raw or not isinstance(raw, str):
+        return '未知'
+    raw = raw.strip().lower()
+    mapping = {
+        'terminated': '任务被终止（可能是超时或被用户取消）',
+        'timeout': '任务执行超时',
+        'cancelled': '任务已取消',
+        'canceled': '任务已取消',
+        'killed': '任务被终止',
+        'subagent-error': '子任务执行异常',
+        'error': '执行出错',
+    }
+    for key, desc in mapping.items():
+        if key in raw:
+            return desc
+    return raw.strip() or '未知'
+
+
+def _run_to_task(run: Dict[str, Any]) -> Dict[str, Any]:
+    """将 run 转为任务展示格式"""
+    agent_id = parse_agent_id(run.get('childSessionKey', ''))
+    outcome = run.get('outcome')
+    status = _map_run_status(run)
+    task_raw = run.get('task', 'Unknown Task')
+    task_name = _extract_task_summary(task_raw)
+    task_path = _extract_task_path(task_raw)
+    progress = 100 if run.get('endedAt') else 50
+    error_msg = None
+    if status == 'failed':
+        if isinstance(outcome, dict):
+            raw_err = outcome.get('error', outcome.get('message', outcome.get('reason', '任务失败')))
+            error_msg = _format_error_message(str(raw_err)) if raw_err else '任务失败'
+        elif isinstance(outcome, str):
+            error_msg = _format_error_message(outcome) if outcome.strip() else '任务失败'
+    task_display = task_raw if isinstance(task_raw, str) else str(task_raw)
+    task_display = _sanitize_task_display(task_display)
+    task_name = _sanitize_task_display(task_name)
+    result: Dict[str, Any] = {
+        'id': run.get('runId', ''),
+        'name': task_name,
+        'task': task_display,
+        'status': status,
+        'progress': progress,
+        'startTime': run.get('startedAt'),
+        'endTime': run.get('endedAt'),
+        'agentId': agent_id,
+        'agentName': _get_agent_name(agent_id),
+        'error': error_msg,
+        'childSessionKey': run.get('childSessionKey')
+    }
+    if task_path:
+        result['taskPath'] = task_path
+    # 任务成功时，从 session 提取 Agent 输出
+    if status == 'completed':
+        child_key = run.get('childSessionKey', '')
+        if child_key:
+            output = get_agent_output_for_run(child_key)
+            if output:
+                result['output'] = output
+    return result
+
+
 @router.get("/tasks")
 async def get_tasks():
-    """获取任务列表 - 符合 PRD 任务状态展示格式 (待分配/分配中/执行中/已完成/失败)"""
+    """获取任务列表 - 合并 runs.json 与持久化历史，确保已完成任务不丢失"""
     try:
         all_runs = load_subagent_runs()
         all_runs.sort(key=lambda x: x.get('startedAt', 0), reverse=True)
-        recent_runs = all_runs[:50]
 
-        tasks = []
-        for run in recent_runs:
-            agent_id = parse_agent_id(run.get('childSessionKey', ''))
-            outcome = run.get('outcome')
-
-            status = _map_run_status(run)
-            task_name = run.get('task', 'Unknown Task')
-            if len(task_name) > 100:
-                task_name = task_name[:100] + '...'
-
-            # 进度：运行中默认 50%，已完成 100%
-            progress = 100 if run.get('endedAt') else 50
-
-            error_msg = None
-            if isinstance(outcome, dict) and outcome.get('status') in ('error', 'failed'):
-                error_msg = outcome.get('error', outcome.get('message', '任务失败'))
-
-            tasks.append({
-                'id': run.get('runId', ''),
-                'name': task_name,
-                'status': status,
-                'progress': progress,
-                'startTime': run.get('startedAt'),
-                'endTime': run.get('endedAt'),
-                'agentId': agent_id,
-                'agentName': _get_agent_name(agent_id),
-                'error': error_msg
-            })
-
+        tasks = merge_with_history(all_runs, _run_to_task)
         return {'tasks': tasks}
     except Exception as e:
         print(f"Error in get_tasks: {e}")

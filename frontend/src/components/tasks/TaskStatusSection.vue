@@ -48,52 +48,82 @@
     </div>
 
     <div v-else class="task-list-container" ref="containerRef">
-      <div class="task-list" :style="{ height: `${totalHeight}px` }">
+      <div class="task-list">
         <div
-          v-for="item in visibleItems"
-          :key="filteredTasks[item.index].id"
+          v-for="task in filteredTasks"
+          :key="task.id"
           class="task-item"
-          :style="item.style"
+          @click="selectedTask = task"
         >
-          <div class="task-header" @click="toggleExpand(filteredTasks[item.index].id)">
-            <span class="expand-icon" :class="{ expanded: expandedTasks.has(filteredTasks[item.index].id) }">
-              {{ filteredTasks[item.index].subtasks?.length ? '▶' : '' }}
-            </span>
-            <span class="task-status-icon" :class="filteredTasks[item.index].status">
-              {{ getStatusIcon(filteredTasks[item.index].status) }}
-            </span>
-            <span class="task-name">{{ filteredTasks[item.index].name }}</span>
-            <span class="task-agent" v-if="filteredTasks[item.index].agentName">
-              {{ filteredTasks[item.index].agentName }}
-            </span>
-            <span class="task-time" v-if="filteredTasks[item.index].startTime">
-              {{ formatDuration(filteredTasks[item.index]) }}
-            </span>
+          <span class="task-status-icon" :class="task.status">
+            {{ getStatusIcon(task.status) }}
+          </span>
+          <div class="task-main">
+            <div class="task-name-short">{{ getShortTaskName(task) }}</div>
           </div>
-          
-          <div class="task-progress" v-if="filteredTasks[item.index].status === 'running'">
-            <div class="progress-bar">
-              <div
-                class="progress-fill"
-                :style="{ width: `${filteredTasks[item.index].progress}%` }"
-              ></div>
-            </div>
-            <span class="progress-text">{{ filteredTasks[item.index].progress }}%</span>
-          </div>
+          <span class="task-agent" v-if="task.agentName">{{ task.agentName }}</span>
+          <span class="task-time" v-if="task.startTime">{{ formatDuration(task) }}</span>
+          <span class="task-detail-hint">详情 ›</span>
+        </div>
+      </div>
+    </div>
 
-          <div
-            v-if="expandedTasks.has(filteredTasks[item.index].id) && filteredTasks[item.index].subtasks?.length"
-            class="subtasks"
-          >
-            <div
-              v-for="subtask in filteredTasks[item.index].subtasks"
-              :key="subtask.id"
-              class="subtask-item"
-            >
-              <span class="task-status-icon" :class="subtask.status">
-                {{ getStatusIcon(subtask.status) }}
-              </span>
-              <span class="task-name">{{ subtask.name }}</span>
+    <!-- 任务详情弹窗 -->
+    <div v-if="selectedTask" class="task-detail-overlay" @click.self="selectedTask = null">
+      <div class="task-detail-modal">
+        <div class="task-detail-header">
+          <h3>任务详情</h3>
+          <button class="close-btn" @click="selectedTask = null">×</button>
+        </div>
+        <div class="task-detail-body">
+          <div class="detail-row">
+            <span class="detail-label">任务</span>
+            <span class="detail-value task-content">{{ sanitizeTaskDisplay(selectedTask.task ?? selectedTask.name) }}</span>
+          </div>
+          <div v-if="selectedTask.taskPath" class="detail-row">
+            <span class="detail-label">项目路径</span>
+            <span class="detail-value">{{ sanitizeTaskDisplay(selectedTask.taskPath) }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">状态</span>
+            <span class="detail-value">
+              <span class="task-status-icon" :class="selectedTask.status">{{ getStatusIcon(selectedTask.status) }}</span>
+              {{ getStatusLabel(selectedTask.status) }}
+            </span>
+          </div>
+          <div v-if="selectedTask.agentName" class="detail-row">
+            <span class="detail-label">执行者</span>
+            <span class="detail-value">{{ selectedTask.agentName }}</span>
+          </div>
+          <div v-if="selectedTask.startTime" class="detail-row">
+            <span class="detail-label">耗时</span>
+            <span class="detail-value">{{ formatDuration(selectedTask) }}</span>
+          </div>
+          <div v-if="selectedTask.status === 'running'" class="detail-row">
+            <span class="detail-label">进度</span>
+            <div class="detail-progress">
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: `${selectedTask.progress}%` }"></div>
+              </div>
+              <span class="progress-text">{{ selectedTask.progress }}%</span>
+            </div>
+          </div>
+          <div v-if="selectedTask.status === 'failed'" class="detail-row">
+            <span class="detail-label">失败原因</span>
+            <span class="detail-value error">{{ formatErrorDisplay(selectedTask.error) }}</span>
+          </div>
+          <div v-if="selectedTask.status === 'completed' && selectedTask.output" class="detail-row">
+            <span class="detail-label">Agent 输出</span>
+            <div class="detail-value output-content">{{ sanitizeTaskDisplay(selectedTask.output) }}</div>
+          </div>
+          <div v-if="selectedTask.subtasks?.length" class="detail-row">
+            <span class="detail-label">子任务</span>
+            <div class="detail-subtasks">
+              <div v-for="st in selectedTask.subtasks" :key="st.id" class="subtask-row">
+                <span class="task-status-icon" :class="st.status">{{ getStatusIcon(st.status) }}</span>
+                <span>{{ st.name }}</span>
+                <span v-if="st.status === 'failed'" class="subtask-error-inline">{{ formatErrorDisplay(st.error) }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -104,7 +134,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRealtime, useDebounce, useVirtualScroll } from '../../composables'
+import { useRealtime, useDebounce } from '../../composables'
 import type { Task, TaskStatus as TaskStatusType } from '../../types'
 
 const { connectionState, subscribe } = useRealtime()
@@ -114,7 +144,7 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const searchQuery = ref('')
 const activeFilters = ref<TaskStatusType[]>([])
-const expandedTasks = ref<Set<string>>(new Set())
+const selectedTask = ref<Task | null>(null)
 const containerRef = ref<HTMLElement | null>(null)
 
 // 符合 PRD: 待分配/分配中/执行中/已完成/失败
@@ -162,13 +192,6 @@ const summary = computed(() => ({
   cancelled: tasks.value.filter(t => t.status === 'cancelled').length
 }))
 
-// 虚拟滚动
-const totalCount = computed(() => filteredTasks.value.length)
-const { visibleItems, totalHeight } = useVirtualScroll(containerRef, totalCount, {
-  itemHeight: 60,
-  bufferSize: 5
-})
-
 // 符合 PRD 状态图标
 function getStatusIcon(status: TaskStatusType): string {
   const icons: Record<TaskStatusType, string> = {
@@ -183,6 +206,30 @@ function getStatusIcon(status: TaskStatusType): string {
 
 function getStatusCount(status: string): number {
   return tasks.value.filter(t => t.status === status).length
+}
+
+function formatErrorDisplay(raw: string | undefined): string {
+  if (!raw || !raw.trim()) return '未知'
+  const lower = raw.trim().toLowerCase()
+  const mapping: Record<string, string> = {
+    'terminated': '任务被终止（可能是超时或被用户取消）',
+    'timeout': '任务执行超时',
+    'cancelled': '任务已取消',
+    'canceled': '任务已取消',
+    'killed': '任务被终止',
+    'subagent-error': '子任务执行异常',
+  }
+  for (const [key, desc] of Object.entries(mapping)) {
+    if (lower.includes(key)) return desc
+  }
+  return raw.trim()
+}
+
+function sanitizeTaskDisplay(text: string | undefined): string {
+  if (!text || typeof text !== 'string') return ''
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/`([^`]+)`/g, '$1')
 }
 
 function formatDuration(task: Task): string {
@@ -206,12 +253,22 @@ function toggleFilter(status: TaskStatusType): void {
   }
 }
 
-function toggleExpand(taskId: string): void {
-  if (expandedTasks.value.has(taskId)) {
-    expandedTasks.value.delete(taskId)
-  } else {
-    expandedTasks.value.add(taskId)
+function getShortTaskName(task: Task): string {
+  const full = sanitizeTaskDisplay(task.task ?? task.name)
+  const firstLine = full.split('\n')[0].trim()
+  if (firstLine.length <= 60) return firstLine
+  return firstLine.slice(0, 60) + '…'
+}
+
+function getStatusLabel(status: string): string {
+  const map: Record<string, string> = {
+    pending: '待分配',
+    running: '执行中',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消'
   }
+  return map[status] || status
 }
 
 async function fetchData(): Promise<void> {
@@ -223,17 +280,7 @@ async function fetchData(): Promise<void> {
     if (!response.ok) throw new Error('Failed to fetch tasks')
     
     const data = await response.json()
-    tasks.value = (data.tasks || []).map((t: any) => ({
-      id: t.id,
-      name: t.name || 'Unknown Task',
-      status: mapTaskStatus(t.status),
-      progress: t.progress ?? 0,
-      startTime: t.startTime,
-      endTime: t.endTime,
-      agentId: t.agentId,
-      agentName: t.agentName,
-      error: t.error
-    }))
+    tasks.value = (data.tasks || []).map((t: any) => mapTaskFromApi(t))
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -261,20 +308,41 @@ function refreshData(): void {
   fetchData()
 }
 
+function mapTaskFromApi(t: any): Task {
+  const subtasks = (t.subtasks || []).map((s: any) => ({
+    id: s.id || s.name,
+    name: s.name || 'Unknown',
+    task: s.task,
+    status: mapTaskStatus(s.status),
+    progress: s.progress ?? 0,
+    startTime: s.startTime,
+    endTime: s.endTime,
+    agentId: s.agentId,
+    agentName: s.agentName,
+    taskPath: s.taskPath,
+    error: s.error,
+    output: s.output
+  }))
+  return {
+    id: t.id,
+    name: t.name || 'Unknown Task',
+    task: t.task,
+    status: mapTaskStatus(t.status),
+    progress: t.progress ?? 0,
+    startTime: t.startTime,
+    endTime: t.endTime,
+    agentId: t.agentId,
+    agentName: t.agentName,
+    taskPath: t.taskPath,
+    error: t.error,
+    subtasks: subtasks.length ? subtasks : undefined
+  }
+}
+
 function handleTasksUpdate(data: unknown): void {
   const taskData = data as { tasks?: any[] }
   if (taskData.tasks) {
-    tasks.value = taskData.tasks.map((t: any) => ({
-      id: t.id,
-      name: t.name || 'Unknown Task',
-      status: mapTaskStatus(t.status),
-      progress: t.progress ?? 0,
-      startTime: t.startTime,
-      endTime: t.endTime,
-      agentId: t.agentId,
-      agentName: t.agentName,
-      error: t.error
-    }))
+    tasks.value = taskData.tasks.map((t: any) => mapTaskFromApi(t))
   }
 }
 
@@ -429,7 +497,7 @@ onUnmounted(() => {
 }
 
 .task-list-container {
-  max-height: 400px;
+  max-height: 600px;
   overflow-y: auto;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
@@ -437,37 +505,27 @@ onUnmounted(() => {
 }
 
 .task-list {
-  position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .task-item {
-  position: absolute;
-  left: 0;
-  right: 0;
-  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
   border-bottom: 1px solid #f1f5f9;
   background: white;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.task-item:hover {
+  background: #f8fafc;
 }
 
 .task-item:last-child {
   border-bottom: none;
-}
-
-.task-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  cursor: pointer;
-}
-
-.expand-icon {
-  width: 16px;
-  color: #94a3b8;
-  transition: transform 0.2s;
-}
-
-.expand-icon.expanded {
-  transform: rotate(90deg);
 }
 
 .task-status-icon {
@@ -491,13 +549,24 @@ onUnmounted(() => {
   color: #9ca3af;
 }
 
-.task-name {
+.task-main {
   flex: 1;
+  min-width: 0;
+}
+
+.task-name-short {
   font-size: 0.9rem;
+  font-weight: 500;
   color: #333;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.task-detail-hint {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  flex-shrink: 0;
 }
 
 .task-agent {
@@ -513,15 +582,102 @@ onUnmounted(() => {
   color: #94a3b8;
 }
 
-.task-progress {
+/* 详情弹窗 */
+.task-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.task-detail-modal {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  max-width: 560px;
+  width: 90%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.task-detail-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #333;
+}
+
+.task-detail-header .close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #6b7280;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+
+.task-detail-header .close-btn:hover {
+  color: #333;
+}
+
+.task-detail-body {
+  padding: 1rem 1.25rem;
+  overflow-y: auto;
+}
+
+.detail-row {
+  margin-bottom: 1rem;
+}
+
+.detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.detail-label {
+  display: block;
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-bottom: 0.25rem;
+}
+
+.detail-value {
+  font-size: 0.9rem;
+  color: #333;
+  word-break: break-word;
+}
+
+.detail-value.task-content {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.detail-value.error {
+  color: #b91c1c;
+  background: #fef2f2;
+  padding: 0.5rem;
+  border-radius: 6px;
+  display: block;
+}
+
+.detail-progress {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-top: 0.5rem;
-  padding-left: 2.5rem;
 }
 
-.progress-bar {
+.detail-progress .progress-bar {
   flex: 1;
   height: 6px;
   background: #e5e7eb;
@@ -529,37 +685,41 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.progress-fill {
+.detail-progress .progress-fill {
   height: 100%;
   background: linear-gradient(90deg, #4a9eff, #6bb9ff);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
 
-.progress-text {
-  font-size: 0.75rem;
+.detail-progress .progress-text {
+  font-size: 0.8rem;
   color: #6b7280;
   min-width: 40px;
 }
 
-.subtasks {
-  margin-top: 0.5rem;
-  padding-left: 2.5rem;
-  border-left: 2px solid #e5e7eb;
-  margin-left: 0.75rem;
+.detail-subtasks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-.subtask-item {
+.subtask-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0;
   font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  background: #f8fafc;
+  border-radius: 6px;
 }
 
-.subtask-item .task-name {
-  color: #6b7280;
+.subtask-error-inline {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: #b91c1c;
 }
+
 
 /* 响应式 */
 @media (max-width: 640px) {

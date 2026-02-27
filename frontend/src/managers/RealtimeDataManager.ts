@@ -34,7 +34,7 @@ export class RealtimeDataManager {
       httpFallback: options.httpFallback ?? true,
       reconnectMaxAttempts: options.reconnectMaxAttempts ?? 5,
       reconnectDelay: options.reconnectDelay ?? 3000,
-      pollingInterval: options.pollingInterval ?? 10000
+      pollingInterval: options.pollingInterval ?? 30000
     }
   }
 
@@ -148,21 +148,19 @@ export class RealtimeDataManager {
    */
   async fetchInitialData(): Promise<void> {
     try {
-      const [collaboration, tasks, performance] = await Promise.all([
+      const [collaboration, tasks, performance, agents, apiStatus] = await Promise.all([
         fetch('/api/collaboration').then(r => r.json()).catch(() => null),
         fetch('/api/tasks').then(r => r.json()).catch(() => null),
-        fetch('/api/performance').then(r => r.json()).catch(() => null)
+        fetch('/api/performance?range=20m').then(r => r.json()).catch(() => null),
+        fetch('/api/agents').then(r => r.json()).catch(() => null),
+        fetch('/api/api-status').then(r => r.json()).catch(() => null)
       ])
 
-      if (collaboration) {
-        this.emit('collaboration', collaboration)
-      }
-      if (tasks) {
-        this.emit('tasks', tasks)
-      }
-      if (performance) {
-        this.emit('performance', performance)
-      }
+      if (collaboration) this.emit('collaboration', collaboration)
+      if (tasks) this.emit('tasks', tasks)
+      if (performance) this.emit('performance', performance)
+      if (agents) this.emit('agents', agents)
+      if (apiStatus) this.emit('api-status', apiStatus)
     } catch (error) {
       console.error('Failed to fetch initial data:', error)
     }
@@ -247,7 +245,7 @@ export class RealtimeDataManager {
       status: 'connected',
       errorMessage: 'Using HTTP polling fallback'
     })
-    
+    this.fetchInitialData()
     this.pollingTimer = setInterval(() => {
       this.fetchInitialData()
     }, this.options.pollingInterval)

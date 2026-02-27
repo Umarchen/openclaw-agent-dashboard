@@ -41,39 +41,22 @@
         <div class="chart-wrapper">
           <div class="chart-bars">
             <div 
-              v-for="(bar, index) in tpmBars" 
+              v-for="(value, index) in tpmHistory" 
               :key="`tpm-${index}`"
-              v-memo="[bar.value, maxTpm]"
               class="chart-bar"
-              :data-value="bar.value"
+              :data-value="value"
             >
-              <!-- 数字标签（外部） - 当柱子高度 < 40% 时显示 -->
-              <div 
-                v-if="bar.labelPosition === 'outside'" 
-                class="bar-label-container"
-              >
-                <span class="bar-value outside">{{ formatNumber(bar.value) }}</span>
-              </div>
+              <!-- 数字标签 - 始终显示在柱子上方 -->
+              <span class="bar-value">{{ formatNumber(value) }}</span>
 
               <!-- 柱子本体 -->
               <div 
                 class="bar-visual"
-                :style="{ height: `${bar.height}%` }"
-              >
-                <!-- 数字标签（内部） - 当柱子高度 ≥ 40% 时显示 -->
-                <span 
-                  v-if="bar.labelPosition === 'inside'" 
-                  class="bar-value inside"
-                >
-                  {{ formatNumber(bar.value) }}
-                </span>
-              </div>
+                :style="{ height: `${getBarHeight(value, maxTpm)}%` }"
+              ></div>
 
-              <!-- 时间标签（仅部分显示） -->
-              <span
-                v-if="bar.showTime"
-                class="bar-time-label"
-              >
+              <!-- 时间标签 - 每个都显示 -->
+              <span class="bar-time-label">
                 {{ formatTimestamp(timestamps[index]) }}
               </span>
             </div>
@@ -87,39 +70,22 @@
         <div class="chart-wrapper">
           <div class="chart-bars">
             <div 
-              v-for="(bar, index) in rpmBars" 
+              v-for="(value, index) in rpmHistory" 
               :key="`rpm-${index}`"
-              v-memo="[bar.value, maxRpm]"
               class="chart-bar"
-              :data-value="bar.value"
+              :data-value="value"
             >
-              <!-- 数字标签（外部） - 当柱子高度 < 40% 时显示 -->
-              <div 
-                v-if="bar.labelPosition === 'outside'" 
-                class="bar-label-container"
-              >
-                <span class="bar-value outside">{{ formatNumber(bar.value) }}</span>
-              </div>
+              <!-- 数字标签 - 始终显示在柱子上方 -->
+              <span class="bar-value">{{ formatNumber(value) }}</span>
 
               <!-- 柱子本体 -->
               <div 
                 class="bar-visual"
-                :style="{ height: `${bar.height}%` }"
-              >
-                <!-- 数字标签（内部） - 当柱子高度 ≥ 40% 时显示 -->
-                <span 
-                  v-if="bar.labelPosition === 'inside'" 
-                  class="bar-value inside"
-                >
-                  {{ formatNumber(bar.value) }}
-                </span>
-              </div>
+                :style="{ height: `${getBarHeight(value, maxRpm)}%` }"
+              ></div>
 
-              <!-- 时间标签（仅部分显示） -->
-              <span
-                v-if="bar.showTime"
-                class="bar-time-label"
-              >
+              <!-- 时间标签 - 每个都显示 -->
+              <span class="bar-time-label">
                 {{ formatTimestamp(timestamps[index]) }}
               </span>
             </div>
@@ -204,40 +170,7 @@ function getBarHeight(value: number, max: number): number {
   return Math.max((value / max) * 100, 5) // 最小高度 5%
 }
 
-// 判断数字标签位置（内部或外部）
-function getLabelPosition(value: number, max: number): 'inside' | 'outside' {
-  if (max === 0) return 'outside'
-  const heightPercent = (value / max) * 100
-  return heightPercent >= 40 ? 'inside' : 'outside'
-}
 
-// 判断是否显示时间标签（每 5 分钟显示一次）
-function shouldShowTimeLabel(index: number): boolean {
-  // 索引 0, 5, 10, 15 显示时间标签
-  return index % 5 === 0
-}
-
-// 计算属性：TPM 柱子数据（缓存结果）
-const tpmBars = computed(() => {
-  return tpmHistory.value.map((value, index) => ({
-    value,
-    index,
-    height: getBarHeight(value, maxTpm.value),
-    labelPosition: getLabelPosition(value, maxTpm.value),
-    showTime: shouldShowTimeLabel(index)
-  }))
-})
-
-// 计算属性：RPM 柱子数据（缓存结果）
-const rpmBars = computed(() => {
-  return rpmHistory.value.map((value, index) => ({
-    value,
-    index,
-    height: getBarHeight(value, maxRpm.value),
-    labelPosition: getLabelPosition(value, maxRpm.value),
-    showTime: shouldShowTimeLabel(index)
-  }))
-})
 
 async function updateMetrics() {
   // 获取连接数
@@ -407,9 +340,10 @@ h2 {
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;  /* 柱子间距 */
-  height: 240px;  /* 图表高度 */
-  padding-bottom: 32px;  /* 为时间标签预留空间 */
+  height: 280px;  /* 图表高度 - 增加，给数字标签更多空间 */
+  padding-bottom: 40px;  /* 为时间标签预留空间 */
   position: relative;
+  padding-top: 30px;  /* 为数字标签预留顶部空间 */
 }
 
 .chart-bar {
@@ -422,25 +356,18 @@ h2 {
   position: relative;
 }
 
-/* 数字标签容器（外部） */
-.bar-label-container {
+/* 数字标签 - 始终显示在柱子上方 */
+.bar-value {
   position: absolute;
-  bottom: 100%;
+  bottom: calc(100% + 8px);  /* 柱子顶部上方 8px */
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10;
-  text-align: center;
-  min-width: 50px;  /* 确保有足够宽度显示数字 */
-}
-
-/* 数字标签（外部） */
-.bar-value.outside {
   font-size: 0.85rem;  /* 13.6px */
   font-weight: 600;
   color: #374151;
   line-height: 1.2;
-  margin-bottom: 4px;
   white-space: nowrap;
+  z-index: 10;
 }
 
 /* 柱子本体 */
@@ -473,28 +400,14 @@ h2 {
   background: #e5e7eb !important;
 }
 
-/* 数字标签（内部） */
-.bar-value.inside {
-  position: absolute;
-  top: 8px;  /* 距离柱子顶部 8px */
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 0.9rem;  /* 14.4px */
-  font-weight: 600;
-  color: #ffffff;
-  line-height: 1.2;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  white-space: nowrap;
-}
-
 /* 时间标签 */
 .bar-time-label {
   position: absolute;
-  bottom: -28px;  /* 距离柱子底部 28px */
+  bottom: -30px;  /* 距离柱子底部 30px */
   left: 50%;
   transform: translateX(-50%);
   font-size: 0.75rem;  /* 12px */
-  color: #9ca3af;
+  color: #6b7280;  /* 稍微深一点，更清晰 */
   font-weight: 500;
   white-space: nowrap;
 }

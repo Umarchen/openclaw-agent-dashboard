@@ -337,6 +337,7 @@ h2 {
   background: #f9fafb;
   border-radius: 6px;
   padding: 1.5rem;
+  overflow: visible;
 }
 
 .chart-bars {
@@ -344,6 +345,7 @@ h2 {
   align-items: flex-end;
   gap: 0.5rem;
   height: 150px;
+  overflow: visible;
 }
 
 .chart-bar {
@@ -357,13 +359,17 @@ h2 {
 
 .bar-value {
   position: absolute;
-  top: -25px;
+  top: -30px;
   left: 50%;
   transform: translateX(-50%);
   font-size: 0.7rem;
   color: #333;
   white-space: nowrap;
   font-weight: 500;
+  z-index: 10;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 3px;
 }
 
 .bar-label {

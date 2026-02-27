@@ -2,13 +2,6 @@
   <div class="performance-monitor">
     <div class="header-row">
       <h2>性能监控</h2>
-      <div class="time-selector">
-        <label>时间范围：</label>
-        <select v-model="selectedRange" @change="onRangeChange">
-          <option value="20m">20分钟</option>
-          <option value="1h">1小时</option>
-        </select>
-      </div>
     </div>
     
     <div class="metrics-grid">
@@ -41,9 +34,10 @@
       </div>
     </div>
 
-    <div class="charts-grid">
+    <div class="charts-container">
+      <!-- TPM 图表 - 上方 -->
       <div class="chart-card">
-        <h3>TPM 趋势 (最近{{ rangeLabel }})</h3>
+        <h3>TPM 趋势 (最近20分钟)</h3>
         <div class="chart-placeholder">
           <div class="chart-bars">
             <div 
@@ -52,15 +46,16 @@
               class="chart-bar"
               :style="{ height: `${getBarHeight(value, maxTpm)}%` }"
             >
-              <span class="bar-value" v-if="shouldShowLabel(index, tpmHistory.length)">{{ formatNumber(value) }}</span>
-              <span class="bar-label" v-if="shouldShowLabel(index, tpmHistory.length)">{{ formatTimestamp(timestamps[index]) }}</span>
+              <span class="bar-value">{{ formatNumber(value) }}</span>
+              <span class="bar-label">{{ formatTimestamp(timestamps[index]) }}</span>
             </div>
           </div>
         </div>
       </div>
 
+      <!-- RPM 图表 - 下方 -->
       <div class="chart-card">
-        <h3>RPM 趋势 (最近{{ rangeLabel }})</h3>
+        <h3>RPM 趋势 (最近20分钟)</h3>
         <div class="chart-placeholder">
           <div class="chart-bars">
             <div 
@@ -69,8 +64,8 @@
               class="chart-bar"
               :style="{ height: `${getBarHeight(value, maxRpm)}%` }"
             >
-              <span class="bar-value" v-if="shouldShowLabel(index, rpmHistory.length)">{{ formatNumber(value) }}</span>
-              <span class="bar-label" v-if="shouldShowLabel(index, rpmHistory.length)">{{ formatTimestamp(timestamps[index]) }}</span>
+              <span class="bar-value">{{ formatNumber(value) }}</span>
+              <span class="bar-label">{{ formatTimestamp(timestamps[index]) }}</span>
             </div>
           </div>
         </div>
@@ -78,7 +73,7 @@
     </div>
 
     <div class="stats-summary">
-      <h3>总计 (最近{{ rangeLabel }})</h3>
+      <h3>总计 (最近20分钟)</h3>
       <div class="summary-grid">
         <div class="summary-item">
           <span class="summary-label">总 Token:</span>
@@ -109,13 +104,8 @@ const maxTpm = ref(100)
 const maxRpm = ref(10)
 const totalTokens = ref(0)
 const totalRequests = ref(0)
-const selectedRange = ref('20m')
 
 let monitorInterval: any = null
-
-const rangeLabel = computed(() => {
-  return selectedRange.value === '1h' ? '1小时' : '20分钟'
-})
 
 function formatNumber(num: number): string {
   if (num >= 1000000) {
@@ -155,21 +145,6 @@ function getBarHeight(value: number, max: number): number {
   return Math.max((value / max) * 100, 5) // 最小高度 5%
 }
 
-// 判断是否显示标签（避免重叠）
-// 20分钟（≤20个数据点）：全部显示
-// 1小时（≤60个数据点）：每5个显示1个
-// 更长时间：每10个显示1个
-function shouldShowLabel(index: number, total: number): boolean {
-  if (total <= 20) return true  // 20分钟：全部显示
-  if (total <= 60) return index % 5 === 0  // 1小时：每5个显示1个
-  return index % 10 === 0  // 更多数据：每10个显示1个
-}
-
-function onRangeChange() {
-  // 时间范围改变时立即更新数据
-  updateMetrics()
-}
-
 async function updateMetrics() {
   // 获取连接数
   try {
@@ -189,9 +164,9 @@ async function updateMetrics() {
     console.error('测量 API 响应时间失败:', e)
   }
   
-  // 获取真实性能数据（带时间范围参数）
+  // 获取真实性能数据（固定为 20 分钟）
   try {
-    const res = await fetch(`/api/performance?range=${selectedRange.value}`)
+    const res = await fetch('/api/performance?range=20m')
     const data = await res.json()
     
     // 当前值
@@ -251,32 +226,6 @@ onUnmounted(() => {
   margin-bottom: 1.5rem;
 }
 
-.time-selector {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.time-selector label {
-  font-size: 0.85rem;
-  color: #666;
-}
-
-.time-selector select {
-  padding: 0.5rem 1rem;
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
-  background: white;
-  font-size: 0.85rem;
-  color: #333;
-  cursor: pointer;
-}
-
-.time-selector select:focus {
-  outline: none;
-  border-color: #4a9eff;
-}
-
 h2 {
   margin: 0;
   font-size: 1.3rem;
@@ -323,10 +272,11 @@ h2 {
   margin-top: 0.5rem;
 }
 
-.charts-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-  gap: 1.5rem;
+/* 图表容器 - 上下排列 */
+.charts-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
   margin-bottom: 2rem;
 }
 
@@ -335,6 +285,7 @@ h2 {
   border-radius: 6px;
   border: 1px solid #e5e7eb;
   padding: 1.5rem;
+  width: 100%;
 }
 
 .chart-card h3 {
@@ -346,18 +297,21 @@ h2 {
 .chart-placeholder {
   background: #f9fafb;
   border-radius: 6px;
-  padding: 1.5rem;
+  padding: 2rem 1rem;
 }
 
 .chart-bars {
   display: flex;
   align-items: flex-end;
+  justify-content: space-between;
   gap: 0.5rem;
-  height: 150px;
+  height: 180px;
+  padding-bottom: 35px; /* 为时间标签留空间 */
 }
 
 .chart-bar {
   flex: 1;
+  min-width: 30px; /* 增加最小宽度，确保能显示数字 */
   background: linear-gradient(to top, #4a9eff, #6bb9ff);
   border-radius: 4px 4px 0 0;
   position: relative;
@@ -370,15 +324,15 @@ h2 {
   top: -25px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: #333;
   white-space: nowrap;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .bar-label {
   position: absolute;
-  bottom: -25px;
+  bottom: -35px;
   left: 50%;
   transform: translateX(-50%);
   font-size: 0.65rem;

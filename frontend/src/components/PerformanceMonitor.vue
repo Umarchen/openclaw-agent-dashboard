@@ -36,36 +36,92 @@
 
     <div class="charts-container">
       <!-- TPM 图表 - 上方 -->
-      <div class="chart-card">
+      <div class="chart-card" data-type="tpm">
         <h3>TPM 趋势 (最近20分钟)</h3>
-        <div class="chart-placeholder">
+        <div class="chart-wrapper">
           <div class="chart-bars">
             <div 
-              v-for="(value, index) in tpmHistory" 
-              :key="index"
+              v-for="(bar, index) in tpmBars" 
+              :key="`tpm-${index}`"
+              v-memo="[bar.value, maxTpm]"
               class="chart-bar"
-              :style="{ height: `${getBarHeight(value, maxTpm)}%` }"
+              :data-value="bar.value"
             >
-              <span class="bar-value">{{ formatNumber(value) }}</span>
-              <span class="bar-label">{{ formatTimestamp(timestamps[index]) }}</span>
+              <!-- 数字标签（外部） - 当柱子高度 < 40% 时显示 -->
+              <div 
+                v-if="bar.labelPosition === 'outside'" 
+                class="bar-label-container"
+              >
+                <span class="bar-value outside">{{ formatNumber(bar.value) }}</span>
+              </div>
+
+              <!-- 柱子本体 -->
+              <div 
+                class="bar-visual"
+                :style="{ height: `${bar.height}%` }"
+              >
+                <!-- 数字标签（内部） - 当柱子高度 ≥ 40% 时显示 -->
+                <span 
+                  v-if="bar.labelPosition === 'inside'" 
+                  class="bar-value inside"
+                >
+                  {{ formatNumber(bar.value) }}
+                </span>
+              </div>
+
+              <!-- 时间标签（仅部分显示） -->
+              <span
+                v-if="bar.showTime"
+                class="bar-time-label"
+              >
+                {{ formatTimestamp(timestamps[index]) }}
+              </span>
             </div>
           </div>
         </div>
       </div>
 
       <!-- RPM 图表 - 下方 -->
-      <div class="chart-card">
+      <div class="chart-card" data-type="rpm">
         <h3>RPM 趋势 (最近20分钟)</h3>
-        <div class="chart-placeholder">
+        <div class="chart-wrapper">
           <div class="chart-bars">
             <div 
-              v-for="(value, index) in rpmHistory" 
-              :key="index"
+              v-for="(bar, index) in rpmBars" 
+              :key="`rpm-${index}`"
+              v-memo="[bar.value, maxRpm]"
               class="chart-bar"
-              :style="{ height: `${getBarHeight(value, maxRpm)}%` }"
+              :data-value="bar.value"
             >
-              <span class="bar-value">{{ formatNumber(value) }}</span>
-              <span class="bar-label">{{ formatTimestamp(timestamps[index]) }}</span>
+              <!-- 数字标签（外部） - 当柱子高度 < 40% 时显示 -->
+              <div 
+                v-if="bar.labelPosition === 'outside'" 
+                class="bar-label-container"
+              >
+                <span class="bar-value outside">{{ formatNumber(bar.value) }}</span>
+              </div>
+
+              <!-- 柱子本体 -->
+              <div 
+                class="bar-visual"
+                :style="{ height: `${bar.height}%` }"
+              >
+                <!-- 数字标签（内部） - 当柱子高度 ≥ 40% 时显示 -->
+                <span 
+                  v-if="bar.labelPosition === 'inside'" 
+                  class="bar-value inside"
+                >
+                  {{ formatNumber(bar.value) }}
+                </span>
+              </div>
+
+              <!-- 时间标签（仅部分显示） -->
+              <span
+                v-if="bar.showTime"
+                class="bar-time-label"
+              >
+                {{ formatTimestamp(timestamps[index]) }}
+              </span>
             </div>
           </div>
         </div>
@@ -107,6 +163,7 @@ const totalRequests = ref(0)
 
 let monitorInterval: any = null
 
+// 格式化数字（带单位）
 function formatNumber(num: number): string {
   if (num >= 1000000) {
     return (num / 1000000).toFixed(1) + 'M'
@@ -116,6 +173,7 @@ function formatNumber(num: number): string {
   return num.toString()
 }
 
+// 格式化时间戳
 function formatTimestamp(time: string): string {
   // 后端返回的是 HH:MM 格式（UTC时间）
   const [hours, minutes] = time.split(':').map(Number)
@@ -140,10 +198,46 @@ function formatTimestamp(time: string): string {
   })
 }
 
+// 计算柱子高度百分比
 function getBarHeight(value: number, max: number): number {
   if (max === 0) return 0
   return Math.max((value / max) * 100, 5) // 最小高度 5%
 }
+
+// 判断数字标签位置（内部或外部）
+function getLabelPosition(value: number, max: number): 'inside' | 'outside' {
+  if (max === 0) return 'outside'
+  const heightPercent = (value / max) * 100
+  return heightPercent >= 40 ? 'inside' : 'outside'
+}
+
+// 判断是否显示时间标签（每 5 分钟显示一次）
+function shouldShowTimeLabel(index: number): boolean {
+  // 索引 0, 5, 10, 15 显示时间标签
+  return index % 5 === 0
+}
+
+// 计算属性：TPM 柱子数据（缓存结果）
+const tpmBars = computed(() => {
+  return tpmHistory.value.map((value, index) => ({
+    value,
+    index,
+    height: getBarHeight(value, maxTpm.value),
+    labelPosition: getLabelPosition(value, maxTpm.value),
+    showTime: shouldShowTimeLabel(index)
+  }))
+})
+
+// 计算属性：RPM 柱子数据（缓存结果）
+const rpmBars = computed(() => {
+  return rpmHistory.value.map((value, index) => ({
+    value,
+    index,
+    height: getBarHeight(value, maxRpm.value),
+    labelPosition: getLabelPosition(value, maxRpm.value),
+    showTime: shouldShowTimeLabel(index)
+  }))
+})
 
 async function updateMetrics() {
   // 获取连接数
@@ -213,10 +307,12 @@ onUnmounted(() => {
 
 <style scoped>
 .performance-monitor {
-  padding: 1.5rem;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 24px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  max-width: 1600px;
+  margin: 0 auto;
 }
 
 .header-row {
@@ -229,7 +325,8 @@ onUnmounted(() => {
 h2 {
   margin: 0;
   font-size: 1.3rem;
-  color: #333;
+  font-weight: 600;
+  color: #111827;
 }
 
 .metrics-grid {
@@ -242,33 +339,33 @@ h2 {
 .metric-card {
   padding: 1.5rem;
   background: #f9fafb;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid #e5e7eb;
   text-align: center;
 }
 
 .metric-label {
   font-size: 0.85rem;
-  color: #666;
+  color: #6b7280;
   margin-bottom: 0.5rem;
 }
 
 .metric-value {
   font-size: 2rem;
   font-weight: 600;
-  color: #333;
+  color: #111827;
   margin-bottom: 0.25rem;
 }
 
 .metric-unit {
   font-size: 0.75rem;
-  color: #999;
+  color: #9ca3af;
   margin-bottom: 0.25rem;
 }
 
 .metric-desc {
   font-size: 0.7rem;
-  color: #999;
+  color: #9ca3af;
   margin-top: 0.5rem;
 }
 
@@ -281,62 +378,124 @@ h2 {
 }
 
 .chart-card {
-  background: white;
-  border-radius: 6px;
+  background: #ffffff;
+  border-radius: 12px;
   border: 1px solid #e5e7eb;
-  padding: 1.5rem;
+  padding: 20px;
   width: 100%;
 }
 
 .chart-card h3 {
-  margin: 0 0 1rem 0;
-  font-size: 1rem;
-  color: #666;
+  margin: 0 0 16px 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.chart-placeholder {
+.chart-wrapper {
   background: #f9fafb;
-  border-radius: 6px;
-  padding: 2rem 1rem;
+  border-radius: 8px;
+  padding: 24px 20px;
+  position: relative;
 }
 
 .chart-bars {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 0.5rem;
-  height: 180px;
-  padding-bottom: 35px; /* 为时间标签留空间 */
+  gap: 12px;  /* 柱子间距 */
+  height: 240px;  /* 图表高度 */
+  padding-bottom: 32px;  /* 为时间标签预留空间 */
+  position: relative;
 }
 
 .chart-bar {
   flex: 1;
-  min-width: 30px; /* 增加最小宽度，确保能显示数字 */
-  background: linear-gradient(to top, #4a9eff, #6bb9ff);
-  border-radius: 4px 4px 0 0;
+  min-width: 35px;  /* 最小宽度，确保数字可读 */
+  max-width: 60px;  /* 最大宽度，避免过宽 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   position: relative;
-  min-height: 20px;
-  transition: height 0.3s ease;
 }
 
-.bar-value {
+/* 数字标签容器（外部） */
+.bar-label-container {
   position: absolute;
-  top: -25px;
+  bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.75rem;
-  color: #333;
-  white-space: nowrap;
+  z-index: 10;
+  text-align: center;
+  min-width: 50px;  /* 确保有足够宽度显示数字 */
+}
+
+/* 数字标签（外部） */
+.bar-value.outside {
+  font-size: 0.85rem;  /* 13.6px */
   font-weight: 600;
+  color: #374151;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  white-space: nowrap;
 }
 
-.bar-label {
+/* 柱子本体 */
+.bar-visual {
+  width: 100%;
+  min-height: 4px;  /* 最小高度，确保零值也可见 */
+  border-radius: 6px 6px 0 0;
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bar-visual:hover {
+  filter: brightness(1.1);
+  transform: scaleY(1.02);
+  transform-origin: bottom;
+}
+
+/* TPM 图表柱子颜色 */
+.chart-card[data-type="tpm"] .bar-visual {
+  background: linear-gradient(to top, #3b82f6, #60a5fa);
+}
+
+/* RPM 图表柱子颜色 */
+.chart-card[data-type="rpm"] .bar-visual {
+  background: linear-gradient(to top, #10b981, #34d399);
+}
+
+/* 零值柱子 */
+.chart-bar[data-value="0"] .bar-visual {
+  background: #e5e7eb !important;
+}
+
+/* 数字标签（内部） */
+.bar-value.inside {
   position: absolute;
-  bottom: -35px;
+  top: 8px;  /* 距离柱子顶部 8px */
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.65rem;
-  color: #999;
+  font-size: 0.9rem;  /* 14.4px */
+  font-weight: 600;
+  color: #ffffff;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+}
+
+/* 时间标签 */
+.bar-time-label {
+  position: absolute;
+  bottom: -28px;  /* 距离柱子底部 28px */
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.75rem;  /* 12px */
+  color: #9ca3af;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -348,7 +507,8 @@ h2 {
 .stats-summary h3 {
   margin: 0 0 1rem 0;
   font-size: 1rem;
-  color: #666;
+  font-weight: 600;
+  color: #111827;
 }
 
 .summary-grid {
@@ -368,17 +528,30 @@ h2 {
 
 .summary-label {
   font-size: 0.85rem;
-  color: #666;
+  color: #6b7280;
 }
 
 .summary-value {
   font-size: 1.5rem;
   font-weight: 600;
-  color: #333;
+  color: #111827;
 }
 
 .summary-unit {
   font-size: 0.75rem;
-  color: #999;
+  color: #9ca3af;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .chart-bars {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  .chart-bar {
+    min-width: 40px;
+    flex: 0 0 40px;
+  }
 }
 </style>

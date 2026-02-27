@@ -52,8 +52,8 @@
               class="chart-bar"
               :style="{ height: `${getBarHeight(value, maxTpm)}%` }"
             >
-              <span class="bar-value">{{ formatNumber(value) }}</span>
-              <span class="bar-label">{{ formatTimestamp(timestamps[index]) }}</span>
+              <span class="bar-value" v-if="shouldShowLabel(index, tpmHistory.length)">{{ formatNumber(value) }}</span>
+              <span class="bar-label" v-if="shouldShowLabel(index, tpmHistory.length)">{{ formatTimestamp(timestamps[index]) }}</span>
             </div>
           </div>
         </div>
@@ -69,8 +69,8 @@
               class="chart-bar"
               :style="{ height: `${getBarHeight(value, maxRpm)}%` }"
             >
-              <span class="bar-value">{{ formatNumber(value) }}</span>
-              <span class="bar-label">{{ formatTimestamp(timestamps[index]) }}</span>
+              <span class="bar-value" v-if="shouldShowLabel(index, rpmHistory.length)">{{ formatNumber(value) }}</span>
+              <span class="bar-label" v-if="shouldShowLabel(index, rpmHistory.length)">{{ formatTimestamp(timestamps[index]) }}</span>
             </div>
           </div>
         </div>
@@ -153,6 +153,16 @@ function formatTimestamp(time: string): string {
 function getBarHeight(value: number, max: number): number {
   if (max === 0) return 0
   return Math.max((value / max) * 100, 5) // 最小高度 5%
+}
+
+// 判断是否显示标签（避免重叠）
+// 20分钟（≤20个数据点）：全部显示
+// 1小时（≤60个数据点）：每5个显示1个
+// 更长时间：每10个显示1个
+function shouldShowLabel(index: number, total: number): boolean {
+  if (total <= 20) return true  // 20分钟：全部显示
+  if (total <= 60) return index % 5 === 0  // 1小时：每5个显示1个
+  return index % 10 === 0  // 更多数据：每10个显示1个
 }
 
 function onRangeChange() {
@@ -337,7 +347,6 @@ h2 {
   background: #f9fafb;
   border-radius: 6px;
   padding: 1.5rem;
-  overflow: visible;
 }
 
 .chart-bars {
@@ -345,7 +354,6 @@ h2 {
   align-items: flex-end;
   gap: 0.5rem;
   height: 150px;
-  overflow: visible;
 }
 
 .chart-bar {
@@ -359,17 +367,13 @@ h2 {
 
 .bar-value {
   position: absolute;
-  top: -30px;
+  top: -25px;
   left: 50%;
   transform: translateX(-50%);
   font-size: 0.7rem;
   color: #333;
   white-space: nowrap;
   font-weight: 500;
-  z-index: 10;
-  padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 3px;
 }
 
 .bar-label {

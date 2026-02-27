@@ -293,10 +293,13 @@ function formatTime(timestamp: number | string | undefined): string {
 }
 
 // 判断是否显示标签（避免重叠）
+// 方案A：根据数据量间隔显示 - 少数据全显示，20个隔1个，60个隔4个
 function shouldShowLabel(index: number): boolean {
   const total = chartData.value.length
-  const step = Math.ceil(total / 10) // 显示约 10 个标签
-  return index % step === 0
+  if (total <= 10) return true // 少数据：全部显示
+  if (index === total - 1) return true // 始终显示最新数据点
+  if (total <= 20) return index % 2 === 0 // 20个：隔1个显示（每2个显示1个）
+  return index % 5 === 0 // 60个：隔4个显示（每5个显示1个）
 }
 
 function hasAlert(type: string): boolean {

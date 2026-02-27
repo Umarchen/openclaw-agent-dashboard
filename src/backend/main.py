@@ -1,0 +1,50 @@
+"""
+OpenClaw Agent Dashboard - 主入口
+"""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
+# 创建 FastAPI 应用
+app = FastAPI(
+    title="OpenClow Agent Dashboard",
+    description="多 Agent 可视化看板 API",
+    version="1.0.0"
+)
+
+# CORS 配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 前端静态文件
+frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+
+# 导入路由
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
+
+from api import agents, subagents, workflow, api_status, websocket, performance, collaboration
+
+# 注册路由
+app.include_router(agents.router, prefix="/api", tags=["agents"])
+app.include_router(subagents.router, prefix="/api", tags=["subagents"])
+app.include_router(workflow.router, prefix="/api", tags=["workflow"])
+app.include_router(api_status.router, prefix="/api", tags=["api-status"])
+app.include_router(websocket.router, tags=["websocket"])
+app.include_router(performance.router, prefix="/api", tags=["performance"])
+app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
+
+
+@app.get("/health")
+async def health_check():
+    """健康检查"""
+    return {"status": "healthy"}

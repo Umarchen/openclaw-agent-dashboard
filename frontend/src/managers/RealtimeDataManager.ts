@@ -30,11 +30,11 @@ export class RealtimeDataManager {
 
   constructor(options: RealtimeDataManagerOptions = {}) {
     this.options = {
-      wsUrl: options.wsUrl || `ws://${window.location.host}/ws/dashboard`,
+      wsUrl: options.wsUrl || `ws://${window.location.host}/ws`,
       httpFallback: options.httpFallback ?? true,
       reconnectMaxAttempts: options.reconnectMaxAttempts ?? 5,
       reconnectDelay: options.reconnectDelay ?? 3000,
-      pollingInterval: options.pollingInterval ?? 30000
+      pollingInterval: options.pollingInterval ?? 10000
     }
   }
 
@@ -169,6 +169,17 @@ export class RealtimeDataManager {
   private handleMessage(message: WebSocketMessage): void {
     if (message.type === 'ping') {
       this.send({ type: 'pong', timestamp: Date.now() })
+      return
+    }
+
+    if (message.type === 'full_state' && message.data) {
+      const data = message.data as Record<string, unknown>
+      if (data.agents) this.emit('agents', data.agents)
+      if (data.apiStatus) this.emit('api-status', data.apiStatus)
+      if (data.subagents) this.emit('subagents', data.subagents)
+      if (data.collaboration) this.emit('collaboration', data.collaboration)
+      if (data.tasks) this.emit('tasks', data.tasks)
+      if (data.performance) this.emit('performance', data.performance)
       return
     }
 

@@ -135,6 +135,49 @@ async def broadcast_message(message: dict):
         active_connections.remove(connection)
 
 
+async def broadcast_full_state():
+    """文件变更时广播完整状态（agents、subagents、apiStatus、collaboration、tasks、performance）"""
+    if not active_connections:
+        return
+    try:
+        from .agents import get_agents as get_agents_list
+        from .subagents import get_subagents
+        from .api_status import get_api_status_list
+        from .collaboration import get_collaboration
+        from .performance import get_real_stats
+
+        agents = await get_agents_list()
+        subagents = await get_subagents()
+        api_status = await get_api_status_list()
+        collaboration = await get_collaboration()
+        performance = await get_real_stats()
+
+        # tasks 来自 subagents 的 get_tasks
+        from .subagents import get_tasks
+        tasks_result = await get_tasks()
+        tasks = tasks_result.get("tasks", []) if isinstance(tasks_result, dict) else []
+
+        # 格式化 agents 的 lastActiveFormatted
+        from status.status_calculator import format_last_active
+        for agent in agents:
+            if agent.get("lastActiveAt"):
+                agent["lastActiveFormatted"] = format_last_active(agent["lastActiveAt"])
+
+        await broadcast_message({
+            "type": "full_state",
+            "data": {
+                "agents": agents,
+                "subagents": subagents,
+                "apiStatus": api_status,
+                "collaboration": collaboration.model_dump() if hasattr(collaboration, "model_dump") else collaboration,
+                "tasks": tasks,
+                "performance": performance,
+            },
+        })
+    except Exception as e:
+        print(f"[WebSocket] broadcast_full_state 失败: {e}")
+
+
 def get_active_connections_count() -> int:
     """获取活跃连接数"""
     return len(active_connections)

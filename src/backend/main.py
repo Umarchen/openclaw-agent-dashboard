@@ -1,13 +1,34 @@
 """
 OpenClaw Agent Dashboard - 主入口
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+import asyncio
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时启动文件监听，关闭时停止"""
+    loop = asyncio.get_running_loop()
+    try:
+        from watchers.file_watcher import start_file_watcher
+        start_file_watcher(loop)
+    except Exception as e:
+        print(f"[Main] 文件监听启动失败: {e}")
+    yield
+    try:
+        from watchers.file_watcher import stop_file_watcher
+        stop_file_watcher()
+    except Exception:
+        pass
+
 
 # 创建 FastAPI 应用
 app = FastAPI(
+    lifespan=lifespan,
     title="OpenClow Agent Dashboard",
     description="多 Agent 可视化看板 API",
     version="1.0.0"

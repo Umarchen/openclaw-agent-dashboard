@@ -14,19 +14,23 @@ DEBOUNCE_SECONDS = 0.5  # 同一文件短时间多次变更只触发一次
 def _get_watch_dirs() -> list[tuple[Path, bool]]:
     """获取需要监听的目录列表 (path, recursive)"""
     dirs: list[tuple[Path, bool]] = []
-    # subagents: 监听 runs.json
     subagents = OPENCLAW_DIR / "subagents"
     if subagents.exists():
         dirs.append((subagents, False))
-    # dashboard: 监听 task_history.json
     dashboard = OPENCLAW_DIR / "dashboard"
     if dashboard.exists():
         dirs.append((dashboard, False))
-    # workspace-main/memory: 监听 model-failures.log
-    memory = OPENCLAW_DIR / "workspace-main" / "memory"
-    if memory.exists():
-        dirs.append((memory, False))
-    # agents/*/sessions: 递归监听 *.jsonl
+    # workspace/*/memory: 从配置读取，或回退到 workspace-main
+    try:
+        from data.config_reader import get_workspace_paths
+        for ws in get_workspace_paths():
+            memory = ws / "memory"
+            if memory.exists():
+                dirs.append((memory, False))
+    except Exception:
+        memory = OPENCLAW_DIR / "workspace-main" / "memory"
+        if memory.exists():
+            dirs.append((memory, False))
     agents_dir = OPENCLAW_DIR / "agents"
     if agents_dir.exists():
         for agent_dir in agents_dir.iterdir():

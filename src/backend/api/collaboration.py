@@ -108,8 +108,11 @@ def _get_recent_model_calls(minutes: int = 30) -> List[Dict]:
 
 @router.get("/collaboration", response_model=CollaborationFlow)
 async def get_collaboration():
-    """获取协作流程数据 - 老 K 与所有子 Agents 的拓扑关系，含模型配置与最近调用"""
-    from data.config_reader import get_agents_list, get_agent_models, get_all_models_from_agents, get_model_display_name
+    """获取协作流程数据 - 主 Agent 与子 Agents 的拓扑关系，含模型配置与最近调用"""
+    from data.config_reader import (
+        get_agents_list, get_agent_models, get_all_models_from_agents,
+        get_model_display_name, get_main_agent_id
+    )
     from data.subagent_reader import get_active_runs
     from status.status_calculator import calculate_agent_status
 

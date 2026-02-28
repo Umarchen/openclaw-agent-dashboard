@@ -6,30 +6,42 @@ from pathlib import Path
 from typing import List, Dict, Any
 import time
 
-MODEL_FAILURES_LOG = Path.home() / ".openclaw" / "workspace-main" / "memory" / "model-failures.log"
+
+def _get_failure_log_paths() -> List[Path]:
+    """从配置获取所有 workspace 的 model-failures.log 路径"""
+    try:
+        from data.config_reader import get_workspace_paths
+        paths = []
+        for ws in get_workspace_paths():
+            log_path = ws / "memory" / "model-failures.log"
+            if log_path.exists():
+                paths.append(log_path)
+        if paths:
+            return paths
+    except Exception:
+        pass
+    fallback = Path.home() / ".openclaw" / "workspace-main" / "memory" / "model-failures.log"
+    return [fallback] if fallback.exists() else []
 
 
 def parse_failure_log() -> List[Dict[str, Any]]:
-    """解析失败日志"""
-    if not MODEL_FAILURES_LOG.exists():
-        return []
-    
+    """解析失败日志（合并所有 workspace 的 model-failures.log）"""
+    log_paths = _get_failure_log_paths()
     entries = []
-    with open(MODEL_FAILURES_LOG, 'r', encoding='utf-8') as f:
-        content = f.read()
-        
-        # 解析每个条目（以 ## 开头的行）
-        sections = content.split('## ')
-        for section in sections[1:]:  # 跳过第一个（文件头）
-            entry = {
-                'timestamp': extract_timestamp(section),
-                'model': extract_model(section),
-                'error_type': extract_error_type(section),
-                'message': extract_message(section)
-            }
-            if entry['model'] and entry['error_type']:
-                entries.append(entry)
-    
+    for log_path in log_paths:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            sections = content.split('## ')
+            for section in sections[1:]:
+                entry = {
+                    'timestamp': extract_timestamp(section),
+                    'model': extract_model(section),
+                    'error_type': extract_error_type(section),
+                    'message': extract_message(section)
+                }
+                if entry['model'] and entry['error_type']:
+                    entries.append(entry)
+    entries.sort(key=lambda x: x['timestamp'], reverse=True)
     return entries
 
 

@@ -23,6 +23,32 @@ def get_agents_list() -> List[Dict[str, Any]]:
     return config.get('agents', {}).get('list', [])
 
 
+def get_main_agent_id() -> str:
+    """获取主 Agent ID（配置中 id 为 main 的，或列表第一个）"""
+    agents = get_agents_list()
+    for a in agents:
+        if a.get('id') == 'main':
+            return 'main'
+    return agents[0].get('id', 'main') if agents else 'main'
+
+
+def get_workspace_paths() -> List[Path]:
+    """获取所有 Agent 的 workspace 路径（用于 model-failures.log 等）"""
+    agents = get_agents_list()
+    paths = []
+    seen = set()
+    for a in agents:
+        ws = a.get('workspace')
+        if ws and ws not in seen:
+            p = Path(ws).expanduser() if isinstance(ws, str) else Path(ws)
+            if p.exists():
+                paths.append(p)
+                seen.add(ws)
+    if not paths:
+        paths.append(OPENCLAW_CONFIG_PATH.parent / "workspace-main")
+    return paths
+
+
 def get_agent_config(agent_id: str) -> Dict[str, Any]:
     """获取单个 Agent 配置"""
     agents = get_agents_list()

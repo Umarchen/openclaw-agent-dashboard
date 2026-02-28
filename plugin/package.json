@@ -1,0 +1,21 @@
+{
+  "name": "openclaw-agent-dashboard",
+  "version": "1.0.0",
+  "description": "多 Agent 可视化看板 - OpenClaw 插件",
+  "main": "index.js",
+  "openclaw": {
+    "extensions": ["./index.js"]
+  },
+  "keywords": ["openclaw", "dashboard", "agent", "monitoring"],
+  "license": "MIT",
+  "files": [
+    "openclaw.plugin.json",
+    "index.js",
+    "dashboard",
+    "frontend-dist"
+  ],
+  "scripts": {
+    "build": "node ../scripts/build-plugin.js",
+    "prepublishOnly": "npm run build"
+  }
+}

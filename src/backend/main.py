@@ -66,6 +66,9 @@ async def health_check():
 
 
 # 前端静态文件（必须放在 API 路由之后，否则会拦截 /api 请求）
-frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
+# 插件形态：dashboard/ 与 frontend-dist/ 同级；开发形态：src/backend/ 与 frontend/dist 同级
+_plugin_frontend = Path(__file__).parent.parent / "frontend-dist"
+_dev_frontend = Path(__file__).parent.parent.parent / "frontend" / "dist"
+frontend_dist = _plugin_frontend if _plugin_frontend.exists() else _dev_frontend
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")

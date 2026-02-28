@@ -1,0 +1,9 @@
+{
+  "name": "openclaw-agent-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install-plugin": "bash scripts/install-plugin.sh",
+    "build-plugin": "node scripts/build-plugin.js"
+  }
+}

@@ -1,6 +1,15 @@
-# OpenClow Agent Dashboard
+# OpenClaw Agent Dashboard
 
-多 Agent 可视化看板 - 实时展示 OpenClow Agent 状态、任务进度和 API 异常。
+多 Agent 可视化看板 - 实时展示 OpenClaw Agent 状态、任务进度和 API 异常。
+
+## 使用方式
+
+| 方式 | 适用场景 |
+|------|----------|
+| **独立运行**（推荐） | 日常开发、自己使用，克隆后直接启动 |
+| **插件模式**（可选） | 希望随 OpenClaw 启动时自动打开 Dashboard |
+
+---
 
 ## 功能特性
 
@@ -42,7 +51,9 @@ openclaw-agent-dashboard/
 └── README.md
 ```
 
-## 快速开始
+## 快速开始（独立运行，推荐）
+
+克隆仓库后，按以下步骤启动：
 
 ### 1. 安装依赖
 
@@ -75,6 +86,8 @@ npm run dev
 ### 4. 访问看板
 
 打开浏览器访问: http://localhost:5173
+
+> 后端会托管前端静态文件。若已执行 `npm run build`，也可直接访问 http://localhost:8000 使用生产构建版本。
 
 ## API 文档
 
@@ -114,6 +127,21 @@ npm run build
 # Nginx 托管 dist 目录
 ```
 
+## 插件安装（可选）
+
+若希望 Dashboard 随 OpenClaw 启动时自动运行，可安装为插件：
+
+```bash
+# 一键安装（推荐）
+./scripts/install-plugin.sh
+# 或
+npm run install-plugin
+```
+
+**同事使用**：克隆仓库后执行上述一条命令即可，脚本会自动完成构建、安装、Python 依赖。
+
+详见 `plugin/README.md`。
+
 ## 开发说明
 
 ### 添加新 Agent 类型
@@ -127,7 +155,7 @@ npm run build
 
 ## 注意事项
 
-- ⚠️ 需要确保 OpenClow 正在运行，且有 Agent 配置
+- ⚠️ 需要确保 OpenClaw 正在运行，且有 Agent 配置
 - ⚠️ 需要有权限访问 `~/.openclaw` 目录
 - ⚠️ 生产环境建议配置适当的认证机制
 
@@ -137,4 +165,4 @@ MIT
 
 ---
 
-*OpenClow Agent Dashboard v1.0 - 2026-02-26*
+*OpenClaw Agent Dashboard v1.0 - 2026-02-26*

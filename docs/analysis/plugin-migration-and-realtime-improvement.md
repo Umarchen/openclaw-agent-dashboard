@@ -185,6 +185,12 @@ openclaw-agent-dashboard-plugin/
 
 **交付**：`openclaw plugins install` 后即可使用，Dashboard 随 OpenClaw 启动。
 
+**阶段 2 已完成（2026-02-28）**：
+- ✅ `plugin/openclaw.plugin.json`、`package.json`、`index.js`
+- ✅ `scripts/build-plugin.js` 打包脚本
+- ✅ 后端适配插件形态（frontend-dist 路径）
+- ✅ 本地安装：`node scripts/build-plugin.js` → `openclaw plugins install ./plugin`
+
 ---
 
 ### 阶段 3：长期（可选）—— 混合数据源

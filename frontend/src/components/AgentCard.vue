@@ -44,14 +44,17 @@ defineEmits<{
   click: []
 }>()
 
+const EMOJI_POOL = ['🤖', '👤', '📊', '🏗️', '💻', '🧪', '🔧', '📋', '🎯', '⚙️']
 const emoji = computed(() => {
-  const name = props.agent.name.toLowerCase()
-  if (name.includes('pm') || name.includes('project')) return '👨‍💼'
-  if (name.includes('analyst')) return '📊'
-  if (name.includes('architect')) return '🏗️'
-  if (name.includes('dev')) return '💻'
-  if (name.includes('qa') || name.includes('test')) return '🧪'
-  return '🤖'
+  const name = (props.agent.name || '').toLowerCase()
+  if (name.includes('pm') || name.includes('project') || name.includes('主')) return '👨‍💼'
+  if (name.includes('analyst') || name.includes('分析')) return '📊'
+  if (name.includes('architect') || name.includes('架构')) return '🏗️'
+  if (name.includes('dev') || name.includes('开发')) return '💻'
+  if (name.includes('qa') || name.includes('test') || name.includes('测试')) return '🧪'
+  let hash = 0
+  for (let i = 0; i < name.length; i++) hash = (hash << 5) - hash + name.charCodeAt(i)
+  return EMOJI_POOL[Math.abs(hash) % EMOJI_POOL.length]
 })
 
 const statusText = computed(() => {
@@ -117,6 +120,7 @@ function shortModelId(id: string): string {
   font-size: 0.75rem;
   font-weight: 500;
   margin-bottom: 0.5rem;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 .status-pill.status-idle {
@@ -139,6 +143,7 @@ function shortModelId(id: string): string {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  transition: background-color 0.25s ease;
 }
 
 .status-dot.status-idle {

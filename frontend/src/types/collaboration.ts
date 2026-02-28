@@ -40,7 +40,18 @@ export interface CollaborationFlow {
   edges: CollaborationEdge[]
   activePath: string[]
   lastUpdate: number
+  mainAgentId?: string
   agentModels?: Record<string, { primary?: string; fallbacks?: string[] }>
   models?: string[]
   recentCalls?: ModelCall[]
+}
+
+export interface CollaborationDynamic {
+  activePath: string[]
+  recentCalls: ModelCall[]
+  agentStatuses: Record<string, string>
+  taskNodes: CollaborationNode[]
+  taskEdges: CollaborationEdge[]
+  mainAgentId: string
+  lastUpdate: number
 }

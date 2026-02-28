@@ -55,10 +55,10 @@ pip install -r ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard/require
 
 优先级从高到低：
 
-1. **环境变量**：`DASHBOARD_PORT=8001`
+1. **环境变量**：`DASHBOARD_PORT=8000`
 2. **独立配置文件**：`~/.openclaw/dashboard/config.json`
    ```json
-   { "port": 8001 }
+   { "port": 8000 }
    ```
    复制 `config.json.example` 并修改即可，可随项目分发。
 3. **openclaw.json**：`plugins.entries.openclaw-agent-dashboard.config.port`

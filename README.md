@@ -140,6 +140,15 @@ npm run install-plugin
 
 **同事使用**：克隆仓库后执行上述一条命令即可，脚本会自动完成构建、安装、Python 依赖。
 
+### 开发调试
+
+修改插件代码后，需重新构建并安装才能生效：
+
+```bash
+npm run deploy
+openclaw gateway restart
+```
+
 详见 `plugin/README.md`。
 
 ## 开发说明

@@ -14,7 +14,7 @@
     <main>
       <!-- 协作流程（主 Agent + 子 Agents 合并展示，含连线）-->
       <section class="collaboration-section">
-        <CollaborationFlowSection
+        <CollaborationFlowWrapper
           :main-agent="mainAgent"
           :sub-agents="subAgents"
           @agent-click="onAgentNodeClick"
@@ -74,7 +74,7 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import PerformanceMonitor from './components/PerformanceMonitor.vue'
 
 // 新增组件
-import CollaborationFlowSection from './components/collaboration/CollaborationFlowSection.vue'
+import CollaborationFlowWrapper from './components/collaboration/CollaborationFlowWrapper.vue'
 import TaskStatusSection from './components/tasks/TaskStatusSection.vue'
 import PerformanceSection from './components/performance/PerformanceSection.vue'
 
@@ -133,22 +133,27 @@ const connectionLabel = computed(() => {
 
 // 主 Agent
 const mainAgent = ref<Agent | null>(null)
+const mainAgentId = ref<string>('main')
 
 // 子 Agents
 const subAgents = ref<Agent[]>([])
 
 async function refreshData() {
   try {
-    // 获取 Agents
-    const agentsRes = await fetch('/api/agents')
-    agents.value = await agentsRes.json()
-
-    // 分离主 Agent 和子 Agents
-    const main = agents.value.find(a => a.id === 'main')
-    if (main) {
-      mainAgent.value = main
+    const [agentsRes, configRes] = await Promise.all([
+      fetch('/api/agents'),
+      fetch('/api/config').catch(() => null)
+    ])
+    const agentsData = await agentsRes.json()
+    agents.value = Array.isArray(agentsData) ? agentsData : []
+    if (configRes?.ok) {
+      const cfg = await configRes.json()
+      mainAgentId.value = (cfg && cfg.mainAgentId) || 'main'
     }
-    subAgents.value = agents.value.filter(a => a.id !== 'main')
+    const agentsList = Array.isArray(agents.value) ? agents.value : []
+    const main = agentsList.find((a: { id?: string }) => a.id === mainAgentId.value)
+    if (main) mainAgent.value = main
+    subAgents.value = agentsList.filter((a: { id?: string }) => a.id !== mainAgentId.value)
 
     // 获取 API 状态
     const apiRes = await fetch('/api/api-status')
@@ -163,7 +168,7 @@ function showAgentDetail(agent: Agent) {
 }
 
 function onAgentNodeClick(node: { id: string; name: string; status: string }) {
-  const agent = node.id === 'main' ? mainAgent.value : subAgents.value.find(a => a.id === node.id)
+  const agent = node.id === mainAgentId.value ? mainAgent.value : subAgents.value.find(a => a.id === node.id)
   if (agent) {
     showAgentDetail(agent)
   } else {
@@ -171,7 +176,7 @@ function onAgentNodeClick(node: { id: string; name: string; status: string }) {
     showAgentDetail({
       id: node.id,
       name: node.name,
-      role: node.id === 'main' ? '主 Agent' : '子 Agent',
+      role: node.id === mainAgentId.value ? '主 Agent' : '子 Agent',
       status: (node.status === 'error' ? 'down' : node.status) as 'idle' | 'working' | 'down'
     })
   }
@@ -197,9 +202,9 @@ onMounted(() => {
   unsubAgents = realtimeManager.subscribe('agents', (data: unknown) => {
     if (Array.isArray(data)) {
       agents.value = data as Agent[]
-      const main = (data as Agent[]).find(a => a.id === 'main')
+      const main = (data as Agent[]).find(a => a.id === mainAgentId.value)
       mainAgent.value = main || null
-      subAgents.value = (data as Agent[]).filter(a => a.id !== 'main')
+      subAgents.value = (data as Agent[]).filter(a => a.id !== mainAgentId.value)
     }
   })
   unsubApiStatus = realtimeManager.subscribe('api-status', (data: unknown) => {
@@ -309,6 +314,8 @@ main {
 
 .collaboration-section {
   margin-bottom: 2rem;
+  min-height: 400px;
+  /* 确保协作流程方框始终可见 */
 }
 
 .task-status-section {

@@ -1,11 +1,22 @@
 """
 配置读取器 - 读取 openclaw.json
+支持 OPENCLAW_HOME 环境变量（插件启动时注入）
 """
 import json
+import os
 from pathlib import Path
 from typing import List, Dict, Any
 
-OPENCLAW_CONFIG_PATH = Path.home() / ".openclaw" / "openclaw.json"
+def _openclaw_home() -> Path:
+    """OpenClaw 根目录，优先使用 OPENCLAW_HOME 环境变量"""
+    env = os.environ.get("OPENCLAW_HOME")
+    if env:
+        p = Path(env).expanduser()
+        if p.exists():
+            return p
+    return Path.home() / ".openclaw"
+
+OPENCLAW_CONFIG_PATH = _openclaw_home() / "openclaw.json"
 
 
 def load_config() -> Dict[str, Any]:
@@ -20,7 +31,10 @@ def load_config() -> Dict[str, Any]:
 def get_agents_list() -> List[Dict[str, Any]]:
     """获取 Agent 列表"""
     config = load_config()
-    return config.get('agents', {}).get('list', [])
+    agents = config.get('agents')
+    if agents is None or not isinstance(agents, dict):
+        return []
+    return agents.get('list', [])
 
 
 def get_main_agent_id() -> str:
@@ -61,7 +75,10 @@ def get_agent_config(agent_id: str) -> Dict[str, Any]:
 def get_default_config() -> Dict[str, Any]:
     """获取默认配置"""
     config = load_config()
-    return config.get('agents', {}).get('defaults', {})
+    agents = config.get('agents')
+    if agents is None or not isinstance(agents, dict):
+        return {}
+    return agents.get('defaults', {})
 
 
 def get_agent_models(agent_id: str) -> Dict[str, Any]:
@@ -91,7 +108,12 @@ def get_all_models_from_agents() -> List[str]:
 def get_model_display_name(model_id: str) -> str:
     """获取模型显示名（provider/model -> 简短名）"""
     config = load_config()
-    models_cfg = config.get('agents', {}).get('defaults', {}).get('models', {})
+    agents = config.get('agents')
+    if agents is None or not isinstance(agents, dict):
+        parts = model_id.split('/')
+        return parts[-1] if len(parts) > 1 else model_id
+    defaults = agents.get('defaults', {}) or {}
+    models_cfg = defaults.get('models', {}) or {}
     alias = models_cfg.get(model_id, {}).get('alias') if isinstance(models_cfg.get(model_id), dict) else None
     if alias:
         return alias

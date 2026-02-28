@@ -42,7 +42,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { useRealtime } from '../composables'
 
 interface WorkflowStage {
   name: string
@@ -62,6 +63,7 @@ interface Workflow {
   artifacts: string[]
 }
 
+const { subscribe } = useRealtime()
 const projects = ref<any[]>([])
 const selectedProjectId = ref('')
 const workflow = ref<Workflow | null>(null)
@@ -122,8 +124,24 @@ async function loadWorkflow() {
   }
 }
 
+function handleWorkflowsUpdate(data: unknown): void {
+  if (Array.isArray(data)) {
+    projects.value = data as any[]
+    if (selectedProjectId.value && projects.value.some((p: any) => p.projectId === selectedProjectId.value)) {
+      loadWorkflow()
+    }
+  }
+}
+
+let unsubscribe: (() => void) | null = null
+
 onMounted(() => {
   loadProjects()
+  unsubscribe = subscribe('workflows', handleWorkflowsUpdate)
+})
+
+onUnmounted(() => {
+  unsubscribe?.()
 })
 </script>
 

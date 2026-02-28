@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 OPENCLAW_DIR = Path.home() / ".openclaw"
-DEBOUNCE_SECONDS = 0.5  # 同一文件短时间多次变更只触发一次
+DEBOUNCE_SECONDS = 0.3  # 同一文件短时间多次变更只触发一次
 
 
 def _get_watch_dirs() -> list[tuple[Path, bool]]:

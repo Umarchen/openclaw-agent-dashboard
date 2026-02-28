@@ -51,9 +51,10 @@ class CollaborationFlow(BaseModel):
     edges: List[CollaborationEdge]
     activePath: List[str]
     lastUpdate: int
-    agentModels: Optional[Dict[str, Dict[str, Any]]] = None  # agentId -> {primary, fallbacks}
-    models: Optional[List[str]] = None  # model ids
-    recentCalls: Optional[List[ModelCall]] = None  # 最近调用（光球数据）
+    mainAgentId: Optional[str] = None  # 主 Agent ID，前端用于布局与样式
+    agentModels: Optional[Dict[str, Dict[str, Any]]] = None
+    models: Optional[List[str]] = None
+    recentCalls: Optional[List[ModelCall]] = None
 
 
 def _parse_agent_id(child_key: str) -> str:
@@ -123,7 +124,9 @@ async def get_collaboration():
     models_list: List[str] = []
     recent_calls: List[Dict] = []
 
+    main_agent_id = 'main'
     try:
+        main_agent_id = get_main_agent_id()
         agents_list = get_agents_list()
         active_runs = get_active_runs()
 
@@ -249,11 +252,11 @@ async def get_collaboration():
 
     if not nodes:
         try:
-            main_id = get_main_agent_id()
+            main_agent_id = get_main_agent_id()
         except Exception:
-            main_id = 'main'
+            main_agent_id = 'main'
         nodes = [
-            CollaborationNode(id=main_id, type="agent", name="主 Agent", status="idle"),
+            CollaborationNode(id=main_agent_id, type="agent", name="主 Agent", status="idle"),
         ]
 
     # 构建 recentCalls 带 id
@@ -276,7 +279,106 @@ async def get_collaboration():
         edges=edges,
         activePath=list(set(active_path)),
         lastUpdate=int(__import__('time').time() * 1000),
+        mainAgentId=main_agent_id,
         agentModels=agent_models,
         models=models_list,
         recentCalls=model_calls
+    )
+
+
+class CollaborationDynamic(BaseModel):
+    """仅动态数据：状态、小球、任务节点，不包含静态拓扑"""
+    activePath: List[str]
+    recentCalls: List[ModelCall]
+    agentStatuses: Dict[str, str]  # agentId -> idle/working/error
+    taskNodes: List[CollaborationNode]
+    taskEdges: List[CollaborationEdge]
+    mainAgentId: str
+    lastUpdate: int
+
+
+@router.get("/collaboration/dynamic", response_model=CollaborationDynamic)
+async def get_collaboration_dynamic():
+    """轻量接口：仅返回状态、小球、任务等动态数据，用于静默刷新，不触发整体重载"""
+    from data.config_reader import get_agents_list, get_main_agent_id
+    from data.subagent_reader import get_active_runs
+    from status.status_calculator import calculate_agent_status
+
+    active_path = []
+    agent_statuses: Dict[str, str] = {}
+    task_nodes: List[CollaborationNode] = []
+    task_edges: List[CollaborationEdge] = []
+    main_agent_id = 'main'
+
+    try:
+        main_agent_id = get_main_agent_id()
+        agents_list = get_agents_list()
+        active_runs = get_active_runs()
+
+        for agent in agents_list:
+            aid = agent.get('id', '')
+            if not aid:
+                continue
+            status = calculate_agent_status(aid)
+            if status == 'down':
+                status = 'error'
+            elif status == 'working':
+                status = 'working'
+            else:
+                status = 'idle'
+            agent_statuses[aid] = status
+
+        main_status = "working" if active_runs else "idle"
+        agent_statuses[main_agent_id] = main_status
+
+        for run in active_runs[:10]:
+            child_key = run.get('childSessionKey', '')
+            agent_id = _parse_agent_id(child_key)
+            if not agent_id:
+                continue
+            task_name = run.get('task', 'Unknown Task')
+            first_line = task_name.split('\n')[0].strip() if task_name else 'Unknown Task'
+            task_name = first_line if first_line else task_name
+            task_id = f"task-{run.get('runId', agent_id)}"
+            task_nodes.append(CollaborationNode(
+                id=task_id,
+                type="task",
+                name=task_name,
+                status="working",
+                timestamp=run.get('startedAt')
+            ))
+            task_edges.append(CollaborationEdge(
+                id=f"edge-{agent_id}-{task_id}",
+                source=agent_id,
+                target=task_id,
+                type="calls",
+                label="执行"
+            ))
+            active_path.extend([main_agent_id, agent_id, task_id])
+    except Exception as e:
+        print(f"Error building collaboration dynamic: {e}")
+
+    recent_calls_raw = _get_recent_model_calls(30)
+    model_calls = [
+        ModelCall(
+            id=f"call-{i}",
+            agentId=r["agentId"],
+            model=r.get("model", ""),
+            sessionId=r.get("sessionId", ""),
+            trigger=r.get("trigger", ""),
+            tokens=r.get("tokens", 0),
+            timestamp=r.get("timestamp", 0),
+            time=r.get("time", "")
+        )
+        for i, r in enumerate(recent_calls_raw)
+    ]
+
+    return CollaborationDynamic(
+        activePath=list(set(active_path)),
+        recentCalls=model_calls,
+        agentStatuses=agent_statuses,
+        taskNodes=task_nodes,
+        taskEdges=task_edges,
+        mainAgentId=main_agent_id,
+        lastUpdate=int(__import__('time').time() * 1000),
     )

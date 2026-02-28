@@ -97,8 +97,14 @@ function startDashboard(config = {}) {
   }
 
   const basePort = config.port ?? 8000;
+  const isExplicitPort = basePort !== 8000; // 用户显式配置了端口（非默认 8000）
 
-  findAvailablePort(basePort).then((port) => {
+  // 仅默认端口 8000 时自动尝试备用端口；显式配置的端口严格使用，避免端口不断递增
+  const portPromise = isExplicitPort
+    ? Promise.resolve(basePort)
+    : findAvailablePort(basePort);
+
+  portPromise.then((port) => {
     if (dashboardProcess) return;
 
     const env = {
@@ -110,7 +116,7 @@ function startDashboard(config = {}) {
     const pythonCmd = process.env.PYTHON_CMD || 'python3';
     const args = ['-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', String(port)];
 
-    if (port !== basePort) {
+    if (!isExplicitPort && port !== basePort) {
       console.log(`[OpenClaw-Dashboard] 端口 ${basePort} 被占用，使用 ${port}`);
     }
     console.log(`[OpenClaw-Dashboard] 启动服务: ${pythonCmd} ${args.join(' ')}`);

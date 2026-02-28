@@ -47,10 +47,11 @@ app.add_middleware(
 import sys
 sys.path.append(str(Path(__file__).parent))
 
-from api import agents, subagents, workflow, api_status, websocket, performance, collaboration
+from api import agents, subagents, workflow, api_status, websocket, performance, collaboration, agents_config
 
 # 注册 API 路由
 app.include_router(agents.router, prefix="/api", tags=["agents"])
+app.include_router(agents_config.router, prefix="/api", tags=["agents-config"])
 app.include_router(subagents.router, prefix="/api", tags=["subagents"])
 app.include_router(workflow.router, prefix="/api", tags=["workflow"])
 app.include_router(api_status.router, prefix="/api", tags=["api-status"])
@@ -63,6 +64,16 @@ app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
 async def health_check():
     """健康检查"""
     return {"status": "healthy"}
+
+
+@app.get("/api/config")
+async def get_config():
+    """获取 Dashboard 配置（mainAgentId 等，便于前端自适应）"""
+    try:
+        from data.config_reader import get_main_agent_id
+        return {"mainAgentId": get_main_agent_id()}
+    except Exception:
+        return {"mainAgentId": "main"}
 
 
 # 前端静态文件（必须放在 API 路由之后，否则会拦截 /api 请求）

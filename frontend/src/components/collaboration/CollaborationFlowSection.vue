@@ -48,7 +48,7 @@
               <stop offset="100%" style="stop-color:#64748b;stop-opacity:0.2" />
             </linearGradient>
           </defs>
-          <g v-for="edge in edges" :key="edge.id">
+          <g v-for="edge in visibleEdges" :key="edge.id">
             <path
               :id="`edge-path-${edge.id}`"
               :d="getEdgePath(edge)"
@@ -111,9 +111,9 @@
               @click="emit('agent-click', node)"
             />
           </div>
-          <!-- 模型节点 -->
+          <!-- 模型节点（可折叠） -->
           <div
-            v-else-if="node.type === 'model'"
+            v-else-if="node.type === 'model' && modelPanelExpanded"
             class="flow-node model-node"
             :style="getNodeStyle(node)"
           >
@@ -170,6 +170,16 @@
           <span>活跃</span>
         </div>
       </div>
+
+      <!-- 模型区折叠切换 -->
+      <div
+        v-if="nodes.length > 0 && hasModelNodes"
+        class="model-panel-toggle"
+        @click="modelPanelExpanded = !modelPanelExpanded"
+      >
+        <span class="toggle-text">{{ modelPanelExpanded ? '收起模型' : '展开模型' }}</span>
+        <span class="toggle-icon">{{ modelPanelExpanded ? '▼' : '▶' }}</span>
+      </div>
     </div>
 
     <!-- 调用详情弹窗 -->
@@ -213,10 +223,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRealtime } from '../../composables'
 import AgentCard from '../AgentCard.vue'
-import type { CollaborationNode, CollaborationEdge, CollaborationFlow, ModelCall } from '../../types'
+import type { CollaborationNode, CollaborationEdge, CollaborationFlow, CollaborationDynamic, ModelCall } from '../../types'
+
+const DYNAMIC_POLL_INTERVAL_MS = 5000
 
 interface AgentForCard {
   name: string
@@ -247,19 +259,16 @@ const hoveredNode = ref<string | null>(null)
 const flowContainerRef = ref<HTMLElement | null>(null)
 const selectedCall = ref<ModelCall | null>(null)
 
-// Canvas dimensions - 左侧 Agents + 任务，右侧模型
-const canvasWidth = 2000
-const canvasHeight = 950
+// 节点尺寸常量
 const agentNodeWidth = 300
 const agentNodeHeight = 140
 const taskNodeWidth = 160
 const taskNodeHeight = 90
 const modelNodeWidth = 140
 const modelNodeHeight = 80
-const rowGap = 180
-const agentColGap = 150
-const margin = 100
-const modelsAreaX = 1550  // 模型区域起始 X
+const margin = 80
+const minCanvasWidth = 900
+const minCanvasHeight = 600
 
 // Agent 光球颜色（按 agentId 区分）
 const AGENT_COLORS: Record<string, string> = {
@@ -277,6 +286,64 @@ const legendAgentIds = computed(() => {
   return nodes.value.filter(n => n.type === 'agent').map(n => n.id).filter(Boolean)
 })
 
+// 是否有模型节点（用于显示折叠面板）
+const hasModelNodes = computed(() => nodes.value.some(n => n.type === 'model'))
+
+// 模型区是否展开
+const modelPanelExpanded = ref(true)
+
+// 可见边：折叠时隐藏模型边
+const visibleEdges = computed(() => {
+  if (modelPanelExpanded.value) return edges.value
+  return edges.value.filter(e => e.type !== 'model')
+})
+
+// 动态画布尺寸：根据节点数量计算
+const layoutMetrics = computed(() => {
+  const mainNodes = nodes.value.filter(n => n.type === 'agent' || n.type === 'task' || n.type === 'tool')
+  const modelNodes = nodes.value.filter(n => n.type === 'model')
+  const subAgentCount = mainNodes.filter(n => n.type === 'agent' && n.id !== 'main').length
+  const taskCount = mainNodes.filter(n => n.type === 'task').length
+  const toolCount = mainNodes.filter(n => n.type === 'tool').length
+
+  const rowGap = 120
+  const agentColGap = Math.max(80, 150 - subAgentCount * 10)
+  const taskColGap = Math.max(60, 120 - taskCount * 8)
+  const toolColGap = Math.max(60, 120 - toolCount * 8)
+
+  const mainAreaWidth = Math.max(
+    minCanvasWidth - margin * 2,
+    subAgentCount * agentNodeWidth + Math.max(0, subAgentCount - 1) * agentColGap,
+    taskCount * taskNodeWidth + Math.max(0, taskCount - 1) * taskColGap,
+    toolCount * taskNodeWidth + Math.max(0, toolCount - 1) * toolColGap
+  )
+
+  const mainAreaHeight = margin * 2 + agentNodeHeight + rowGap + agentNodeHeight + rowGap
+    + (taskCount > 0 ? taskNodeHeight + rowGap : 0)
+    + (toolCount > 0 ? taskNodeHeight + rowGap : 0)
+
+  const modelRows = modelNodes.length
+  const modelPanelHeight = modelPanelExpanded.value && modelRows > 0
+    ? margin + modelRows * (modelNodeHeight + 16) + margin
+    : 0
+
+  const canvasWidth = Math.max(minCanvasWidth, mainAreaWidth + margin * 2)
+  const canvasHeight = Math.max(minCanvasHeight, mainAreaHeight + modelPanelHeight)
+
+  return {
+    canvasWidth,
+    canvasHeight,
+    mainAreaWidth,
+    rowGap,
+    agentColGap,
+    taskColGap,
+    toolColGap
+  }
+})
+
+const canvasWidth = computed(() => layoutMetrics.value.canvasWidth)
+const canvasHeight = computed(() => layoutMetrics.value.canvasHeight)
+
 function getAgentName(agentId: string): string {
   const node = nodes.value.find(n => n.id === agentId)
   return node?.name || agentId
@@ -290,8 +357,9 @@ function getEdgeStrokeColor(edge: CollaborationEdge): string {
 }
 
 const canvasStyle = computed(() => ({
-  width: `${canvasWidth}px`,
-  height: `${canvasHeight}px`
+  width: `${canvasWidth.value}px`,
+  height: `${canvasHeight.value}px`,
+  minWidth: `${minCanvasWidth}px`
 }))
 
 const connectionLabel = computed(() => {
@@ -347,31 +415,44 @@ function getAgentForNode(node: CollaborationNode): AgentForCard {
 
 function getModelInfoForNode(node: CollaborationNode): { primary?: string; fallbacks?: string[] } | undefined {
   if (node.type !== 'agent') return undefined
-  return agentModels.value[node.id]
+  const models = agentModels.value
+  if (!models || typeof models !== 'object' || Array.isArray(models)) return undefined
+  return models[node.id]
 }
 
-// 自动布局 - 左侧 Agents + 任务，右侧模型
+// 自动布局 - 主区域流式排列，模型区整合在底部
 function autoLayoutNodes(nodeList: CollaborationNode[]): void {
   const mainNode = nodeList.find(n => n.id === 'main')
   const subAgentNodes = nodeList.filter(n => n.type === 'agent' && n.id !== 'main')
   const taskNodes = nodeList.filter(n => n.type === 'task')
   const toolNodes = nodeList.filter(n => n.type === 'tool')
   const modelNodes = nodeList.filter(n => n.type === 'model')
-  const leftAreaWidth = modelsAreaX - margin
 
-  // 第 1 行：老 K 在上方居中（左侧区域）
+  const rowGap = 120
+  const agentColGap = Math.max(80, 150 - subAgentNodes.length * 10)
+  const taskColGap = Math.max(60, 120 - taskNodes.length * 8)
+  const toolColGap = Math.max(60, 120 - toolNodes.length * 8)
+
+  const mainAreaWidth = Math.max(
+    minCanvasWidth - margin * 2,
+    subAgentNodes.length * agentNodeWidth + Math.max(0, subAgentNodes.length - 1) * agentColGap,
+    taskNodes.length * taskNodeWidth + Math.max(0, taskNodes.length - 1) * taskColGap,
+    toolNodes.length * taskNodeWidth + Math.max(0, toolNodes.length - 1) * toolColGap
+  )
+
+  // 第 1 行：主 Agent 居中
   const row1Y = margin
   if (mainNode) {
     mainNode.position = {
-      x: (leftAreaWidth - agentNodeWidth) / 2,
+      x: (mainAreaWidth - agentNodeWidth) / 2 + margin,
       y: row1Y
     }
   }
 
-  // 第 2 行：子 Agents 横向排列
+  // 第 2 行：子 Agents 横向排列居中
   const row2Y = row1Y + agentNodeHeight + rowGap
   const subAgentsTotalW = subAgentNodes.length * agentNodeWidth + Math.max(0, subAgentNodes.length - 1) * agentColGap
-  const subAgentsStartX = (leftAreaWidth - subAgentsTotalW) / 2
+  const subAgentsStartX = (mainAreaWidth - subAgentsTotalW) / 2 + margin
   subAgentNodes.forEach((node, i) => {
     node.position = {
       x: subAgentsStartX + i * (agentNodeWidth + agentColGap),
@@ -379,35 +460,45 @@ function autoLayoutNodes(nodeList: CollaborationNode[]): void {
     }
   })
 
-  // 第 3 行：任务节点
+  // 第 3 行：任务节点居中
   const row3Y = row2Y + agentNodeHeight + rowGap
-  const taskTotalW = taskNodes.length * taskNodeWidth + Math.max(0, taskNodes.length - 1) * agentColGap
-  const taskStartX = (leftAreaWidth - taskTotalW) / 2
+  const taskTotalW = taskNodes.length * taskNodeWidth + Math.max(0, taskNodes.length - 1) * taskColGap
+  const taskStartX = (mainAreaWidth - taskTotalW) / 2 + margin
   taskNodes.forEach((node, i) => {
     node.position = {
-      x: taskStartX + i * (taskNodeWidth + agentColGap),
+      x: taskStartX + i * (taskNodeWidth + taskColGap),
       y: row3Y
     }
   })
 
-  // 第 4 行：工具节点
-  const row4Y = row3Y + taskNodeHeight + rowGap
+  // 第 4 行：工具节点居中
+  const row4Y = row3Y + (taskNodes.length > 0 ? taskNodeHeight + rowGap : 0)
+  const toolTotalW = toolNodes.length * taskNodeWidth + Math.max(0, toolNodes.length - 1) * toolColGap
+  const toolStartX = (mainAreaWidth - toolTotalW) / 2 + margin
   toolNodes.forEach((node, i) => {
     node.position = {
-      x: margin + i * (taskNodeWidth + agentColGap),
+      x: toolStartX + i * (taskNodeWidth + toolColGap),
       y: row4Y
     }
   })
 
-  // 右侧：模型节点竖向排列
-  const modelGap = 20
-  const modelStartY = margin
-  modelNodes.forEach((node, i) => {
-    node.position = {
-      x: modelsAreaX,
-      y: modelStartY + i * (modelNodeHeight + modelGap)
-    }
-  })
+  // 模型区：整合在底部，横向排列，居中（仅当 modelPanelExpanded 时布局）
+  if (modelPanelExpanded.value && modelNodes.length > 0) {
+    const modelAreaY = row4Y + (toolNodes.length > 0 ? taskNodeHeight + rowGap : 0) + margin
+    const modelGap = 16
+    const modelTotalW = modelNodes.length * modelNodeWidth + Math.max(0, modelNodes.length - 1) * modelGap
+    const modelStartX = Math.max(margin, (mainAreaWidth + margin * 2 - modelTotalW) / 2)
+    modelNodes.forEach((node, i) => {
+      node.position = {
+        x: modelStartX + i * (modelNodeWidth + modelGap),
+        y: modelAreaY
+      }
+    })
+  } else {
+    modelNodes.forEach(node => {
+      node.position = { x: 0, y: 0 }
+    })
+  }
 }
 
 function getNodeStyle(node: CollaborationNode): Record<string, string> {
@@ -608,15 +699,79 @@ function handleCollaborationUpdate(data: unknown): void {
   autoLayoutNodes(nodes.value)
 }
 
+function handleCollaborationDynamicUpdate(dyn: CollaborationDynamic): void {
+  activePath.value = dyn.activePath || []
+  recentCalls.value = dyn.recentCalls || []
+
+  const agentNodes = nodes.value.filter(n => n.type === 'agent')
+  const modelNodes = nodes.value.filter(n => n.type === 'model')
+  const toolNodes = nodes.value.filter(n => n.type === 'tool')
+  const taskIdsBefore = new Set(nodes.value.filter(n => n.type === 'task').map(n => n.id))
+  const taskIdsAfter = new Set((dyn.taskNodes || []).map(n => n.id))
+
+  const topologyChanged = taskIdsBefore.size !== taskIdsAfter.size ||
+    [...taskIdsAfter].some(id => !taskIdsBefore.has(id))
+
+  for (const node of agentNodes) {
+    if (node.id && dyn.agentStatuses && dyn.agentStatuses[node.id] !== undefined) {
+      node.status = dyn.agentStatuses[node.id] as CollaborationNode['status']
+    }
+  }
+
+  const delegatesEdges = edges.value.filter(e => e.type === 'delegates')
+  const modelEdges = edges.value.filter(e => e.type === 'model')
+  const taskEdges = dyn.taskEdges || []
+
+  if (topologyChanged) {
+    nodes.value = [...agentNodes, ...(dyn.taskNodes || []), ...toolNodes, ...modelNodes]
+    edges.value = [...delegatesEdges, ...taskEdges, ...modelEdges]
+    autoLayoutNodes(nodes.value)
+  } else {
+    const taskNodeMap = new Map((dyn.taskNodes || []).map(n => [n.id, n]))
+    const currentTasks = nodes.value.filter(n => n.type === 'task')
+    for (const t of currentTasks) {
+      const updated = taskNodeMap.get(t.id)
+      if (updated) {
+        t.status = updated.status
+        t.name = updated.name
+        if (updated.timestamp) t.timestamp = updated.timestamp
+      }
+    }
+    edges.value = [...delegatesEdges, ...taskEdges, ...modelEdges]
+  }
+}
+
+async function fetchDynamicData(): Promise<void> {
+  if (loading.value || nodes.value.length === 0) return
+  try {
+    const res = await fetch('/api/collaboration/dynamic')
+    if (!res.ok) return
+    const data: CollaborationDynamic = await res.json()
+    handleCollaborationDynamicUpdate(data)
+  } catch {
+    // 静默失败
+  }
+}
+
 let unsubscribe: (() => void) | null = null
+let dynamicPollTimer: ReturnType<typeof setInterval> | null = null
+
+watch(modelPanelExpanded, () => {
+  autoLayoutNodes(nodes.value)
+})
 
 onMounted(() => {
   fetchData()
   unsubscribe = subscribe('collaboration', handleCollaborationUpdate)
+  dynamicPollTimer = setInterval(fetchDynamicData, DYNAMIC_POLL_INTERVAL_MS)
 })
 
 onUnmounted(() => {
   if (unsubscribe) unsubscribe()
+  if (dynamicPollTimer) {
+    clearInterval(dynamicPollTimer)
+    dynamicPollTimer = null
+  }
 })
 </script>
 
@@ -633,6 +788,8 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 
 .section-header h2 {
@@ -690,6 +847,39 @@ onUnmounted(() => {
   background: #f9fafb;
   min-height: 520px;
   position: relative;
+}
+
+/* 模型区折叠切换 */
+.model-panel-toggle {
+  position: absolute;
+  bottom: 1rem;
+  right: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #64748b;
+  z-index: 15;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.model-panel-toggle:hover {
+  background: #f8fafc;
+  border-color: #4a9eff;
+  color: #4a9eff;
+}
+
+.toggle-text {
+  font-weight: 500;
+}
+
+.toggle-icon {
+  font-size: 0.7rem;
 }
 
 .loading-state,

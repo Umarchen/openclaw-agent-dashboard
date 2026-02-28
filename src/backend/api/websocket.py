@@ -15,12 +15,40 @@ router = APIRouter()
 # 活跃的 WebSocket 连接
 active_connections: Set[WebSocket] = set()
 
+# 周期性推送间隔（秒）
+BROADCAST_INTERVAL_SEC = 8
+_broadcast_task: asyncio.Task | None = None
+
+
+async def _periodic_broadcast_loop():
+    """周期性广播完整状态，确保无文件变更时也有更新"""
+    while True:
+        await asyncio.sleep(BROADCAST_INTERVAL_SEC)
+        if active_connections:
+            await broadcast_full_state()
+
+
+def _ensure_broadcast_task():
+    """有连接时启动周期性推送"""
+    global _broadcast_task
+    if active_connections and (_broadcast_task is None or _broadcast_task.done()):
+        _broadcast_task = asyncio.create_task(_periodic_broadcast_loop())
+
+
+def _cancel_broadcast_task():
+    """无连接时停止周期性推送"""
+    global _broadcast_task
+    if not active_connections and _broadcast_task and not _broadcast_task.done():
+        _broadcast_task.cancel()
+        _broadcast_task = None
+
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 端点"""
     await websocket.accept()
     active_connections.add(websocket)
+    _ensure_broadcast_task()
     
     try:
         # 发送初始状态
@@ -34,35 +62,55 @@ async def websocket_endpoint(websocket: WebSocket):
             if data == 'ping':
                 await websocket.send_text('pong')
     except WebSocketDisconnect:
-        active_connections.remove(websocket)
+        active_connections.discard(websocket)
+        _cancel_broadcast_task()
 
 
 async def send_initial_state(websocket: WebSocket):
-    """发送初始状态"""
+    """发送初始状态（含 collaboration，避免前端协作流程空白）"""
     try:
-        # 获取 Agent 状态
         from .agents import get_agents as get_agents_list
-        from .subagents import get_subagents
+        from .subagents import get_subagents, get_tasks
         from .api_status import get_api_status_list
-        
-        # 获取 Agent 状态
+        from status.status_calculator import format_last_active
+
         agents = await get_agents_list()
-        
-        # 获取子代理状态
         subagents = await get_subagents()
-        
-        # 获取 API 状态
         api_status = await get_api_status_list()
-        
-        # 发送完整状态
-        await websocket.send_json({
-            'type': 'full_state',
-            'data': {
-                'agents': agents,
-                'subagents': subagents,
-                'apiStatus': api_status
-            }
-        })
+
+        for agent in agents:
+            if agent.get("lastActiveAt"):
+                agent["lastActiveFormatted"] = format_last_active(agent["lastActiveAt"])
+
+        data = {
+            'agents': agents,
+            'subagents': subagents,
+            'apiStatus': api_status,
+        }
+        # collaboration/tasks/performance 单独获取，失败不影响主数据
+        try:
+            from .collaboration import get_collaboration
+            collab = await get_collaboration()
+            data['collaboration'] = collab.model_dump() if hasattr(collab, "model_dump") else collab
+        except Exception as e:
+            print(f"[WebSocket] collaboration 获取失败: {e}")
+        try:
+            tasks_result = await get_tasks()
+            data['tasks'] = tasks_result.get("tasks", []) if isinstance(tasks_result, dict) else []
+        except Exception as e:
+            print(f"[WebSocket] tasks 获取失败: {e}")
+        try:
+            from .performance import get_real_stats
+            data['performance'] = await get_real_stats()
+        except Exception as e:
+            print(f"[WebSocket] performance 获取失败: {e}")
+        try:
+            from .workflow import list_workflows
+            data['workflows'] = await list_workflows()
+        except Exception as e:
+            print(f"[WebSocket] workflows 获取失败: {e}")
+
+        await websocket.send_json({'type': 'full_state', 'data': data})
     except Exception as e:
         print(f"发送初始状态失败: {e}")
 
@@ -132,7 +180,9 @@ async def broadcast_message(message: dict):
     
     # 清理断开的连接
     for connection in disconnected:
-        active_connections.remove(connection)
+        active_connections.discard(connection)
+    if not active_connections:
+        _cancel_broadcast_task()
 
 
 async def broadcast_full_state():
@@ -145,12 +195,14 @@ async def broadcast_full_state():
         from .api_status import get_api_status_list
         from .collaboration import get_collaboration
         from .performance import get_real_stats
+        from .workflow import list_workflows
 
         agents = await get_agents_list()
         subagents = await get_subagents()
         api_status = await get_api_status_list()
         collaboration = await get_collaboration()
         performance = await get_real_stats()
+        workflows = await list_workflows()
 
         # tasks 来自 subagents 的 get_tasks
         from .subagents import get_tasks
@@ -172,6 +224,7 @@ async def broadcast_full_state():
                 "collaboration": collaboration.model_dump() if hasattr(collaboration, "model_dump") else collaboration,
                 "tasks": tasks,
                 "performance": performance,
+                "workflows": workflows,
             },
         })
     except Exception as e:

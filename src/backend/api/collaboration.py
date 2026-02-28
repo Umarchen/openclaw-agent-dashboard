@@ -127,18 +127,10 @@ async def get_collaboration():
         agents_list = get_agents_list()
         active_runs = get_active_runs()
 
-        # 分离主 Agent (老 K) 和子 Agents
-        main_agent_config = None
-        sub_agents_config = []
+        main_agent_id = get_main_agent_id()
+        main_agent_config = next((a for a in agents_list if a.get('id') == main_agent_id), None)
+        sub_agents_config = [a for a in agents_list if a.get('id') != main_agent_id]
 
-        for agent in agents_list:
-            agent_id = agent.get('id', '')
-            if agent_id == 'main':
-                main_agent_config = agent
-            else:
-                sub_agents_config.append(agent)
-
-        # 0. 收集 Agent 模型配置、模型列表
         all_agents = [a for a in agents_list if a.get('id')]
         for agent in all_agents:
             aid = agent.get('id', '')
@@ -146,19 +138,18 @@ async def get_collaboration():
         models_list = get_all_models_from_agents()
         recent_calls = _get_recent_model_calls(30)
 
-        # 1. 主节点：老 K (Project Manager)
+        main_display_name = (main_agent_config.get('name') if main_agent_config else None) or "主 Agent"
         main_status = "working" if active_runs else "idle"
         main_agent = CollaborationNode(
-            id="main",
+            id=main_agent_id,
             type="agent",
-            name=main_agent_config.get('name', '老 K') if main_agent_config else "老 K",
+            name=main_display_name,
             status=main_status,
             timestamp=int(__import__('time').time() * 1000),
-            metadata=agent_models.get('main')
+            metadata=agent_models.get(main_agent_id)
         )
         nodes.append(main_agent)
 
-        # 2. 子 Agent 节点：分析师、架构师、DevOps 等（始终展示）
         for agent in sub_agents_config:
             agent_id = agent.get('id', '')
             agent_name = agent.get('name', agent_id)
@@ -181,10 +172,9 @@ async def get_collaboration():
             )
             nodes.append(sub_node)
 
-            # 创建边：老 K -> 子 Agent（任务委托）
             edges.append(CollaborationEdge(
-                id=f"edge-main-{agent_id}",
-                source="main",
+                id=f"edge-{main_agent_id}-{agent_id}",
+                source=main_agent_id,
                 target=agent_id,
                 type="delegates",
                 label="委托"
@@ -250,7 +240,7 @@ async def get_collaboration():
                 label="执行"
             ))
 
-            active_path.extend(["main", agent_id, task_id])
+            active_path.extend([main_agent_id, agent_id, task_id])
 
     except Exception as e:
         print(f"Error building collaboration data: {e}")
@@ -258,8 +248,12 @@ async def get_collaboration():
         traceback.print_exc()
 
     if not nodes:
+        try:
+            main_id = get_main_agent_id()
+        except Exception:
+            main_id = 'main'
         nodes = [
-            CollaborationNode(id="main", type="agent", name="老 K", status="idle"),
+            CollaborationNode(id=main_id, type="agent", name="主 Agent", status="idle"),
         ]
 
     # 构建 recentCalls 带 id

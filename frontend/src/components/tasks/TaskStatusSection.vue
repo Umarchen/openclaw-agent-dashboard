@@ -95,6 +95,10 @@
             <span class="detail-label">执行者</span>
             <span class="detail-value">{{ selectedTask.agentName }}</span>
           </div>
+          <div v-if="selectedTask.agentWorkspace" class="detail-row">
+            <span class="detail-label">Agent 工作区路径</span>
+            <span class="detail-value path-value">{{ selectedTask.agentWorkspace }}</span>
+          </div>
           <div v-if="selectedTask.startTime" class="detail-row">
             <span class="detail-label">耗时</span>
             <span class="detail-value">{{ formatDuration(selectedTask) }}</span>
@@ -111,6 +115,12 @@
           <div v-if="selectedTask.status === 'failed'" class="detail-row">
             <span class="detail-label">失败原因</span>
             <span class="detail-value error">{{ formatErrorDisplay(selectedTask.error) }}</span>
+          </div>
+          <div v-if="selectedTask.status === 'completed' && selectedTask.generatedFiles?.length" class="detail-row">
+            <span class="detail-label">生成的文件</span>
+            <ul class="generated-files-list">
+              <li v-for="f in selectedTask.generatedFiles" :key="f" class="file-path-item">{{ f }}</li>
+            </ul>
           </div>
           <div v-if="selectedTask.status === 'completed' && selectedTask.output" class="detail-row">
             <span class="detail-label">Agent 输出</span>
@@ -319,9 +329,11 @@ function mapTaskFromApi(t: any): Task {
     endTime: s.endTime,
     agentId: s.agentId,
     agentName: s.agentName,
+    agentWorkspace: s.agentWorkspace,
     taskPath: s.taskPath,
     error: s.error,
-    output: s.output
+    output: s.output,
+    generatedFiles: s.generatedFiles
   }))
   return {
     id: t.id,
@@ -333,9 +345,11 @@ function mapTaskFromApi(t: any): Task {
     endTime: t.endTime,
     agentId: t.agentId,
     agentName: t.agentName,
+    agentWorkspace: t.agentWorkspace,
     taskPath: t.taskPath,
     error: t.error,
     output: t.output,
+    generatedFiles: t.generatedFiles,
     subtasks: subtasks.length ? subtasks : undefined
   }
 }
@@ -662,6 +676,26 @@ onUnmounted(() => {
 .detail-value.task-content {
   white-space: pre-wrap;
   line-height: 1.5;
+}
+
+.detail-value.path-value {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.generated-files-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.file-path-item {
+  word-break: break-all;
+  margin-bottom: 0.25rem;
 }
 
 .detail-value.output-content {

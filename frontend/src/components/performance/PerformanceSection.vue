@@ -159,13 +159,20 @@
               <div class="detail-summary">
                 {{ detailData.totalCalls }} 次调用 · {{ formatNumber(detailData.totalTokens) }} Tokens
               </div>
+              <div v-if="detailData.calls.some((c: { trigger?: string }) => c.trigger?.startsWith('【完成回传】'))" class="detail-call-hint">
+                <span class="hint-badge">完成回传</span>
+                <span class="hint-text">此时间戳为子任务完成后的回传时间，不是派发时间</span>
+              </div>
               <div v-for="(call, i) in detailData.calls" :key="i" class="detail-call-item">
                 <div class="call-header">
                   <span class="call-agent">{{ call.agentId }}</span>
                   <span class="call-time">{{ call.time }}</span>
                   <span class="call-tokens">{{ formatNumber(call.tokens) }} tokens</span>
                 </div>
-                <div class="call-trigger" :title="call.trigger">{{ call.trigger }}</div>
+                <div class="call-trigger" :title="call.trigger">
+                  <span v-if="call.trigger?.startsWith('【完成回传】')" class="call-trigger-badge">完成回传</span>
+                  {{ call.trigger?.replace(/^【完成回传】/, '') }}
+                </div>
                 <div v-if="call.model" class="call-meta">模型: {{ call.model }}</div>
               </div>
             </div>
@@ -895,6 +902,29 @@ watch(selectedRange, () => {
   flex-direction: column;
   gap: 0.75rem;
 }
+.detail-call-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
+.detail-call-hint .hint-badge {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  padding: 0.15rem 0.5rem;
+  background: #dbeafe;
+  border-radius: 4px;
+}
+.detail-call-hint .hint-text {
+  font-size: 0.8rem;
+  color: #1e40af;
+}
+
 .detail-call-item {
   padding: 0.75rem 1rem;
   background: #f9fafb;
@@ -924,8 +954,18 @@ watch(selectedRange, () => {
   font-size: 0.85rem;
   color: #555;
   word-break: break-word;
+  margin-top: 0.25rem;
   white-space: pre-wrap;
-  max-width: 100%;
+}
+.detail-call-item .call-trigger-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  padding: 0.1rem 0.4rem;
+  background: #dbeafe;
+  border-radius: 4px;
+  margin-right: 0.35rem;
 }
 .detail-call-item .call-meta {
   font-size: 0.75rem;

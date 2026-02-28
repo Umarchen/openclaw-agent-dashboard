@@ -12,7 +12,8 @@ from data.subagent_reader import (
     load_subagent_runs,
     get_active_runs,
     get_agent_runs,
-    get_agent_output_for_run
+    get_agent_output_for_run,
+    get_agent_files_for_run
 )
 from data.task_history import merge_with_history
 import time
@@ -150,6 +151,18 @@ def _get_agent_name(agent_id: str) -> str:
         return agent_id
 
 
+def _get_agent_workspace(agent_id: str) -> Optional[str]:
+    """从配置获取 Agent 工作区路径"""
+    if not agent_id:
+        return None
+    try:
+        from data.config_reader import get_agent_config
+        config = get_agent_config(agent_id)
+        return config.get('workspace') if config else None
+    except Exception:
+        return None
+
+
 def _map_run_status(run: Dict[str, Any]) -> str:
     """映射 run 状态为任务状态: pending/running/completed/failed"""
     ended_at = run.get('endedAt')
@@ -257,18 +270,22 @@ def _run_to_task(run: Dict[str, Any]) -> Dict[str, Any]:
         'endTime': run.get('endedAt'),
         'agentId': agent_id,
         'agentName': _get_agent_name(agent_id),
+        'agentWorkspace': _get_agent_workspace(agent_id),
         'error': error_msg,
         'childSessionKey': run.get('childSessionKey')
     }
     if task_path:
         result['taskPath'] = task_path
-    # 任务成功时，从 session 提取 Agent 输出
+    # 任务成功时，从 session 提取 Agent 输出和生成的文件
     if status == 'completed':
         child_key = run.get('childSessionKey', '')
         if child_key:
             output = get_agent_output_for_run(child_key)
             if output:
                 result['output'] = output
+            files = get_agent_files_for_run(child_key)
+            if files:
+                result['generatedFiles'] = files
     return result
 
 
@@ -280,6 +297,19 @@ async def get_tasks():
         all_runs.sort(key=lambda x: x.get('startedAt', 0), reverse=True)
 
         tasks = merge_with_history(all_runs, _run_to_task)
+        # 对历史任务补充缺失字段
+        for t in tasks:
+            if t.get('status') == 'completed' and t.get('childSessionKey'):
+                if not t.get('output'):
+                    output = get_agent_output_for_run(t['childSessionKey'])
+                    if output:
+                        t['output'] = output
+                if not t.get('generatedFiles'):
+                    files = get_agent_files_for_run(t['childSessionKey'])
+                    if files:
+                        t['generatedFiles'] = files
+            if not t.get('agentWorkspace') and t.get('agentId'):
+                t['agentWorkspace'] = _get_agent_workspace(t['agentId'])
         return {'tasks': tasks}
     except Exception as e:
         print(f"Error in get_tasks: {e}")

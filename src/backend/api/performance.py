@@ -141,9 +141,11 @@ def parse_session_file_with_details(session_path: Path, agent_id: str) -> List[D
                             tr_parent_id = parent_of_tr.get('parentId', '')
                             if tool_call_id and tr_parent_id and tr_parent_id in id_to_msg:
                                 detail = _extract_tool_call_detail(id_to_msg[tr_parent_id]['msg'], tool_call_id)
-                                trigger = detail if detail else f"工具: {tool}"
+                                # 重要：这是 toolResult 触发的消息，即工具执行完成后的回传，不是工具调用本身
+                                # 【完成回传】前缀醒目，因果顺序：派发 → 子Agent执行 → 完成回传
+                                trigger = f"【完成回传】{detail}" if detail else f"【完成回传】工具: {tool}"
                             else:
-                                trigger = f"工具: {tool}"
+                                trigger = f"【完成回传】工具: {tool}"
                     
                     records.append({
                         'timestamp': ts,

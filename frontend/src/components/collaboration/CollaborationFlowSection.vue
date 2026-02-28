@@ -180,6 +180,10 @@
           <button class="close-btn" @click="selectedCall = null">×</button>
         </div>
         <div class="call-detail-body">
+          <div v-if="selectedCall.trigger?.startsWith('【完成回传】')" class="call-detail-row trigger-type-badge">
+            <span class="trigger-badge">完成回传</span>
+            <span class="trigger-badge-desc">此时间戳为子任务完成后的回传时间，不是派发时间。因果顺序：派发 → 子Agent执行 → 完成回传</span>
+          </div>
           <div class="call-detail-row">
             <span class="label">Agent</span>
             <span class="value">{{ selectedCall.agentId }}</span>
@@ -198,7 +202,9 @@
           </div>
           <div class="call-detail-row trigger">
             <span class="label">触发</span>
-            <span class="value">{{ selectedCall.trigger }}</span>
+            <div class="value">
+              <span>{{ selectedCall.trigger?.replace(/^【完成回传】/, '') }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -938,6 +944,33 @@ onUnmounted(() => {
 .call-detail-row .value {
   color: #333;
   word-break: break-word;
+}
+
+.trigger-type-badge {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0.6rem 0.75rem;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  margin-bottom: 0.25rem;
+}
+
+.trigger-badge {
+  display: inline-block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  padding: 0.15rem 0.5rem;
+  background: #dbeafe;
+  border-radius: 4px;
+}
+
+.trigger-badge-desc {
+  font-size: 0.8rem;
+  color: #1e40af;
+  line-height: 1.4;
 }
 
 .call-detail-row.trigger .value {

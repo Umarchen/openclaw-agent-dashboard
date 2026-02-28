@@ -126,3 +126,85 @@ def get_agent_output_for_run(child_session_key: str, max_chars: int = 10000) -> 
     except Exception as e:
         print(f"get_agent_output_for_run 失败: {e}")
         return None
+
+
+def get_agent_files_for_run(child_session_key: str) -> List[str]:
+    """
+    从子 Agent 的 session 中提取本次任务生成/修改的文件路径。
+    解析 write、edit 等工具调用中的 path 参数。
+    
+    Returns:
+        去重后的文件路径列表
+    """
+    if not child_session_key or ':' not in child_session_key:
+        return []
+    parts = child_session_key.split(':')
+    if len(parts) < 2 or parts[0] != 'agent':
+        return []
+    agent_id = parts[1]
+    
+    openclaw_path = Path.home() / ".openclaw"
+    sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
+    if not sessions_index.exists():
+        return []
+    
+    try:
+        with open(sessions_index, 'r', encoding='utf-8') as f:
+            index_data = json.load(f)
+        entry = index_data.get(child_session_key)
+        if not entry:
+            return []
+        session_file = entry.get('sessionFile')
+        session_id = entry.get('sessionId')
+        if not session_file and not session_id:
+            return []
+        if not session_file:
+            sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+            session_file = str(sessions_dir / f"{session_id}.jsonl")
+        
+        session_path = Path(session_file)
+        if not session_path.exists():
+            return []
+        
+        file_paths: List[str] = []
+        file_tools = ('write', 'edit')
+        
+        with open(session_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    if data.get('type') != 'message':
+                        continue
+                    msg = data.get('message', {})
+                    if msg.get('role') != 'assistant':
+                        continue
+                    content = msg.get('content', [])
+                    for c in content:
+                        if not isinstance(c, dict) or c.get('type') != 'toolCall':
+                            continue
+                        name = c.get('name', '')
+                        if name not in file_tools:
+                            continue
+                        args = c.get('arguments', {})
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except json.JSONDecodeError:
+                                continue
+                        path = args.get('path') or args.get('file_path')
+                        if path and isinstance(path, str) and path.strip():
+                            file_paths.append(path.strip())
+                except (json.JSONDecodeError, KeyError):
+                    continue
+        
+        # 去重并保持顺序
+        seen = set()
+        result = []
+        for p in file_paths:
+            if p not in seen:
+                seen.add(p)
+                result.append(p)
+        return result
+    except Exception as e:
+        print(f"get_agent_files_for_run 失败: {e}")
+        return []

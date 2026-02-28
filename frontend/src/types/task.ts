@@ -12,10 +12,12 @@ export interface Task {
   endTime?: number
   agentId?: string
   agentName?: string
+  agentWorkspace?: string  // Agent 工作区路径
   taskPath?: string
   subtasks?: Task[]
   error?: string
   output?: string // 任务成功时 Agent 的输出内容
+  generatedFiles?: string[] // 本次任务生成/修改的文件路径
   metadata?: Record<string, unknown>
 }
 

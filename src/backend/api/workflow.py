@@ -5,11 +5,22 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List, Optional
 from pathlib import Path
+import os
 
 router = APIRouter()
 
+
+def _get_project_root() -> Path:
+    """获取项目根目录，支持环境变量配置"""
+    env_root = os.environ.get("VRT_PROJECTS_ROOT")
+    if env_root:
+        return Path(env_root).expanduser()
+    # 默认使用 ~/vrt-projects
+    return Path.home() / "vrt-projects"
+
+
 # 项目根目录
-PROJECT_ROOT = Path("/home/ubuntu/vrt-projects")
+PROJECT_ROOT = _get_project_root()
 
 
 class WorkflowStatus(BaseModel):

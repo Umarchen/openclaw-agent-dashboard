@@ -2,10 +2,22 @@
 任务历史持久化 - 保存已完成任务，避免 runs.json 清空后数据丢失
 """
 import json
+import os
 from pathlib import Path
 from typing import List, Dict, Any
 
-DASHBOARD_DIR = Path.home() / ".openclaw" / "dashboard"
+
+def _openclaw_home() -> Path:
+    """OpenClaw 根目录，优先使用 OPENCLAW_HOME 环境变量"""
+    env = os.environ.get("OPENCLAW_HOME")
+    if env:
+        p = Path(env).expanduser()
+        if p.exists():
+            return p
+    return Path.home() / ".openclaw"
+
+
+DASHBOARD_DIR = _openclaw_home() / "dashboard"
 TASK_HISTORY_PATH = DASHBOARD_DIR / "task_history.json"
 MAX_HISTORY_ITEMS = 200
 

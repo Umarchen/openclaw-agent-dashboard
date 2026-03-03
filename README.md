@@ -1,6 +1,6 @@
 # OpenClaw Agent Dashboard
 
-多 Agent 可视化看板 - 实时展示 OpenClaw Agent 状态、任务进度和 API 异常。
+多 Agent 可视化看板 - 实时展示 OpenClaw Agent 状态、任务进度、API 异常和错误分析。
 
 ## 使用方式
 
@@ -15,8 +15,12 @@
 
 - ✅ **工位视图** - 以卡片形式展示主 Agent 和子 Agent
 - ✅ **状态展示** - 空闲/工作中/异常三种状态
-- ✅ **产出查看** - 点击查看 Agent 最近输出
+- ✅ **时序视图** - 展示 Agent 执行步骤的时间线
+- ✅ **链路视图** - 展示主 Agent 与子 Agent 的任务链路
+- ✅ **Agent 配置** - 查看和修改 Agent 的模型配置
+- ✅ **错误分析** - 错误根因分析、分类和修复建议
 - ✅ **API 状态** - 展示 API 服务异常
+- ✅ **性能监控** - Token 使用、响应时间等
 - ✅ **自动刷新** - 每 10 秒自动刷新数据
 
 ## 技术栈
@@ -47,7 +51,7 @@ openclaw-agent-dashboard/
 │   └── frontend/          # 前端代码
 │       ├── src/           # Vue 组件
 │       └── index.html
-├── tests/                  # 测试
+├── plugin/dashboard/       # 插件版本
 └── README.md
 ```
 
@@ -69,25 +73,30 @@ cd frontend
 npm install
 ```
 
-### 2. 启动后端
-
-```bash
-cd src/backend
-uvicorn main:app --reload --port 8000
-```
-
-### 3. 启动前端（开发模式）
+### 2. 构建前端
 
 ```bash
 cd frontend
-npm run dev
+npm run build
+```
+
+### 3. 启动后端
+
+```bash
+cd src/backend
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 ### 4. 访问看板
 
-打开浏览器访问: http://localhost:5173
+打开浏览器访问: http://localhost:8000
 
-> 后端会托管前端静态文件。若已执行 `npm run build`，也可直接访问 http://localhost:8000 使用生产构建版本。
+## 环境变量
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `OPENCLAW_HOME` | OpenClaw 配置目录 | `~/.openclaw` |
+| `VRT_PROJECTS_ROOT` | 项目根目录 | `~/vrt-projects` |
 
 ## API 文档
 
@@ -99,6 +108,11 @@ npm run dev
 |------|------|------|
 | GET | `/api/agents` | 获取所有 Agent 列表及状态 |
 | GET | `/api/agents/:id` | 获取单个 Agent 详情 |
+| GET | `/api/agent-config/:id` | 获取 Agent 配置 |
+| PUT | `/api/agent-config/:id/model` | 更新 Agent 模型配置 |
+| GET | `/api/error-analysis/:id` | 获取 Agent 错误分析 |
+| GET | `/api/timeline/:id` | 获取 Agent 时序数据 |
+| GET | `/api/chains` | 获取任务链路 |
 | GET | `/api/subagents` | 获取子代理运行记录 |
 | GET | `/api/workflows` | 获取项目工作流状态 |
 | GET | `/api/api-status` | 获取 API 服务状态 |
@@ -110,7 +124,7 @@ npm run dev
 - `~/.openclaw/openclaw.json` - Agent 配置
 - `~/.openclaw/subagents/runs.json` - 子代理运行记录
 - `~/.openclaw/agents/*/sessions/*.jsonl` - 会话消息
-- `~/.openclaw/workspace-*/memory/model-failures.log` - API 异常日志
+- `~/.openclaw/agents/*/sessions/*.deleted.*` - 归档的子任务会话
 
 ## 部署
 
@@ -140,7 +154,7 @@ npm run install-plugin
 
 **同事使用**：克隆仓库后执行上述一条命令即可，脚本会自动完成构建、安装、Python 依赖。
 
-### 开发调试
+## 开发调试
 
 修改插件代码后，需重新构建并安装才能生效：
 
@@ -148,19 +162,6 @@ npm run install-plugin
 npm run deploy
 openclaw gateway restart
 ```
-
-详见 `plugin/README.md`。
-
-## 开发说明
-
-### 添加新 Agent 类型
-
-1. 在 `AgentCard.vue` 中添加新的 emoji 规则
-2. 状态计算逻辑在 `status/status_calculator.py`
-
-### 自定义刷新间隔
-
-在 `App.vue` 中修改 `autoRefreshSeconds` 的值（默认 10 秒）。
 
 ## 注意事项
 
@@ -174,4 +175,4 @@ MIT
 
 ---
 
-*OpenClaw Agent Dashboard v1.0 - 2026-02-26*
+*OpenClaw Agent Dashboard v1.1 - 2026-03-03*

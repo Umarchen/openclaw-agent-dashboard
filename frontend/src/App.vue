@@ -31,6 +31,21 @@
         <PerformanceSection />
       </section>
 
+      <!-- 机制追踪 -->
+      <section class="mechanism-section">
+        <MechanismTrackingPanel />
+      </section>
+
+      <!-- Token 分析 -->
+      <section class="token-section">
+        <TokenAnalysisPanel />
+      </section>
+
+      <!-- 错误中心 -->
+      <section class="error-center-section">
+        <ErrorCenterPanel />
+      </section>
+
       <!-- 项目流水线 -->
       <section class="workflow">
         <WorkflowView />
@@ -77,6 +92,9 @@ import PerformanceMonitor from './components/PerformanceMonitor.vue'
 import CollaborationFlowWrapper from './components/collaboration/CollaborationFlowWrapper.vue'
 import TaskStatusSection from './components/tasks/TaskStatusSection.vue'
 import PerformanceSection from './components/performance/PerformanceSection.vue'
+import MechanismTrackingPanel from './components/MechanismTrackingPanel.vue'
+import TokenAnalysisPanel from './components/TokenAnalysisPanel.vue'
+import ErrorCenterPanel from './components/ErrorCenterPanel.vue'
 
 // 数据管理
 import { getRealtimeManager, getStateManager, getEventDispatcher } from './managers'
@@ -326,6 +344,18 @@ main {
 
 
 .performance-section {
+  margin-bottom: 2rem;
+}
+
+.mechanism-section {
+  margin-bottom: 2rem;
+}
+
+.token-section {
+  margin-bottom: 2rem;
+}
+
+.error-center-section {
   margin-bottom: 2rem;
 }
 

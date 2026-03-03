@@ -47,15 +47,52 @@
             </div>
           </div>
         </div>
+
+        <div class="section session-detail">
+          <h3>会话详情</h3>
+          <div v-if="loadingTurns" class="loading">加载中...</div>
+          <div v-else-if="turns.length === 0" class="empty">暂无会话记录</div>
+          <div v-else class="turns-list">
+            <div
+              v-for="(turn, idx) in turns"
+              :key="idx"
+              class="turn-item"
+              :class="`turn-${turn.role}`"
+            >
+              <div class="turn-header">
+                <span class="turn-role">{{ roleLabel(turn.role) }}</span>
+                <span v-if="turn.toolName" class="turn-tool">{{ turn.toolName }}</span>
+                <span v-if="turn.usage" class="turn-usage">
+                  in {{ turn.usage.input }} / out {{ turn.usage.output }}
+                  <span v-if="turn.usage.cacheRead">(cache {{ turn.usage.cacheRead }})</span>
+                </span>
+                <span v-if="turn.stopReason === 'error'" class="turn-error">[错误]</span>
+              </div>
+              <div class="turn-content">
+                <template v-for="(c, i) in turn.content" :key="i">
+                  <div v-if="c.type === 'text' && c.text" class="content-text">{{ truncate(c.text, 200) }}</div>
+                  <div v-else-if="c.type === 'thinking' && c.text" class="content-thinking">思考: {{ truncate(c.text, 100) }}</div>
+                  <div v-else-if="c.type === 'toolResult'" class="content-tool-result">
+                    {{ c.status || c.error ? `[${c.status || 'error'}]` : '' }} {{ truncate(String(c.content || c.error || ''), 150) }}
+                  </div>
+                </template>
+                <div v-if="turn.toolCalls?.length" class="content-tool-calls">
+                  <span v-for="tc in turn.toolCalls" :key="tc.id">{{ tc.name }}({{ tc.arguments ? '...' : '' }})</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 interface Agent {
+  id: string
   name: string
   status: 'idle' | 'working' | 'down'
   currentTask?: string
@@ -83,6 +120,47 @@ const statusText = computed(() => {
   }
   return statusMap[props.agent.status] || '未知'
 })
+
+const turns = ref<Array<{
+  turnIndex: number
+  role: string
+  content: Array<{ type: string; text?: string; content?: string; status?: string; error?: string }>
+  usage?: { input: number; output: number; cacheRead?: number }
+  toolCalls?: Array<{ name: string; id?: string; arguments?: unknown }>
+  toolName?: string
+  stopReason?: string
+}>>([])
+const loadingTurns = ref(false)
+
+function roleLabel(role: string) {
+  const map: Record<string, string> = { user: '用户', assistant: '助手', toolResult: '工具结果' }
+  return map[role] || role
+}
+
+function truncate(s: string, max: number) {
+  if (!s || s.length <= max) return s
+  return s.slice(0, max) + '...'
+}
+
+async function loadTurns() {
+  if (!props.agent?.id) return
+  loadingTurns.value = true
+  try {
+    const res = await fetch(`/api/agents/${props.agent.id}/output?limit=30`)
+    if (res.ok) {
+      const data = await res.json()
+      turns.value = data.turns || []
+    } else {
+      turns.value = []
+    }
+  } catch {
+    turns.value = []
+  } finally {
+    loadingTurns.value = false
+  }
+}
+
+watch(() => props.agent?.id, loadTurns, { immediate: true })
 </script>
 
 <style scoped>
@@ -240,5 +318,85 @@ const statusText = computed(() => {
 .activity-item.down {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.session-detail {
+  margin-top: 1rem;
+}
+
+.session-detail .loading,
+.session-detail .empty {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.turns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.turn-item {
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  border-left: 4px solid #e5e7eb;
+}
+
+.turn-item.turn-user {
+  border-left-color: #4a9eff;
+  background: #f0f9ff;
+}
+
+.turn-item.turn-assistant {
+  border-left-color: #22c55e;
+  background: #f0fdf4;
+}
+
+.turn-item.turn-toolResult {
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.turn-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.turn-tool {
+  font-size: 0.85em;
+  color: #6b7280;
+}
+
+.turn-usage {
+  font-size: 0.8em;
+  color: #9ca3af;
+}
+
+.turn-error {
+  color: #dc2626;
+}
+
+.turn-content {
+  color: #4b5563;
+}
+
+.content-text,
+.content-thinking,
+.content-tool-result,
+.content-tool-calls {
+  margin-top: 0.25rem;
+  word-break: break-word;
+}
+
+.content-thinking {
+  font-style: italic;
+  color: #6b7280;
 }
 </style>

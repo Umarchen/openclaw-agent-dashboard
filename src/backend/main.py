@@ -47,7 +47,7 @@ app.add_middleware(
 import sys
 sys.path.append(str(Path(__file__).parent))
 
-from api import agents, subagents, workflow, api_status, websocket, performance, collaboration, agents_config, mechanisms, errors
+from api import agents, subagents, workflow, api_status, websocket, performance, collaboration, agents_config, mechanisms, errors, timeline
 
 # 注册 API 路由
 app.include_router(agents.router, prefix="/api", tags=["agents"])
@@ -60,6 +60,7 @@ app.include_router(api_status.router, prefix="/api", tags=["api-status"])
 app.include_router(websocket.router, tags=["websocket"])
 app.include_router(performance.router, prefix="/api", tags=["performance"])
 app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
+app.include_router(timeline.router, prefix="/api", tags=["timeline"])
 
 
 @app.get("/health")

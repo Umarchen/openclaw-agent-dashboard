@@ -107,6 +107,20 @@
             </button>
             <button
               class="tab-btn"
+              :class="{ active: activeView === 'config' }"
+              @click="activeView = 'config'"
+            >
+              ⚙️ 配置
+            </button>
+            <button
+              class="tab-btn"
+              :class="{ active: activeView === 'errors' }"
+              @click="activeView = 'errors'"
+            >
+              🔍 错误分析
+            </button>
+            <button
+              class="tab-btn"
               :class="{ active: activeView === 'simple' }"
               @click="activeView = 'simple'"
             >
@@ -125,6 +139,16 @@
           <!-- 链路视图 -->
           <div v-else-if="activeView === 'chain'" class="chain-container">
             <TaskChainView :autoRefresh="true" :refreshInterval="10" />
+          </div>
+
+          <!-- 配置视图 -->
+          <div v-else-if="activeView === 'config'" class="config-container">
+            <AgentConfigPanel :agentId="agent.id" />
+          </div>
+
+          <!-- 错误分析视图 -->
+          <div v-else-if="activeView === 'errors'" class="errors-container">
+            <ErrorAnalysisView :agentId="agent.id" />
           </div>
 
           <!-- 简单视图 (原有) -->
@@ -172,6 +196,8 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { TimelineView } from './timeline'
 import { TaskChainView } from './chain'
+import AgentConfigPanel from './AgentConfigPanel.vue'
+import ErrorAnalysisView from './ErrorAnalysisView.vue'
 
 interface Agent {
   id: string
@@ -203,7 +229,7 @@ defineEmits<{
   close: []
 }>()
 
-const activeView = ref<'timeline' | 'chain' | 'simple'>('timeline')
+const activeView = ref<'timeline' | 'chain' | 'config' | 'errors' | 'simple'>('timeline')
 const subagentRun = ref<SubagentRun | null>(null)
 const currentTime = ref(Date.now())
 let timeUpdateInterval: ReturnType<typeof setInterval> | null = null
@@ -569,7 +595,9 @@ onUnmounted(() => {
 }
 
 .timeline-container,
-.chain-container {
+.chain-container,
+.config-container,
+.errors-container {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   overflow: hidden;

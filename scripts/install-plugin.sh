@@ -46,15 +46,25 @@ check_cmd openclaw "npm install -g openclaw"
 echo ""
 echo "✓ 前置条件检查通过"
 
-# 2. 构建前端
-echo ""
-echo ">>> 1/4 构建前端..."
-(cd frontend && npm install --silent 2>/dev/null; npm run build)
+# 2. 构建前端（若通过 npm run deploy 调用，pack 已构建，跳过）
+if [ -d "$ROOT/frontend/dist" ] && [ -n "$(ls -A $ROOT/frontend/dist 2>/dev/null)" ]; then
+  echo ""
+  echo ">>> 1/4 前端已构建，跳过"
+else
+  echo ""
+  echo ">>> 1/4 构建前端..."
+  (cd frontend && npm install --silent 2>/dev/null; npm run build)
+fi
 
-# 3. 打包插件
-echo ""
-echo ">>> 2/4 打包插件..."
-node scripts/build-plugin.js
+# 3. 打包插件（若通过 npm run deploy 调用，pack 已完成，跳过）
+if [ -d "$ROOT/plugin/dashboard" ] && [ -f "$ROOT/plugin/dashboard/main.py" ]; then
+  echo ""
+  echo ">>> 2/4 插件已打包，跳过"
+else
+  echo ""
+  echo ">>> 2/4 打包插件..."
+  node scripts/build-plugin.js
+fi
 
 # 4. 安装插件（若已存在则先删除）
 if [ -d "$PLUGIN_PATH" ]; then

@@ -38,20 +38,20 @@ function copyDir(src, dest, exclude = []) {
   }
 }
 
-console.log('[build-plugin] 1. 构建前端...');
+console.log('[pack] 1. 构建前端...');
 execSync('npm run build', { cwd: FRONTEND_DIR, stdio: 'inherit' });
 
-console.log('[build-plugin] 2. 复制 backend -> plugin/dashboard');
+console.log('[pack] 2. 复制 backend -> plugin/dashboard');
 rmrf(DASHBOARD_DEST);
 copyDir(BACKEND_SRC, DASHBOARD_DEST, ['__pycache__', '.pytest_cache']);
 
-console.log('[build-plugin] 3. 复制 frontend/dist -> plugin/frontend-dist');
+console.log('[pack] 3. 复制 frontend/dist -> plugin/frontend-dist');
 rmrf(FRONTEND_DEST);
 const frontendDist = path.join(FRONTEND_DIR, 'dist');
 if (fs.existsSync(frontendDist)) {
   copyDir(frontendDist, FRONTEND_DEST);
 } else {
-  console.warn('[build-plugin] frontend/dist 不存在，跳过');
+  console.warn('[pack] frontend/dist 不存在，跳过');
 }
 
-console.log('[build-plugin] 完成');
+console.log('[pack] 完成');

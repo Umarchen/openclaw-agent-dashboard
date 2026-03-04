@@ -29,8 +29,33 @@ npm run deploy
 
 | 命令 | 说明 |
 |------|------|
-| `npm run deploy` | 打包 + 安装到 OpenClaw（推荐） |
+| `npm run deploy` | 打包 + 安装到 OpenClaw（首次安装或升级） |
+| `npm run upgrade` | 拉取最新代码 + 部署（推荐用于升级） |
 | `npm run pack` | 仅打包插件，不安装（开发调试用） |
+
+### 升级插件
+
+```bash
+cd openclaw-agent-dashboard
+npm run upgrade
+```
+
+输出示例：
+```
+=== OpenClaw Agent Dashboard 插件升级 ===
+
+  1.0.0 → 1.1.0
+
+✓ 前置条件检查通过
+>>> 1/4 构建前端...
+>>> 2/4 打包插件...
+>>> 3/4 移除旧版本...
+>>> 4/4 安装新版本...
+>>> 检查 Python 依赖...
+✓ Python 依赖已就绪
+
+=== 升级完成 (1.0.0 → 1.1.0) ===
+```
 
 ---
 

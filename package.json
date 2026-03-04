@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "pack": "node scripts/build-plugin.js",
-    "deploy": "npm run pack && bash scripts/install-plugin.sh"
+    "deploy": "npm run pack && bash scripts/install-plugin.sh",
+    "upgrade": "git pull && npm run deploy"
   }
 }

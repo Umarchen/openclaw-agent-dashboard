@@ -31,7 +31,8 @@ npm run deploy
 
 | 命令 | 说明 |
 |------|------|
-| `npm run deploy` | 打包 + 安装到 OpenClaw（推荐） |
+| `npm run deploy` | 打包 + 安装到 OpenClaw（首次安装或升级） |
+| `npm run upgrade` | 拉取最新代码 + 部署（推荐用于升级） |
 | `npm run pack` | 仅打包插件，不安装（开发调试用） |
 
 ## 独立运行（不作为插件）

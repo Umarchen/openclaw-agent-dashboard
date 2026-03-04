@@ -46,3 +46,4 @@ docs/analysis/
 docs/reports/
 docs/requirements/
 frontend/design/
+*.tar.gz

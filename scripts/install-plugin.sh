@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# OpenClaw Agent Dashboard 插件 - 一键安装
-# 用法: ./scripts/install-plugin.sh
+# OpenClaw Agent Dashboard 插件 - 安装脚本
+# 用法: npm run deploy（推荐）或 ./scripts/install-plugin.sh
 #
 set -e
 cd "$(dirname "$0")/.."
@@ -48,9 +48,13 @@ openclaw plugins install ./plugin
 if [ -f "$PLUGIN_PATH/dashboard/requirements.txt" ]; then
   echo ""
   echo ">>> 4/4 安装 Python 依赖..."
-  (pip install -q -r "$PLUGIN_PATH/dashboard/requirements.txt" || pip3 install -q -r "$PLUGIN_PATH/dashboard/requirements.txt") 2>/dev/null || {
-    echo "⚠ 请手动执行: pip install -r $PLUGIN_PATH/dashboard/requirements.txt"
-  }
+  if pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" 2>/dev/null || pip3 install -r "$PLUGIN_PATH/dashboard/requirements.txt" 2>/dev/null; then
+    echo "✓ Python 依赖安装完成"
+  else
+    echo "❌ Python 依赖安装失败，请手动执行:"
+    echo "   pip install -r $PLUGIN_PATH/dashboard/requirements.txt"
+    exit 1
+  fi
 else
   echo ""
   echo ">>> 4/4 跳过（插件未正确安装）"

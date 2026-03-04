@@ -3,8 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "install-plugin": "bash scripts/install-plugin.sh",
-    "build-plugin": "node scripts/build-plugin.js",
-    "deploy": "npm run build-plugin && ./scripts/install-plugin.sh"
+    "pack": "node scripts/build-plugin.js",
+    "deploy": "npm run pack && bash scripts/install-plugin.sh"
   }
 }

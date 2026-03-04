@@ -19,15 +19,22 @@
 git clone https://github.com/Umarchen/openclaw-agent-dashboard.git
 cd openclaw-agent-dashboard
 
-# 一键安装（构建前端 + 打包插件 + 安装）
-npm run install-plugin
+# 部署到 OpenClaw（构建前端 + 打包插件 + 安装）
+npm run deploy
 ```
 
 安装完成后，执行任意 `openclaw` 命令时 Dashboard 会自动启动。
 
 访问地址: http://localhost:8000
 
-## 手动安装
+## 命令说明
+
+| 命令 | 说明 |
+|------|------|
+| `npm run deploy` | 打包 + 安装到 OpenClaw（推荐） |
+| `npm run pack` | 仅打包插件，不安装（开发调试用） |
+
+## 独立运行（不作为插件）
 
 如果需要独立运行（不作为插件）：
 

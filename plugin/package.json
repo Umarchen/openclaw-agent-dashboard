@@ -15,7 +15,7 @@
     "frontend-dist"
   ],
   "scripts": {
-    "build": "node ../scripts/build-plugin.js",
-    "prepublishOnly": "npm run build"
+    "pack": "node ../scripts/build-plugin.js",
+    "prepublishOnly": "npm run pack"
   }
 }

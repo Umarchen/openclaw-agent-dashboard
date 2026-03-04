@@ -92,7 +92,7 @@ function startDashboard(config = {}) {
   const openclawHome = getOpenClawHome();
 
   if (!fs.existsSync(dashboardDir)) {
-    console.warn('[OpenClaw-Dashboard] dashboard 目录不存在，请先执行 npm run build 打包');
+    console.warn('[OpenClaw-Dashboard] dashboard 目录不存在，请先执行 npm run deploy 安装插件');
     return;
   }
 
@@ -119,7 +119,7 @@ function startDashboard(config = {}) {
     if (!isExplicitPort && port !== basePort) {
       console.log(`[OpenClaw-Dashboard] 端口 ${basePort} 被占用，使用 ${port}`);
     }
-    console.log(`[OpenClaw-Dashboard] 启动服务: ${pythonCmd} ${args.join(' ')}`);
+    console.log(`[OpenClaw-Dashboard] 插件服务已启动`);
     console.log(`[OpenClaw-Dashboard] 访问地址: http://localhost:${port}`);
 
     dashboardProcess = spawn(pythonCmd, args, {

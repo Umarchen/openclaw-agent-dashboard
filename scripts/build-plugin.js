@@ -39,6 +39,12 @@ function copyDir(src, dest, exclude = []) {
 }
 
 console.log('[pack] 1. 构建前端...');
+// 检查是否需要安装依赖
+const nodeModulesPath = path.join(FRONTEND_DIR, 'node_modules');
+if (!fs.existsSync(nodeModulesPath)) {
+  console.log('[pack] 安装前端依赖...');
+  execSync('npm install', { cwd: FRONTEND_DIR, stdio: 'inherit' });
+}
 execSync('npm run build', { cwd: FRONTEND_DIR, stdio: 'inherit' });
 
 console.log('[pack] 2. 复制 backend -> plugin/dashboard');

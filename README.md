@@ -34,6 +34,30 @@ npm run deploy
 | `npm run deploy` | 打包 + 安装到 OpenClaw（首次安装或升级） |
 | `npm run upgrade` | 拉取最新代码 + 部署（推荐用于升级） |
 | `npm run pack` | 仅打包插件，不安装（开发调试用） |
+| `npm run bundle` | 生成可分发的压缩包（给同事用） |
+
+## 离线分发（给同事）
+
+如果 git clone 失败，可以打包分发：
+
+```bash
+# 生成压缩包
+npm run bundle
+# 输出: openclaw-agent-dashboard-v1.0.0.tar.gz
+```
+
+同事收到后：
+
+```bash
+# 解压
+tar -xzf openclaw-agent-dashboard-v1.0.0.tar.gz
+
+# 进入目录
+cd openclaw-agent-dashboard
+
+# 安装
+npm run deploy
+```
 
 ## 独立运行（不作为插件）
 

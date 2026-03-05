@@ -633,15 +633,10 @@ onUnmounted(() => {
   z-index: 1;
 }
 
-/* L0 主控层：与子 agent 拉开距离，预留足够高度避免卡片下半部分被遮挡 */
+/* L0 主控层：与子 agent 拉开距离 */
 .level-section:first-child {
-  margin-bottom: 3.5rem;
+  margin-bottom: 2.5rem;
   z-index: 2;
-}
-
-.level-section:first-child .level-cards {
-  min-height: 280px;
-  padding-bottom: 1.5rem;
 }
 
 .level-header {
@@ -680,10 +675,16 @@ onUnmounted(() => {
   padding: 0.5rem;
 }
 
+/* L0 层卡片容器 - 移除固定高度 */
+.level-section:first-child .level-cards {
+  min-height: auto;
+  padding-bottom: 1rem;
+}
+
 /* 子 agent 层级 - 使用 grid 均匀分布 */
 .level-section:not(:first-child) .level-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
   max-width: 900px;
   margin: 0 auto;
@@ -701,7 +702,8 @@ onUnmounted(() => {
 
 /* 主 agent 卡片 - 更大 */
 .level-section:first-child .agent-card-wrapper.main-agent {
-  width: 320px;
+  width: 260px;
+  max-width: 100%;
 }
 
 .agent-card-wrapper:hover {
@@ -754,7 +756,8 @@ onUnmounted(() => {
 
 /* 模型面板 */
 .model-panel {
-  width: 120px;
+  width: 150px;
+  min-width: 120px;
   border-left: 1px solid #e5e7eb;
   background: #f8fafc;
   flex-shrink: 0;
@@ -937,5 +940,45 @@ onUnmounted(() => {
 
 .call-detail-row.trigger .value {
   font-size: 0.75rem;
+}
+
+/* 响应式适配 */
+@media (max-width: 1280px) {
+  .level-section:first-child .agent-card-wrapper.main-agent {
+    width: 240px;
+  }
+
+  .level-section:not(:first-child) .level-cards {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .model-panel {
+    width: 130px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .flow-layout {
+    flex-direction: column;
+  }
+
+  .model-panel {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid #e5e7eb;
+    max-height: 200px;
+  }
+
+  .model-panel-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .model-card {
+    flex: 1;
+    min-width: 120px;
+    margin-bottom: 0;
+  }
 }
 </style>

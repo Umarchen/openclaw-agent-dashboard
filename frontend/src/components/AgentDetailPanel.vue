@@ -107,24 +107,10 @@
             </button>
             <button
               class="tab-btn"
-              :class="{ active: activeView === 'config' }"
-              @click="activeView = 'config'"
+              :class="{ active: activeView === 'advanced' }"
+              @click="activeView = 'advanced'"
             >
-              ⚙️ 配置
-            </button>
-            <button
-              class="tab-btn"
-              :class="{ active: activeView === 'errors' }"
-              @click="activeView = 'errors'"
-            >
-              🔍 错误分析
-            </button>
-            <button
-              class="tab-btn"
-              :class="{ active: activeView === 'simple' }"
-              @click="activeView = 'simple'"
-            >
-              📋 简单视图
+              ⚙️ 高级
             </button>
           </div>
 
@@ -141,49 +127,15 @@
             <TaskChainView :autoRefresh="true" :refreshInterval="10" />
           </div>
 
-          <!-- 配置视图 -->
-          <div v-else-if="activeView === 'config'" class="config-container">
-            <AgentConfigPanel :agentId="agent.id" />
-          </div>
-
-          <!-- 错误分析视图 -->
-          <div v-else-if="activeView === 'errors'" class="errors-container">
-            <ErrorAnalysisView :agentId="agent.id" />
-          </div>
-
-          <!-- 简单视图 (原有) -->
-          <div v-else-if="activeView === 'simple'" class="session-detail">
-            <div v-if="loadingTurns" class="loading">加载中...</div>
-            <div v-else-if="turns.length === 0" class="empty">暂无会话记录</div>
-            <div v-else class="turns-list">
-              <div
-                v-for="(turn, idx) in turns"
-                :key="idx"
-                class="turn-item"
-                :class="`turn-${turn.role}`"
-              >
-                <div class="turn-header">
-                  <span class="turn-role">{{ roleLabel(turn.role) }}</span>
-                  <span v-if="turn.toolName" class="turn-tool">{{ turn.toolName }}</span>
-                  <span v-if="turn.usage" class="turn-usage">
-                    in {{ turn.usage.input }} / out {{ turn.usage.output }}
-                    <span v-if="turn.usage.cacheRead">(cache {{ turn.usage.cacheRead }})</span>
-                  </span>
-                  <span v-if="turn.stopReason === 'error'" class="turn-error">[错误]</span>
-                </div>
-                <div class="turn-content">
-                  <template v-for="(c, i) in turn.content" :key="i">
-                    <div v-if="c.type === 'text' && c.text" class="content-text">{{ truncate(c.text, 200) }}</div>
-                    <div v-else-if="c.type === 'thinking' && c.text" class="content-thinking">思考: {{ truncate(c.text, 100) }}</div>
-                    <div v-else-if="c.type === 'toolResult'" class="content-tool-result">
-                      {{ c.status || c.error ? `[${c.status || 'error'}]` : '' }} {{ truncate(String(c.content || c.error || ''), 150) }}
-                    </div>
-                  </template>
-                  <div v-if="turn.toolCalls?.length" class="content-tool-calls">
-                    <span v-for="tc in turn.toolCalls" :key="tc.id">{{ tc.name }}({{ tc.arguments ? '...' : '' }})</span>
-                  </div>
-                </div>
-              </div>
+          <!-- 高级视图（配置 + 错误分析） -->
+          <div v-else-if="activeView === 'advanced'" class="advanced-container">
+            <div class="advanced-section">
+              <h4>⚙️ 配置</h4>
+              <AgentConfigPanel :agentId="agent.id" />
+            </div>
+            <div class="advanced-section">
+              <h4>🔍 错误分析</h4>
+              <ErrorAnalysisView :agentId="agent.id" />
             </div>
           </div>
         </div>
@@ -229,7 +181,7 @@ defineEmits<{
   close: []
 }>()
 
-const activeView = ref<'timeline' | 'chain' | 'config' | 'errors' | 'simple'>('timeline')
+const activeView = ref<'timeline' | 'chain' | 'advanced'>('timeline')
 const subagentRun = ref<SubagentRun | null>(null)
 const currentTime = ref(Date.now())
 let timeUpdateInterval: ReturnType<typeof setInterval> | null = null
@@ -424,8 +376,8 @@ onUnmounted(() => {
 }
 
 .panel {
-  width: 600px;
-  max-width: 90vw;
+  width: 800px;
+  max-width: 92vw;
   max-height: 90vh;
   background: white;
   border-radius: 12px;
@@ -569,19 +521,21 @@ onUnmounted(() => {
 /* 视图切换 Tab */
 .view-tabs {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   margin-bottom: 12px;
 }
 
 .tab-btn {
-  padding: 8px 16px;
-  font-size: 13px;
+  padding: 6px 12px;
+  font-size: 12px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #fff;
   cursor: pointer;
   color: #6b7280;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 
 .tab-btn:hover {
@@ -595,94 +549,33 @@ onUnmounted(() => {
 }
 
 .timeline-container,
-.chain-container,
-.config-container,
-.errors-container {
+.chain-container {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   overflow: hidden;
 }
 
-.session-detail {
-  margin-top: 0;
-}
-
-.session-detail .loading,
-.session-detail .empty {
-  color: #666;
-  font-size: 0.9rem;
-  padding: 20px;
-  text-align: center;
-}
-
-.turns-list {
+/* 高级视图容器 */
+.advanced-container {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  max-height: 300px;
-  overflow-y: auto;
+  gap: 16px;
 }
 
-.turn-item {
-  padding: 0.75rem;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  border-left: 4px solid #e5e7eb;
+.advanced-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.turn-item.turn-user {
-  border-left-color: #4a9eff;
-  background: #f0f9ff;
-}
-
-.turn-item.turn-assistant {
-  border-left-color: #22c55e;
-  background: #f0fdf4;
-}
-
-.turn-item.turn-toolResult {
-  border-left-color: #f59e0b;
-  background: #fffbeb;
-}
-
-.turn-header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
+.advanced-section h4 {
+  margin: 0;
+  padding: 10px 14px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 13px;
   font-weight: 600;
   color: #374151;
-}
-
-.turn-tool {
-  font-size: 0.85em;
-  color: #6b7280;
-}
-
-.turn-usage {
-  font-size: 0.8em;
-  color: #9ca3af;
-}
-
-.turn-error {
-  color: #dc2626;
-}
-
-.turn-content {
-  color: #4b5563;
-}
-
-.content-text,
-.content-thinking,
-.content-tool-result,
-.content-tool-calls {
-  margin-top: 0.25rem;
-  word-break: break-word;
-}
-
-.content-thinking {
-  font-style: italic;
-  color: #6b7280;
 }
 
 /* 诊断面板样式 */
@@ -806,5 +699,40 @@ onUnmounted(() => {
 
 .action-btn.primary:hover {
   background: #dc2626;
+}
+
+/* 响应式适配 */
+@media (max-width: 1280px) {
+  .panel {
+    width: 700px;
+  }
+}
+
+@media (max-width: 768px) {
+  .panel {
+    width: 95vw;
+    max-height: 95vh;
+  }
+
+  .header {
+    padding: 1rem;
+  }
+
+  .header h2 {
+    font-size: 1.2rem;
+  }
+
+  .content {
+    padding: 1rem;
+  }
+
+  .view-tabs {
+    gap: 4px 8px;
+  }
+
+  .tab-btn {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
 }
 </style>

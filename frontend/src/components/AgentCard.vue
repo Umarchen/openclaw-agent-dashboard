@@ -262,29 +262,29 @@ function navigateToAgent(agentId: string) {
 
 /* 主 agent 卡片内容更大 */
 .agent-card.is-main .card-header {
-  padding: 1rem 1.25rem;
+  padding: 0.85rem 1rem;
 }
 
 .agent-card.is-main .avatar {
-  font-size: 2.5rem;
-  width: 54px;
-  height: 54px;
+  font-size: 2.2rem;
+  width: 48px;
+  height: 48px;
 }
 
 .agent-card.is-main .name {
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .agent-card.is-main .card-body {
-  padding: 1rem 1.25rem;
+  padding: 0.85rem 1rem;
 }
 
 .agent-card.is-main .current-task {
-  padding: 0.75rem 1rem;
+  padding: 0.6rem 0.85rem;
 }
 
 .agent-card.is-main .current-task .task-name {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   white-space: normal;
   display: -webkit-box;
   -webkit-line-clamp: 3;

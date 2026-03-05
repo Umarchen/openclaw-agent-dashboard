@@ -420,12 +420,24 @@ def _build_llm_rounds(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 rounds.append(current_round)
             round_index += 1
 
-            # 判断是子 Agent 回传还是普通用户输入
+            # 判断消息来源类型
             sender_name = step.get('senderName', '')
-            if sender_name and ('回传' in sender_name or sender_name != '用户'):
+            sender_id = step.get('senderId', '')
+
+            # 判断逻辑：
+            # 1. senderName 包含"回传" -> 子代理回传（主代理视角）
+            # 2. senderName 是具体 Agent 名（如"老K"）且 senderId 有值 -> 其他 Agent 发来（子代理视角）
+            # 3. 其他 -> 普通用户输入
+            if sender_name and '回传' in sender_name:
+                # 主代理视角：子代理回传
                 trigger = 'subagent_result'
-                trigger_by = sender_name
+                trigger_by = sender_name  # 已经是 "分析师回传" 格式
+            elif sender_name and sender_id and sender_name not in ('用户', ''):
+                # 子代理视角：收到主代理或其他 Agent 的消息
+                trigger = 'user_input'
+                trigger_by = sender_name  # 显示发送者名称，如 "老K"
             else:
+                # 普通用户输入
                 trigger = 'user_input'
                 trigger_by = sender_name or '用户'
 
@@ -700,11 +712,21 @@ def _parse_session_file(
                     if isinstance(c, dict) and c.get('type') == 'text':
                         user_text += c.get('text', '')
 
-                # 子 Agent 回传消息以 user 身份注入，需正确标注来源
-                display_sender = sender_name or sender_id
-                subagent_label = _detect_subagent_sender(user_text)
-                if subagent_label:
-                    display_sender = subagent_label
+                # 根据当前 Agent 视角决定消息来源显示
+                # 场景1: 子代理视角 - requester_info 有值，表示消息来自主代理或其他 Agent
+                # 场景2: 主代理视角 - 检测是否为子代理回传消息
+                if requester_info and sender_name:
+                    # 子代理视角：显示发送者（如"老K"）
+                    display_sender = sender_name
+                    final_sender_id = sender_id
+                else:
+                    # 主代理视角：检测是否为子代理回传
+                    subagent_label = _detect_subagent_sender(user_text)
+                    if subagent_label:
+                        display_sender = subagent_label
+                    else:
+                        display_sender = "用户"
+                    final_sender_id = sender_id
 
                 steps.append(TimelineStep(
                     id=f"step_{step_index}",
@@ -713,7 +735,7 @@ def _parse_session_file(
                     timestamp=timestamp,
                     duration=duration,
                     content=_truncate_text(user_text, 1000),
-                    senderId=sender_id,
+                    senderId=final_sender_id,
                     senderName=display_sender
                 ))
                 step_index += 1
@@ -791,7 +813,16 @@ def _parse_session_file(
                 tool_name = msg.get('toolName', 'unknown')
                 tc_id = msg.get('toolCallId', '')
                 details = msg.get('details', {})
-                result_status = details.get('status', 'ok')
+                # 综合判断工具执行是否失败：
+                # 1. isError 字段为 true
+                # 2. exitCode 非零
+                # 3. status 为 error
+                is_error = (
+                    msg.get('isError') == True or
+                    details.get('exitCode', 0) != 0 or
+                    details.get('status') == 'error'
+                )
+                result_status = 'error' if is_error else 'ok'
                 tool_error = details.get('error') if isinstance(details.get('error'), str) else None
 
                 result_content = ""

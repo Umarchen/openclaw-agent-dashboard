@@ -49,7 +49,8 @@ const triggerLabels: Record<string, string> = {
 
 const triggerLabel = computed(() => {
   const label = triggerLabels[props.round.trigger] || props.round.trigger
-  if (props.round.triggerBy && props.round.trigger !== 'user_input') {
+  // 如果有 triggerBy 且不是默认的"用户"，显示详细信息
+  if (props.round.triggerBy && props.round.triggerBy !== '用户') {
     return `${label} · ${props.round.triggerBy}`
   }
   return label

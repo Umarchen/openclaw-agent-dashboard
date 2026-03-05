@@ -106,8 +106,8 @@ else
 fi
 echo ""
 echo "执行任意 openclaw 命令（如 openclaw tui）时，Dashboard 会自动启动。"
-echo "访问地址: http://localhost:8000"
+echo "访问地址: http://localhost:38271"
 echo ""
 echo "若端口被占用，可创建 ~/.openclaw/dashboard/config.json 设置端口:"
-echo '  {"port": 8000}'
+echo '  {"port": 38271}'
 echo ""

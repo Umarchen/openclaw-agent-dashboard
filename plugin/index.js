@@ -1,12 +1,14 @@
 /**
  * OpenClaw Agent Dashboard - 插件入口
- * 启动 FastAPI 后端，随 OpenClaw 加载时自动运行
+ * 仅在 Gateway 进程内自动启动 FastAPI 后端（检测 OPENCLAW_GATEWAY_PORT）
+ *
+ * 启动条件：OPENCLAW_GATEWAY_PORT 已设置（即 Gateway 进程）且 autoStart !== false
  *
  * 端口配置优先级（高到低）：
  * 1. 环境变量 DASHBOARD_PORT
  * 2. ~/.openclaw/dashboard/config.json
  * 3. openclaw.json 中 plugins.entries.openclaw-agent-dashboard.config.port
- * 4. 默认 8000
+ * 4. 默认 38271
  */
 const path = require('path');
 const os = require('os');
@@ -30,10 +32,13 @@ function getDashboardDir() {
  */
 function loadConfig(apiPluginConfig = {}) {
   const openclawHome = getOpenClawHome();
-  let config = { port: 8000 };
+  let config = { port: 38271, autoStart: true }; // 使用罕见端口避免冲突
 
   if (apiPluginConfig && typeof apiPluginConfig.port === 'number') {
     config.port = apiPluginConfig.port;
+  }
+  if (apiPluginConfig && typeof apiPluginConfig.autoStart === 'boolean') {
+    config.autoStart = apiPluginConfig.autoStart;
   }
 
   const projectConfigPath = path.join(getDashboardDir(), 'config.json');
@@ -73,6 +78,18 @@ function isPortAvailable(port) {
   });
 }
 
+/** 检测端口是否已被占用（有进程在监听） */
+function isPortInUse(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(true));
+    server.once('listening', () => {
+      server.close(() => resolve(false));
+    });
+    server.listen(port, '127.0.0.1');
+  });
+}
+
 /** 找到可用端口，从 basePort 开始尝试 */
 async function findAvailablePort(basePort, maxAttempts = 10) {
   for (let i = 0; i < maxAttempts; i++) {
@@ -83,6 +100,12 @@ async function findAvailablePort(basePort, maxAttempts = 10) {
 }
 
 function startDashboard(config = {}) {
+  // 仅在 Gateway 进程内自动启动（OPENCLAW_GATEWAY_PORT 由 Gateway 设置）
+  // CLI 命令（status、health 等）加载插件时不会设置此变量，故不启动
+  if (!process.env.OPENCLAW_GATEWAY_PORT?.trim()) {
+    return;
+  }
+
   if (dashboardProcess) {
     console.log('[OpenClaw-Dashboard] 服务已在运行');
     return;
@@ -96,16 +119,26 @@ function startDashboard(config = {}) {
     return;
   }
 
-  const basePort = config.port ?? 8000;
-  const isExplicitPort = basePort !== 8000; // 用户显式配置了端口（非默认 8000）
+  const basePort = config.port ?? 38271;
+  const isExplicitPort = basePort !== 38271; // 用户显式配置了端口（非默认 38271）
+  const autoStart = config.autoStart !== false; // 默认 true，可配置为 false 禁用自动启动
 
-  // 仅默认端口 8000 时自动尝试备用端口；显式配置的端口严格使用，避免端口不断递增
+  if (!autoStart) {
+    return;
+  }
+
   const portPromise = isExplicitPort
     ? Promise.resolve(basePort)
     : findAvailablePort(basePort);
 
-  portPromise.then((port) => {
+  portPromise.then(async (port) => {
     if (dashboardProcess) return;
+
+    // 若端口已被占用，认为 Dashboard 已在其他进程运行，跳过启动，避免重复实例
+    if (await isPortInUse(port)) {
+      console.log(`[OpenClaw-Dashboard] 端口 ${port} 已被占用，Dashboard 可能已在运行，跳过启动`);
+      return;
+    }
 
     const env = {
       ...process.env,
@@ -125,15 +158,11 @@ function startDashboard(config = {}) {
     dashboardProcess = spawn(pythonCmd, args, {
       env,
       cwd: dashboardDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'ignore'],
+      detached: true,
     });
+    dashboardProcess.unref();
 
-    dashboardProcess.stdout.on('data', (data) => {
-      process.stdout.write(`[Dashboard] ${data}`);
-    });
-    dashboardProcess.stderr.on('data', (data) => {
-      process.stderr.write(`[Dashboard] ${data}`);
-    });
     dashboardProcess.on('error', (err) => {
       console.error('[OpenClaw-Dashboard] 启动失败:', err.message);
       dashboardProcess = null;

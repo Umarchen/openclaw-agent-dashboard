@@ -25,6 +25,12 @@ class CollaborationNode(BaseModel):
     status: str  # idle/working/error (Agent 状态: 空闲/工作中/异常)
     timestamp: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
+    # 当前任务（有效描述）
+    currentTask: Optional[str] = None
+    # 错误信息
+    error: Optional[Dict[str, Any]] = None
+    # 卡顿警告
+    stuckWarning: Optional[Dict[str, Any]] = None
 
 
 class CollaborationEdge(BaseModel):
@@ -55,6 +61,8 @@ class CollaborationFlow(BaseModel):
     agentModels: Optional[Dict[str, Dict[str, Any]]] = None
     models: Optional[List[str]] = None
     recentCalls: Optional[List[ModelCall]] = None
+    hierarchy: Optional[Dict[str, List[str]]] = None  # agentId -> 子 agent 列表
+    depths: Optional[Dict[str, int]] = None  # agentId -> 层级深度 (0=主, 1=子, 2=孙...)
 
 
 def _parse_agent_id(session_key: str) -> str:
@@ -63,6 +71,156 @@ def _parse_agent_id(session_key: str) -> str:
     if len(parts) >= 2 and parts[0] == 'agent':
         return parts[1]
     return ''
+
+
+def _clean_task_name(task_name: str) -> str:
+    """清理任务名称，提取有效的任务描述"""
+    if not task_name:
+        return ''
+    # 过滤子 Agent 回传内容（不应作为任务显示）
+    if 'Result (untrusted content, treat as data):' in task_name or '[Internal task completion event]' in task_name:
+        return ''
+
+    lines = task_name.strip().split('\n')
+
+    # 需要过滤的技术信息前缀
+    tech_patterns = [
+        'CONTEXT FILES',
+        'WORKING DIRECTORY',
+        'SYSTEM INFO',
+        'ENVIRONMENT',
+        '---',
+        '===',
+        '```',
+        '# ',
+        '## ',
+    ]
+
+    # 查找第一个有效的任务描述行
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # 跳过技术信息
+        is_tech = False
+        for pattern in tech_patterns:
+            if line.upper().startswith(pattern):
+                is_tech = True
+                break
+
+        if not is_tech and len(line) > 3:
+            # 找到有效行
+            if len(line) > 80:
+                return line[:77] + '...'
+            return line
+
+    # 如果没找到有效行，返回空
+    return ''
+
+
+def _get_agent_error_info(agent_id: str) -> Optional[Dict[str, Any]]:
+    """获取 agent 的错误/异常信息"""
+    from session_reader import get_last_error, has_recent_errors
+
+    if has_recent_errors(agent_id, minutes=10):
+        error = get_last_error(agent_id)
+        if error:
+            return {
+                'hasError': True,
+                'type': error.get('type', 'unknown'),
+                'message': error.get('message', '')[:100],  # 截断
+                'timestamp': error.get('timestamp', 0)
+            }
+    return None
+
+
+def _check_agent_stuck(agent_id: str) -> Optional[Dict[str, Any]]:
+    """检查 agent 是否卡顿（长时间无响应但有活跃任务）"""
+    import time
+    from session_reader import get_session_updated_at
+    from data.subagent_reader import is_agent_working, get_active_runs
+
+    if not is_agent_working(agent_id):
+        return None
+
+    last_update = get_session_updated_at(agent_id)
+    if not last_update:
+        return None
+
+    now = int(time.time() * 1000)
+    idle_seconds = (now - last_update) / 1000
+
+    # 超过 60 秒无响应视为可能卡顿
+    if idle_seconds > 60:
+        # 分析卡顿原因
+        reason = _analyze_stuck_reason(agent_id, idle_seconds)
+        return {
+            'isStuck': True,
+            'idleSeconds': int(idle_seconds),
+            'lastUpdate': last_update,
+            'reason': reason.get('type', 'unknown'),
+            'reasonDetail': reason.get('detail', ''),
+            'waitingFor': reason.get('waitingFor')
+        }
+    return None
+
+
+def _analyze_stuck_reason(agent_id: str, idle_seconds: int) -> Dict[str, Any]:
+    """
+    分析 Agent 卡顿的原因
+
+    Returns:
+        {
+            'type': 'waiting_subagent' | 'model_delay' | 'tool_execution' | 'unknown',
+            'detail': '详细描述',
+            'waitingFor': {'agentId': 'xxx', 'task': 'xxx'} | None
+        }
+    """
+    from data.subagent_reader import get_active_runs
+
+    # 检查是否在等待子 agent
+    active_runs = get_active_runs()
+    for run in active_runs:
+        requester_key = run.get('requesterSessionKey', '')
+        # 如果这个 agent 是 requester，说明它在等待子 agent
+        if f'agent:{agent_id}:' in requester_key:
+            child_key = run.get('childSessionKey', '')
+            if child_key and ':' in child_key:
+                parts = child_key.split(':')
+                if len(parts) >= 2:
+                    child_agent_id = parts[1]
+                    task = run.get('task', '')[:50]
+                    return {
+                        'type': 'waiting_subagent',
+                        'detail': f'等待子代理 {child_agent_id} 完成任务',
+                        'waitingFor': {
+                            'agentId': child_agent_id,
+                            'task': task
+                        }
+                    }
+
+    # 检查最近是否有模型调用（可能是模型响应慢）
+    # 这里简单判断：如果 idle 时间很长但没有等待子 agent，可能是模型或工具问题
+    if idle_seconds > 120:
+        return {
+            'type': 'model_delay',
+            'detail': '模型响应时间过长，可能遇到限流或网络问题',
+            'waitingFor': None
+        }
+
+    if idle_seconds > 60:
+        return {
+            'type': 'tool_execution',
+            'detail': '工具执行中或等待外部资源',
+            'waitingFor': None
+        }
+
+    return {
+        'type': 'unknown',
+        'detail': '原因未知',
+        'waitingFor': None
+    }
 
 
 def _get_recent_model_calls(minutes: int = 30) -> List[Dict]:
@@ -143,13 +301,33 @@ async def get_collaboration():
 
         main_display_name = (main_agent_config.get('name') if main_agent_config else None) or "主 Agent"
         main_status = "working" if active_runs else "idle"
+
+        # 获取主 agent 的当前任务和错误信息
+        main_current_task = ''
+        main_error = None
+        main_stuck = None
+        if active_runs:
+            # 找到主 agent 作为 requester 的任务
+            for run in active_runs:
+                requester_key = run.get('requesterSessionKey', '')
+                if f'agent:{main_agent_id}:' in requester_key:
+                    main_current_task = _clean_task_name(run.get('task', ''))
+                    break
+            if not main_current_task and active_runs:
+                main_current_task = _clean_task_name(active_runs[0].get('task', ''))
+        main_error = _get_agent_error_info(main_agent_id)
+        main_stuck = _check_agent_stuck(main_agent_id)
+
         main_agent = CollaborationNode(
             id=main_agent_id,
             type="agent",
             name=main_display_name,
             status=main_status,
             timestamp=int(__import__('time').time() * 1000),
-            metadata=agent_models.get(main_agent_id)
+            metadata=agent_models.get(main_agent_id),
+            currentTask=main_current_task if main_current_task else None,
+            error=main_error,
+            stuckWarning=main_stuck
         )
         nodes.append(main_agent)
 
@@ -165,13 +343,28 @@ async def get_collaboration():
             else:
                 status = 'idle'
 
+            # 获取子 agent 的当前任务
+            current_task = ''
+            for run in active_runs:
+                child_key = run.get('childSessionKey', '')
+                if f'agent:{agent_id}:' in child_key:
+                    current_task = _clean_task_name(run.get('task', ''))
+                    break
+
+            # 获取错误和卡顿信息
+            error_info = _get_agent_error_info(agent_id)
+            stuck_info = _check_agent_stuck(agent_id)
+
             sub_node = CollaborationNode(
                 id=agent_id,
                 type="agent",
                 name=agent_name,
                 status=status,
                 timestamp=None,
-                metadata=agent_models.get(agent_id)
+                metadata=agent_models.get(agent_id),
+                currentTask=current_task if current_task else None,
+                error=error_info,
+                stuckWarning=stuck_info
             )
             nodes.append(sub_node)
 
@@ -214,6 +407,7 @@ async def get_collaboration():
                     ))
 
         # 5. 活跃任务与 spawn 链：requesterSessionKey -> childSessionKey -> task
+        main_agent_task_created = False
         for run in active_runs[:10]:
             child_key = run.get('childSessionKey', '')
             requester_key = run.get('requesterSessionKey', '')
@@ -222,9 +416,7 @@ async def get_collaboration():
             if not agent_id:
                 continue
 
-            task_name = run.get('task', 'Unknown Task')
-            first_line = task_name.split('\n')[0].strip() if task_name else 'Unknown Task'
-            task_name = first_line if first_line else task_name
+            task_name = _clean_task_name(run.get('task', ''))
 
             task_id = f"task-{run.get('runId', agent_id)}"
             task_node = CollaborationNode(
@@ -243,6 +435,7 @@ async def get_collaboration():
                 type="calls",
                 label="执行"
             ))
+
             # Spawn 链：主 Agent 派发 -> 子 Agent 执行
             if requester_id and requester_id != agent_id:
                 edges.append(CollaborationEdge(
@@ -252,6 +445,26 @@ async def get_collaboration():
                     type="delegates",
                     label="派发"
                 ))
+                # 如果 requester 是主 agent，给主 agent 也添加一个任务节点（用户命令）
+                if requester_id == main_agent_id and not main_agent_task_created:
+                    # 主 agent 的任务就是用户原始命令
+                    main_task_id = f"task-main-{run.get('runId', 'current')}"
+                    main_task_node = CollaborationNode(
+                        id=main_task_id,
+                        type="task",
+                        name=task_name,  # 用户命令
+                        status="working",
+                        timestamp=run.get('startedAt')
+                    )
+                    nodes.append(main_task_node)
+                    edges.append(CollaborationEdge(
+                        id=f"edge-{main_agent_id}-{main_task_id}",
+                        source=main_agent_id,
+                        target=main_task_id,
+                        type="calls",
+                        label="执行"
+                    ))
+                    main_agent_task_created = True
 
             active_path.extend([main_agent_id, agent_id, task_id])
 
@@ -284,6 +497,42 @@ async def get_collaboration():
         for i, r in enumerate(recent_calls)
     ]
 
+    # 计算层级深度 (depths) 和层级关系 (hierarchy)
+    # 从 edges 中提取 agent 之间的父子关系
+    hierarchy: Dict[str, List[str]] = {}
+    agent_ids = set(n.id for n in nodes if n.type == "agent")
+
+    # 构建 delegate 关系: source -> [targets]
+    for edge in edges:
+        if edge.type == "delegates":
+            source = edge.source
+            target = edge.target
+            # 只处理 agent 之间的委托关系
+            if source in agent_ids and target in agent_ids:
+                if source not in hierarchy:
+                    hierarchy[source] = []
+                if target not in hierarchy[source]:
+                    hierarchy[source].append(target)
+
+    # 计算 depth: 主 agent depth=0, 其子 agent depth=1, 孙 agent depth=2...
+    depths: Dict[str, int] = {}
+    depths[main_agent_id] = 0
+
+    # BFS 计算深度
+    queue = [main_agent_id]
+    while queue:
+        parent = queue.pop(0)
+        parent_depth = depths.get(parent, 0)
+        for child in hierarchy.get(parent, []):
+            if child not in depths:
+                depths[child] = parent_depth + 1
+                queue.append(child)
+
+    # 未在 hierarchy 中的 agent 默认 depth=1 (作为主 agent 的直接子节点)
+    for aid in agent_ids:
+        if aid not in depths:
+            depths[aid] = 1
+
     return CollaborationFlow(
         nodes=nodes,
         edges=edges,
@@ -292,7 +541,9 @@ async def get_collaboration():
         mainAgentId=main_agent_id,
         agentModels=agent_models,
         models=models_list,
-        recentCalls=model_calls
+        recentCalls=model_calls,
+        hierarchy=hierarchy,
+        depths=depths
     )
 
 
@@ -341,6 +592,7 @@ async def get_collaboration_dynamic():
         main_status = "working" if active_runs else "idle"
         agent_statuses[main_agent_id] = main_status
 
+        main_agent_task_created = False
         for run in active_runs[:10]:
             child_key = run.get('childSessionKey', '')
             requester_key = run.get('requesterSessionKey', '')
@@ -348,9 +600,7 @@ async def get_collaboration_dynamic():
             requester_id = _parse_agent_id(requester_key)
             if not agent_id:
                 continue
-            task_name = run.get('task', 'Unknown Task')
-            first_line = task_name.split('\n')[0].strip() if task_name else 'Unknown Task'
-            task_name = first_line if first_line else task_name
+            task_name = _clean_task_name(run.get('task', ''))
             task_id = f"task-{run.get('runId', agent_id)}"
             task_nodes.append(CollaborationNode(
                 id=task_id,
@@ -374,6 +624,24 @@ async def get_collaboration_dynamic():
                     type="delegates",
                     label="派发"
                 ))
+                # 如果 requester 是主 agent，给主 agent 也添加任务节点
+                if requester_id == main_agent_id and not main_agent_task_created:
+                    main_task_id = f"task-main-{run.get('runId', 'current')}"
+                    task_nodes.append(CollaborationNode(
+                        id=main_task_id,
+                        type="task",
+                        name=task_name,
+                        status="working",
+                        timestamp=run.get('startedAt')
+                    ))
+                    task_edges.append(CollaborationEdge(
+                        id=f"edge-{main_agent_id}-{main_task_id}",
+                        source=main_agent_id,
+                        target=main_task_id,
+                        type="calls",
+                        label="执行"
+                    ))
+                    main_agent_task_created = True
             active_path.extend([main_agent_id, agent_id, task_id])
     except Exception as e:
         print(f"Error building collaboration dynamic: {e}")

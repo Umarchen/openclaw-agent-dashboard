@@ -22,6 +22,16 @@ class TimelineStats(BaseModel):
     stepCount: int
 
 
+class LLMRound(BaseModel):
+    id: str
+    index: int
+    trigger: str
+    triggerBy: Optional[str] = None
+    stepIds: List[str] = []
+    duration: int = 0
+    tokens: Optional[Dict[str, int]] = None
+
+
 class TimelineResponse(BaseModel):
     sessionId: Optional[str] = None
     agentId: str
@@ -32,6 +42,9 @@ class TimelineResponse(BaseModel):
     steps: List[Dict[str, Any]]
     stats: TimelineStats
     message: Optional[str] = None
+    # LLM 轮次分组
+    rounds: Optional[List[LLMRound]] = None
+    roundMode: Optional[bool] = None
 
 
 @router.get("/timeline/{agent_id}", response_model=TimelineResponse)

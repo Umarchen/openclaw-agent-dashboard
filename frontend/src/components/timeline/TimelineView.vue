@@ -39,6 +39,16 @@
 
     <!-- 时序内容 -->
     <div v-else class="timeline-content">
+      <!-- 图例 -->
+      <div class="timeline-legend">
+        <span class="legend-item"><span class="legend-icon">👤</span> 用户/回传</span>
+        <span class="legend-item"><span class="legend-icon">🧠</span> LLM 思考</span>
+        <span class="legend-item"><span class="legend-icon">🤖</span> LLM 回复</span>
+        <span class="legend-item"><span class="legend-icon">🔧</span> 工具调用</span>
+        <span class="legend-item"><span class="legend-icon">✅</span> 工具成功</span>
+        <span class="legend-item"><span class="legend-icon">❌</span> 工具失败</span>
+        <span class="legend-item"><span class="legend-icon">⚠️</span> 错误</span>
+      </div>
       <!-- Session 信息 -->
       <div class="session-info" v-if="data.sessionId">
         <span class="session-id">Session: {{ data.sessionId.slice(0, 8) }}...</span>
@@ -49,15 +59,61 @@
 
       <!-- 步骤列表 -->
       <div class="steps-list">
-        <template v-for="(step, index) in data.steps" :key="step.id">
-          <!-- 连接线 -->
-          <TimelineConnector v-if="index > 0" />
-          <!-- 步骤 -->
-          <TimelineStepItem
-            :step="step"
-            :prevStep="data.steps[index - 1]"
-            @toggle-collapse="toggleCollapse(index)"
-          />
+        <!-- 轮次分组模式 -->
+        <template v-if="useRoundMode">
+          <template v-for="(item, index) in renderItems" :key="item.type === 'round' ? (item.data as any).id : (item.data as any).id">
+            <TimelineConnector v-if="index > 0" />
+            <!-- 轮次 -->
+            <TimelineRound
+              v-if="item.type === 'round'"
+              :round="(item.data as any)"
+              :steps="data.steps"
+              :highlightedPair="highlightedPair"
+              @highlight-pair="handleHighlightPair"
+            />
+            <!-- 独立步骤（如 toolResult） -->
+            <template v-else>
+              <!-- 工具执行分隔标签 -->
+              <div class="tool-execution-label" v-if="(item.data as any).type === 'toolResult'">
+                <span class="label-line"></span>
+                <span class="label-text">⚡ 工具执行</span>
+                <span class="label-line"></span>
+              </div>
+              <!-- 连接线（如果 toolResult 有配对的 toolCall） -->
+              <TimelineToolLink
+                v-if="(item.data as any).type === 'toolResult' && (item.data as any).pairedToolCallId"
+                :isError="(item.data as any).toolResultStatus === 'error'"
+                :isActive="highlightedPair?.resultId === (item.data as any).id"
+                :executionTime="(item.data as any).executionTime"
+              />
+              <TimelineStepItem
+                :step="(item.data as any)"
+                :highlightedPair="highlightedPair"
+                @toggle-collapse="toggleStepCollapse((item.data as any).id)"
+                @highlight-pair="handleHighlightPair"
+              />
+            </template>
+          </template>
+        </template>
+
+        <!-- 传统列表模式（无轮次分组时回退） -->
+        <template v-else>
+          <template v-for="(step, index) in data.steps" :key="step.id">
+            <TimelineConnector v-if="index > 0" />
+            <TimelineToolLink
+              v-if="step.type === 'toolResult' && step.pairedToolCallId"
+              :isError="step.toolResultStatus === 'error'"
+              :isActive="highlightedPair?.resultId === step.id"
+              :executionTime="step.executionTime"
+            />
+            <TimelineStepItem
+              :step="step"
+              :prevStep="data.steps[index - 1]"
+              :highlightedPair="highlightedPair"
+              @toggle-collapse="toggleCollapse(index)"
+              @highlight-pair="handleHighlightPair"
+            />
+          </template>
         </template>
       </div>
 
@@ -90,9 +146,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import type { TimelineResponse } from './types'
+import type { TimelineResponse, TimelineStep } from './types'
 import TimelineStepItem from './TimelineStep.vue'
 import TimelineConnector from './TimelineConnector.vue'
+import TimelineRound from './TimelineRound.vue'
+import TimelineToolLink from './TimelineToolLink.vue'
 
 const props = defineProps<{
   agentId: string
@@ -104,6 +162,9 @@ const props = defineProps<{
 const data = ref<TimelineResponse | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
+
+// 高亮配对状态
+const highlightedPair = ref<{ callId: string; resultId: string } | null>(null)
 
 const statusClass = computed(() => {
   if (!data.value) return 'empty'
@@ -119,6 +180,52 @@ const statusLabel = computed(() => {
     no_sessions: '无会话'
   }
   return labels[statusClass.value] || '未知'
+})
+
+// 是否启用轮次分组模式
+const useRoundMode = computed(() => {
+  return data.value?.roundMode && data.value.rounds && data.value.rounds.length > 0
+})
+
+// 获取不属于任何轮次的步骤（如 toolResult）
+const standaloneSteps = computed(() => {
+  if (!data.value || !useRoundMode.value) return []
+
+  const roundStepIds = new Set<string>()
+  data.value.rounds.forEach(round => {
+    round.stepIds.forEach(id => roundStepIds.add(id))
+  })
+
+  return data.value.steps.filter(step => !roundStepIds.has(step.id))
+})
+
+// 构建渲染项列表（轮次或独立步骤）
+const renderItems = computed(() => {
+  if (!data.value || !useRoundMode.value) return []
+
+  const items: Array<{ type: 'round' | 'step', data: unknown }> = []
+  const renderedStepIds = new Set<string>()
+
+  // 遍历所有步骤，按顺序构建渲染项
+  for (const step of data.value.steps) {
+    // 如果已经在某个轮次中渲染过，跳过
+    if (renderedStepIds.has(step.id)) continue
+
+    // 查找包含此步骤的轮次
+    const round = data.value.rounds?.find(r => r.stepIds.includes(step.id))
+
+    if (round) {
+      // 渲染整个轮次
+      items.push({ type: 'round', data: round })
+      round.stepIds.forEach(id => renderedStepIds.add(id))
+    } else {
+      // 独立步骤（如 toolResult）
+      items.push({ type: 'step', data: step })
+      renderedStepIds.add(step.id)
+    }
+  }
+
+  return items
 })
 
 async function refresh() {
@@ -149,6 +256,23 @@ function toggleCollapse(index: number) {
   if (data.value && data.value.steps[index]) {
     data.value.steps[index].collapsed = !data.value.steps[index].collapsed
   }
+}
+
+function toggleStepCollapse(stepId: string) {
+  if (data.value) {
+    const step = data.value.steps.find(s => s.id === stepId)
+    if (step) {
+      step.collapsed = !step.collapsed
+    }
+  }
+}
+
+function handleHighlightPair(pair: { callId: string; resultId: string }) {
+  highlightedPair.value = pair
+  // 3秒后取消高亮
+  setTimeout(() => {
+    highlightedPair.value = null
+  }, 3000)
 }
 
 function formatTime(ts: number): string {
@@ -324,6 +448,28 @@ watch([() => props.autoRefresh, () => props.refreshInterval], ([auto, interval])
   padding: 16px;
 }
 
+.timeline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  font-size: 11px;
+  color: #6b7280;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-icon {
+  font-size: 12px;
+}
+
 .session-info {
   display: flex;
   gap: 16px;
@@ -337,6 +483,26 @@ watch([() => props.autoRefresh, () => props.refreshInterval], ([auto, interval])
 .steps-list {
   display: flex;
   flex-direction: column;
+}
+
+.tool-execution-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 0 4px;
+}
+
+.tool-execution-label .label-line {
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.tool-execution-label .label-text {
+  font-size: 11px;
+  color: #9ca3af;
+  white-space: nowrap;
 }
 
 .timeline-footer {

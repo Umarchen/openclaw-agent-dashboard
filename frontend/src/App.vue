@@ -17,6 +17,7 @@
         <CollaborationFlowWrapper
           :main-agent="mainAgent"
           :sub-agents="subAgents"
+          :main-agent-id="mainAgentId"
           @agent-click="onAgentNodeClick"
         />
       </section>

@@ -37,6 +37,12 @@ export interface TimelineStep {
   toolArguments?: Record<string, unknown>
   toolResult?: string
   toolResultStatus?: 'ok' | 'error'
+  toolResultError?: string  // 工具失败时的错误信息
+
+  // 工具链路关联
+  pairedToolCallId?: string   // toolResult 专用：对应的 toolCall ID
+  pairedToolResultId?: string // toolCall 专用：对应的 toolResult ID
+  executionTime?: number      // 工具执行耗时（ms），toolResult 专用
 
   // 错误
   errorMessage?: string
@@ -47,6 +53,10 @@ export interface TimelineStep {
 
   // 展示控制
   collapsed?: boolean
+
+  // 消息来源（用于区分真实用户和其他 Agent）
+  senderId?: string      // 发送者 Agent ID（如 'main'）
+  senderName?: string    // 发送者显示名（如 '老K'）
 }
 
 /** 时序统计 */
@@ -58,6 +68,17 @@ export interface TimelineStats {
   stepCount: number
 }
 
+/** LLM 轮次 */
+export interface LLMRound {
+  id: string           // round_1, round_2, ...
+  index: number        // 轮次序号（从1开始）
+  trigger: 'user_input' | 'tool_result' | 'subagent_result' | 'start'
+  triggerBy?: string   // 触发来源描述
+  stepIds: string[]    // 该轮次包含的步骤 ID 列表
+  duration: number     // 该轮次耗时（ms）
+  tokens?: TokenUsage  // 该轮次的 token 使用
+}
+
 /** 时序会话响应 */
 export interface TimelineResponse {
   sessionId: string | null
@@ -65,17 +86,35 @@ export interface TimelineResponse {
   agentName?: string
   model?: string
   startedAt: number | null
-  status: 'running' | 'completed' | 'error' | 'empty'
+  status: 'running' | 'completed' | 'error' | 'empty' | 'no_sessions'
   steps: TimelineStep[]
   stats: TimelineStats
+  message?: string
+  // LLM 轮次分组
+  rounds?: LLMRound[]
+  roundMode?: boolean
 }
 
 /** 步骤图标和颜色配置 */
 export const stepConfig: Record<StepType, { icon: string; bgColor: string; borderColor: string; label: string }> = {
   user: { icon: '👤', bgColor: '#f0f9ff', borderColor: '#3b82f6', label: '用户' },
   thinking: { icon: '🧠', bgColor: '#fef3c7', borderColor: '#f59e0b', label: '思考' },
-  text: { icon: '🤖', bgColor: '#f0fdf4', borderColor: '#22c55e', label: '响应' },
+  text: { icon: '🤖', bgColor: '#f0fdf4', borderColor: '#22c55e', label: '回复' },
   toolCall: { icon: '🔧', bgColor: '#f5f3ff', borderColor: '#8b5cf6', label: '调用' },
   toolResult: { icon: '✅', bgColor: '#ecfdf5', borderColor: '#10b981', label: '结果' },
   error: { icon: '⚠️', bgColor: '#fef2f2', borderColor: '#dc2626', label: '错误' }
+}
+
+/**
+ * 获取用户步骤的显示标签
+ * 如果有 senderName，显示发送者名称；否则显示"用户"
+ */
+export function getUserStepLabel(step: TimelineStep): string {
+  if (step.senderName) {
+    return step.senderName
+  }
+  if (step.senderId) {
+    return step.senderId
+  }
+  return '用户'
 }

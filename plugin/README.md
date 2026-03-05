@@ -64,21 +64,21 @@ npm run upgrade
 
 插件加载后（执行任意 `openclaw` 命令时）会自动启动 Dashboard 服务。
 
-**访问地址**：http://localhost:8000（或你配置的端口）
+**访问地址**：http://localhost:38271（或你配置的端口）
 
 ### 端口配置（便于移植，无需改 openclaw.json）
 
 优先级从高到低：
 
-1. **环境变量**：`DASHBOARD_PORT=8000`
+1. **环境变量**：`DASHBOARD_PORT=38271`
 2. **独立配置文件**：`~/.openclaw/dashboard/config.json`
    ```json
-   { "port": 8000 }
+   { "port": 38271 }
    ```
 3. **openclaw.json**：`plugins.entries.openclaw-agent-dashboard.config.port`
-4. **默认**：8000
+4. **默认**：38271
 
-端口被占用时会自动尝试 8001、8002...
+端口被占用时会自动尝试 38272、38273...
 
 ---
 

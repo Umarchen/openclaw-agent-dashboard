@@ -9,7 +9,7 @@
     "properties": {
       "port": {
         "type": "number",
-        "default": 8000,
+        "default": 38271,
         "description": "Dashboard 服务端口"
       }
     }

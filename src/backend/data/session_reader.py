@@ -43,24 +43,49 @@ def get_latest_session_file(agent_id: str) -> Optional[Path]:
     return jsonl_files[0]
 
 
+def _read_tail_lines(filepath: Path, max_lines: int) -> List[str]:
+    """从文件尾部读取最多 max_lines 行，避免全量遍历大文件"""
+    try:
+        with open(filepath, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            if size == 0:
+                return []
+            # 读取末尾约 512KB，通常足够覆盖 500 行
+            to_read = min(512 * 1024, size)
+            f.seek(size - to_read)
+            buf = f.read(to_read)
+            lines = buf.split(b'\n')
+            # 若未从文件头开始读，首行可能是断行，丢弃
+            if size > to_read and lines:
+                lines = lines[1:]
+            decoded = [ln.decode('utf-8', errors='replace') for ln in lines[-max_lines:] if ln]
+            return decoded
+    except (IOError, OSError):
+        return []
+
+
 def get_recent_messages(agent_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-    """获取最近的会话消息"""
+    """获取最近的会话消息（尾部读取，避免全量遍历大 jsonl）"""
     session_file = get_latest_session_file(agent_id)
     if not session_file:
         return []
-    
+    # 多读一些行以过滤 type!=message 的行
+    raw_lines = _read_tail_lines(session_file, max(limit * 5, 500))
     messages = []
-    with open(session_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            try:
-                data = json.loads(line.strip())
-                if data.get('type') == 'message':
-                    messages.append(data.get('message', {}))
-            except json.JSONDecodeError:
-                continue
-    
-    # 只取最后 N 条
-    return messages[-limit:]
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            if data.get('type') == 'message':
+                messages.append(data.get('message', {}))
+                if len(messages) >= limit:
+                    break
+        except json.JSONDecodeError:
+            continue
+    return messages[-limit:] if len(messages) > limit else messages
 
 
 def has_recent_errors(agent_id: str, minutes: int = 5) -> bool:

@@ -9,6 +9,7 @@
         v-show="!capturedError"
         :main-agent="mainAgent"
         :sub-agents="subAgents"
+        :main-agent-id="mainAgentId"
         @agent-click="$emit('agent-click', $event)"
       />
       <div v-show="capturedError" class="collaboration-error-fallback">
@@ -27,6 +28,7 @@ import CollaborationFlowSection from './CollaborationFlowSection.vue'
 defineProps<{
   mainAgent?: unknown
   subAgents?: unknown[]
+  mainAgentId?: string
 }>()
 
 defineEmits<{

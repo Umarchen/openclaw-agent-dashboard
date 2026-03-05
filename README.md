@@ -25,7 +25,7 @@ npm run deploy
 
 安装完成后，执行任意 `openclaw` 命令时 Dashboard 会自动启动。
 
-访问地址: http://localhost:8000
+访问地址: http://localhost:38271
 
 ## 命令说明
 
@@ -35,6 +35,7 @@ npm run deploy
 | `npm run upgrade` | 拉取最新代码 + 部署（推荐用于升级） |
 | `npm run pack` | 仅打包插件，不安装（开发调试用） |
 | `npm run bundle` | 生成可分发的压缩包（给同事用） |
+| `npm run start` | 独立启动 Dashboard（插件未自动启动时使用） |
 
 ## 离线分发（给同事）
 
@@ -75,7 +76,7 @@ npm run build
 
 # 3. 启动后端
 cd ../src/backend
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 38271
 ```
 
 ## 项目结构
@@ -104,7 +105,7 @@ openclaw-agent-dashboard/
 | GET | `/api/timeline/:id` | 时序数据 |
 | GET | `/api/chains` | 任务链路 |
 
-完整 API 文档: http://localhost:8000/docs
+完整 API 文档: http://localhost:38271/docs
 
 ## 数据源
 
@@ -125,6 +126,21 @@ openclaw-agent-dashboard/
 npm run deploy
 openclaw gateway restart
 ```
+
+## 无法访问时的排查
+
+若 http://localhost:38271 无法访问，可能是插件未随 Gateway 自动启动，可手动启动：
+
+```bash
+# 方式一：在项目目录下（需先 npm run deploy）
+npm run start
+
+# 方式二：使用已安装的插件目录
+cd ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard
+OPENCLAW_HOME=~/.openclaw python3 -m uvicorn main:app --host 0.0.0.0 --port 38271
+```
+
+说明：`openclaw gateway restart` 重启的是 Gateway 网关（端口 18789），不是 Agent Dashboard（38271）。Dashboard 作为插件随 Gateway 加载，若 systemd 方式运行的 Gateway 未正确加载插件，需手动启动 Dashboard。
 
 ## 许可证
 

@@ -40,6 +40,12 @@
         <div class="task-name" :title="currentTask">{{ currentTask }}</div>
       </div>
 
+      <!-- 详细状态（工作中时显示） -->
+      <div v-if="agent.status === 'working' && currentAction" class="status-detail" :class="`sub-status-${subStatus}`">
+        <span class="action-icon">{{ subStatusIcon }}</span>
+        <span class="action-text">{{ currentAction }}</span>
+      </div>
+
       <!-- 空闲状态 -->
       <div v-else-if="agent.status === 'idle'" class="idle-hint">
         空闲中，等待任务...
@@ -137,6 +143,11 @@ const props = defineProps<{
   stuckWarning?: StuckWarning
   hierarchyDepth?: number
   agentColor?: string
+  // TR5: 详细状态
+  subStatus?: 'thinking' | 'tool_executing' | 'waiting_llm' | 'waiting_child'
+  currentAction?: string
+  toolName?: string
+  waitingFor?: string
 }>()
 
 const emit = defineEmits<{
@@ -166,6 +177,16 @@ const emoji = computed(() => {
 const statusText = computed(() => {
   const map = { idle: '空闲', working: '工作中', down: '异常' }
   return map[props.agent.status] || '未知'
+})
+
+const subStatusIcon = computed(() => {
+  const icons: Record<string, string> = {
+    'thinking': '🧠',
+    'tool_executing': '⚙️',
+    'waiting_llm': '📡',
+    'waiting_child': '⏳',
+  }
+  return icons[props.subStatus || ''] || '🔄'
 })
 
 const errorTypeLabel = computed(() => {
@@ -504,5 +525,56 @@ function navigateToAgent(agentId: string) {
   text-align: center;
   padding: 0.5rem;
   font-style: italic;
+}
+
+/* 详细状态 (TR5) */
+.status-detail {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+.status-detail.sub-status-thinking {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border: 1px solid #fcd34d;
+  color: #92400e;
+}
+
+.status-detail.sub-status-tool_executing {
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+  border: 1px solid #93c5fd;
+  color: #1e40af;
+}
+
+.status-detail.sub-status-waiting_llm {
+  background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
+  border: 1px solid #a5b4fc;
+  color: #3730a3;
+}
+
+.status-detail.sub-status-waiting_child {
+  background: linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%);
+  border: 1px solid #f9a8d4;
+  color: #9d174d;
+}
+
+.action-icon {
+  font-size: 0.85rem;
+}
+
+.action-text {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 </style>

@@ -68,6 +68,10 @@
                   :stuck-warning="node.stuckWarning"
                   :hierarchy-depth="getAgentDepth(node.id)"
                   :agent-color="getAgentColor(node.id)"
+                  :sub-status="node.subStatus"
+                  :current-action="node.currentAction"
+                  :tool-name="node.toolName"
+                  :waiting-for="node.waitingFor"
                 />
               </div>
             </div>
@@ -124,7 +128,7 @@
                   :key="call.id"
                   class="model-dot"
                   :style="{ background: getAgentColor(call.agentId) }"
-                  :title="`${call.agentId}`"
+                  :title="`${getAgentName(call.agentId)} @ ${call.model || 'unknown'}`"
                   @click.stop="selectedCall = call"
                 />
               </div>
@@ -173,9 +177,9 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRealtime } from '../../composables'
 import AgentCard from '../AgentCard.vue'
-import type { CollaborationNode, CollaborationEdge, CollaborationFlow, CollaborationDynamic, ModelCall } from '../../types'
+import type { CollaborationNode, CollaborationEdge, CollaborationFlow, CollaborationDynamic, ModelCall, AgentDisplayStatus } from '../../types'
 
-const DYNAMIC_POLL_INTERVAL_MS = 5000
+const DYNAMIC_POLL_INTERVAL_MS = 3000
 
 interface AgentForCard {
   name: string
@@ -453,6 +457,41 @@ function handleCollaborationDynamicUpdate(dyn: CollaborationDynamic): void {
   for (const node of agentNodesLocal) {
     if (node.id && dyn.agentStatuses && dyn.agentStatuses[node.id] !== undefined) {
       node.status = dyn.agentStatuses[node.id] as CollaborationNode['status']
+    }
+    // 更新详细状态 (TR5)
+    if (node.id && dyn.agentDynamicStatuses && dyn.agentDynamicStatuses[node.id]) {
+      const dynStatus = dyn.agentDynamicStatuses[node.id]
+      node.subStatus = dynStatus.subStatus
+      node.currentAction = dynStatus.currentAction
+      node.toolName = dynStatus.toolName
+      node.waitingFor = dynStatus.waitingFor
+    }
+    // 更新显示状态 (TR9-1：基于时间阈值)
+    if (node.id && dyn.agentDisplayStatuses && dyn.agentDisplayStatuses[node.id]) {
+      const displayStatus = dyn.agentDisplayStatuses[node.id]
+      node.currentAction = displayStatus.display
+      // 存储 duration 和 alert 到 metadata
+      if (!node.metadata) node.metadata = {}
+      node.metadata = {
+        ...node.metadata,
+        duration: displayStatus.duration,
+        alert: displayStatus.alert
+      }
+      // 设置 alert 标志用于 UI 警告样式
+      if (displayStatus.alert) {
+        node.stuckWarning = {
+          isStuck: true,
+          idleSeconds: displayStatus.duration,
+          lastUpdate: Date.now(),
+          reason: 'self_busy',
+          reasonDetail: displayStatus.display
+        }
+      } else {
+        // 清除警告
+        if (node.stuckWarning && !node.stuckWaitingForChildAgent) {
+          node.stuckWarning = undefined
+        }
+      }
     }
   }
   const taskIdsBefore = new Set(nodes.value.filter(n => n.type === 'task').map(n => n.id))

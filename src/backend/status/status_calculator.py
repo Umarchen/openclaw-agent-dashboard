@@ -5,15 +5,20 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
+import logging
 import time
-from typing import Literal
+from typing import Literal, Dict, Any
 from data.config_reader import get_agents_list, get_agent_config
 from data.subagent_reader import is_agent_working, get_agent_runs
 from data.session_reader import (
     has_recent_errors,
     get_last_error,
     has_recent_session_activity,
+    get_session_updated_at,
+    get_pending_tool_call_with_timestamp,
 )
+
+logger = logging.getLogger(__name__)
 
 
 AgentStatus = Literal['idle', 'working', 'down']
@@ -35,7 +40,7 @@ def calculate_agent_status(agent_id: str) -> AgentStatus:
     # 检查工作中：subagent run 未结束，或 session 最近有活动
     if is_agent_working(agent_id):
         return 'working'
-    if has_recent_session_activity(agent_id, minutes=5):
+    if has_recent_session_activity(agent_id, minutes=2):
         return 'working'
     
     # 默认空闲
@@ -78,14 +83,14 @@ def get_current_task(agent_id: str) -> str:
     runs = get_agent_runs(agent_id, limit=1)
     if not runs:
         return ''
-    
+
     run = runs[0]
     task = run.get('task', '')
-    
-    # 截取前50个字符
-    if len(task) > 50:
-        task = task[:50] + '...'
-    
+
+    # 截取前60个字符（统一长度）
+    if len(task) > 60:
+        task = task[:57] + '...'
+
     return task
 
 
@@ -119,3 +124,178 @@ def format_last_active(timestamp: int) -> str:
         return f"{int(diff_seconds / 3600)}小时前"
     else:
         return f"{int(diff_seconds / 86400)}天前"
+
+
+def get_detailed_status(agent_id: str) -> dict:
+    """
+    获取 Agent 详细状态（包含子状态和当前动作）
+
+    Returns:
+        {
+            'status': 'idle' | 'working' | 'down',
+            'subStatus': 'thinking' | 'tool_executing' | 'waiting_llm' | 'waiting_child' | None,
+            'currentAction': '思考中...' | '执行: Read' | '等待: xxx' | None,
+            'toolName': str | None,
+            'waitingFor': str | None
+        }
+    """
+    from data.session_reader import get_latest_tool_call, has_thinking_block
+    from data.subagent_reader import get_active_runs
+
+    base_status = calculate_agent_status(agent_id)
+
+    # 非 working 状态不返回子状态
+    if base_status != 'working':
+        return {
+            'status': base_status,
+            'subStatus': None,
+            'currentAction': None,
+            'toolName': None,
+            'waitingFor': None
+        }
+
+    # 检查是否在执行工具（最近有 toolCall 且无对应 toolResult）
+    tool_call = get_latest_tool_call(agent_id)
+    if tool_call and not tool_call.get('hasResult'):
+        tool_name = tool_call.get('name', 'unknown')
+        return {
+            'status': 'working',
+            'subStatus': 'tool_executing',
+            'currentAction': f'执行: {tool_name}',
+            'toolName': tool_name,
+            'waitingFor': None
+        }
+
+    # 检查是否有 thinking 块
+    if has_thinking_block(agent_id):
+        return {
+            'status': 'working',
+            'subStatus': 'thinking',
+            'currentAction': '思考中...',
+            'toolName': None,
+            'waitingFor': None
+        }
+
+    # 检查是否在等待子代理
+    for run in get_active_runs():
+        requester_key = run.get('requesterSessionKey', '')
+        # 如果这个 agent 是 requester，说明它在等待子 agent
+        if f'agent:{agent_id}:' in requester_key:
+            child_key = run.get('childSessionKey', '')
+            child_agent_id = _parse_agent_id_from_key(child_key)
+            if child_agent_id:
+                return {
+                    'status': 'working',
+                    'subStatus': 'waiting_child',
+                    'currentAction': f'等待: {child_agent_id}',
+                    'toolName': None,
+                    'waitingFor': child_agent_id
+                }
+
+    # 默认：等待模型响应
+    return {
+        'status': 'working',
+        'subStatus': 'waiting_llm',
+        'currentAction': '等待模型响应',
+        'toolName': None,
+        'waitingFor': None
+    }
+
+
+def _parse_agent_id_from_key(session_key: str) -> str:
+    """从 sessionKey 解析 agentId"""
+    parts = (session_key or '').split(':')
+    if len(parts) >= 2 and parts[0] == 'agent':
+        return parts[1]
+    return ''
+
+
+def get_display_status(agent_id: str) -> Dict[str, Any]:
+    """
+    获取用于前端显示的状态（基于时间阈值）
+
+    核心原则：
+    1. 不追求精确：快速动作无法精确捕获
+    2. 关注异常：只显示超过阈值的"卡顿"状态
+    3. 提供上下文：显示等待对象、持续时间
+    4. 减少闪烁：用"处理中..."作为过渡状态
+
+    Args:
+        agent_id: Agent ID
+
+    Returns:
+        {
+            'status': 'idle' | 'working',
+            'display': str,      # 显示文本
+            'duration': int,     # 持续时间（秒）
+            'alert': bool,       # 是否需要警告
+        }
+    """
+    from data.subagent_reader import get_waiting_child_agent
+
+    # 无任务
+    if not is_agent_working(agent_id):
+        return {'status': 'idle', 'display': '空闲', 'duration': 0, 'alert': False}
+
+    # 计算空闲时间（使用 sessions.json 的 updatedAt）
+    last_activity = get_session_updated_at(agent_id)
+    now = int(time.time() * 1000)
+    idle_seconds = int((now - last_activity) / 1000) if last_activity else 0
+
+    # 检查等待子代理（阈值：3秒）
+    waiting_for = get_waiting_child_agent(agent_id)
+    if waiting_for and idle_seconds > 3:
+        logger.debug(f"[{agent_id}] Waiting for child: {waiting_for}, duration: {idle_seconds}s")
+        return {
+            'status': 'working',
+            'display': f'等待 {waiting_for}',
+            'duration': idle_seconds,
+            'alert': idle_seconds > 60  # 超过 60 秒警告
+        }
+
+    # 检查工具执行（使用消息级别的时间戳计算 duration）
+    tool_call = get_pending_tool_call_with_timestamp(agent_id)
+    if tool_call:
+        tool_timestamp = tool_call.get('timestamp', 0)
+        tool_duration = int((now - tool_timestamp) / 1000) if tool_timestamp else 0
+        tool_name = tool_call.get('name', '')
+
+        # 只有未完成且超过阈值才显示
+        if not tool_call.get('hasResult') and tool_duration > 2:
+            logger.debug(f"[{agent_id}] Tool executing: {tool_name}, duration: {tool_duration}s")
+            if tool_name == 'Bash':
+                return {
+                    'status': 'working',
+                    'display': '执行命令',
+                    'duration': tool_duration,
+                    'alert': tool_duration > 30  # 超过 30 秒警告
+                }
+            elif tool_name in ('Write', 'Edit'):
+                return {
+                    'status': 'working',
+                    'display': '读写文件',
+                    'duration': tool_duration,
+                    'alert': False
+                }
+            elif tool_duration > 3:
+                return {
+                    'status': 'working',
+                    'display': '执行工具',
+                    'duration': tool_duration,
+                    'alert': False
+                }
+
+    # 检查等待模型（阈值：5秒）
+    if idle_seconds > 5:
+        alert = idle_seconds > 15  # 超过 15 秒可能是限流
+        display = '等待响应' + (' (可能限流)' if alert else '')
+        logger.debug(f"[{agent_id}] Waiting for model, duration: {idle_seconds}s, alert: {alert}")
+        return {
+            'status': 'working',
+            'display': display,
+            'duration': idle_seconds,
+            'alert': alert
+        }
+
+    # 快速执行中
+    return {'status': 'working', 'display': '处理中...', 'duration': 0, 'alert': False}

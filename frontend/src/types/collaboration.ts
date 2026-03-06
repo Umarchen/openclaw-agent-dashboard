@@ -23,6 +23,8 @@ export interface StuckWarning {
   }
 }
 
+export type SubStatus = 'thinking' | 'tool_executing' | 'waiting_llm' | 'waiting_child'
+
 export interface CollaborationNode {
   id: string
   type: NodeType
@@ -37,6 +39,11 @@ export interface CollaborationNode {
   error?: AgentError
   // 卡顿警告
   stuckWarning?: StuckWarning
+  // 详细状态 (TR5)
+  subStatus?: SubStatus
+  currentAction?: string
+  toolName?: string
+  waitingFor?: string
 }
 
 export type EdgeType = 'delegates' | 'calls' | 'returns' | 'error' | 'model'
@@ -75,10 +82,32 @@ export interface CollaborationFlow {
   depths?: Record<string, number>  // agentId -> 层级深度
 }
 
+export interface AgentDynamicStatus {
+  status: string  // 'idle' | 'working'
+  subStatus?: SubStatus
+  currentAction?: string
+  toolName?: string
+  waitingFor?: string
+}
+
+export interface AgentDisplayStatus {
+  /** 状态：idle 或 working */
+  status: 'idle' | 'working'
+  /** 显示文本，如 "等待响应"、"执行命令"、"处理中..." */
+  display: string
+  /** 持续时间（秒） */
+  duration: number
+  /** 是否需要警告（如等待时间过长） */
+  alert: boolean
+}
+
 export interface CollaborationDynamic {
   activePath: string[]
   recentCalls: ModelCall[]
   agentStatuses: Record<string, string>
+  agentDynamicStatuses?: Record<string, AgentDynamicStatus>
+  /** 详细显示状态（TR9-1：基于时间阈值） */
+  agentDisplayStatuses?: Record<string, AgentDisplayStatus>
   taskNodes: CollaborationNode[]
   taskEdges: CollaborationEdge[]
   mainAgentId: string

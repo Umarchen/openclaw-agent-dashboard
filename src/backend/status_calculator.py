@@ -35,7 +35,7 @@ def calculate_agent_status(agent_id: str) -> AgentStatus:
     # 检查工作中：subagent run 未结束，或 session 最近有活动
     if is_agent_working(agent_id):
         return 'working'
-    if has_recent_session_activity(agent_id, minutes=5):
+    if has_recent_session_activity(agent_id, minutes=2):
         return 'working'
     
     # 默认空闲
@@ -81,11 +81,11 @@ def get_current_task(agent_id: str) -> str:
     
     run = runs[0]
     task = run.get('task', '')
-    
-    # 截取前50个字符
-    if len(task) > 50:
-        task = task[:50] + '...'
-    
+
+    # 截取前60个字符（统一长度）
+    if len(task) > 60:
+        task = task[:57] + '...'
+
     return task
 
 

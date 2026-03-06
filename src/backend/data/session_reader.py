@@ -271,3 +271,185 @@ def get_session_turns(agent_id: str, session_key: Optional[str] = None, limit: i
                 continue
     
     return turns[-limit:] if len(turns) > limit else turns
+
+
+def get_latest_tool_call(agent_id: str) -> Optional[Dict[str, Any]]:
+    """
+    获取最近的工具调用（检查是否已完成）
+
+    Returns:
+        {'id': str, 'name': str, 'hasResult': bool} or None
+    """
+    messages = get_recent_messages(agent_id, limit=30)
+
+    # 收集所有 toolCall 和 toolResult
+    tool_calls = {}  # id -> {name, hasResult}
+    tool_results = set()  # toolCallIds that have results
+
+    for msg in messages:
+        if msg.get('role') == 'assistant':
+            content = msg.get('content', [])
+            if isinstance(content, str):
+                content = [{'type': 'text', 'text': content}]
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'toolCall':
+                    tool_id = c.get('id')
+                    tool_name = c.get('name')
+                    if tool_id:
+                        tool_calls[tool_id] = {'name': tool_name, 'hasResult': False}
+        elif msg.get('role') == 'toolResult':
+            # toolResult 通过 toolCallId 关联
+            tool_call_id = msg.get('toolCallId') or msg.get('tool_call_id')
+            if tool_call_id:
+                tool_results.add(tool_call_id)
+
+    # 标记已有结果的 toolCall
+    for tool_id in tool_calls:
+        if tool_id in tool_results:
+            tool_calls[tool_id]['hasResult'] = True
+
+    # 返回最后一个未完成的 toolCall
+    for tool_id in reversed(list(tool_calls.keys())):
+        info = tool_calls[tool_id]
+        if not info['hasResult']:
+            return {
+                'id': tool_id,
+                'name': info['name'],
+                'hasResult': False
+            }
+
+    # 所有 toolCall 都已完成，返回最后一个（表示刚完成）
+    if tool_calls:
+        last_id = list(tool_calls.keys())[-1]
+        return {
+            'id': last_id,
+            'name': tool_calls[last_id]['name'],
+            'hasResult': True
+        }
+
+    return None
+
+
+def has_thinking_block(agent_id: str) -> bool:
+    """检查最近消息是否有 thinking 块"""
+    messages = get_recent_messages(agent_id, limit=5)
+    for msg in reversed(messages):
+        if msg.get('role') == 'assistant':
+            content = msg.get('content', [])
+            if isinstance(content, str):
+                continue
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'thinking':
+                    return True
+    return False
+
+
+def get_latest_assistant_message(agent_id: str) -> Optional[Dict[str, Any]]:
+    """获取最近的 assistant 消息"""
+    messages = get_recent_messages(agent_id, limit=10)
+    for msg in reversed(messages):
+        if msg.get('role') == 'assistant':
+            return msg
+    return None
+
+
+def get_recent_messages_with_timestamp(agent_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    获取最近的会话消息（包含时间戳）
+
+    Args:
+        agent_id: Agent ID
+        limit: 返回消息数量限制
+
+    Returns:
+        [{'message': {...}, 'timestamp': int, 'data_timestamp': str}, ...]
+        - timestamp: 消息中的时间戳（毫秒）
+        - data_timestamp: JSONL 行的 timestamp 字段（ISO 格式字符串）
+    """
+    session_file = get_latest_session_file(agent_id)
+    if not session_file:
+        return []
+
+    raw_lines = _read_tail_lines(session_file, max(limit * 5, 500))
+    messages = []
+
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            if data.get('type') == 'message':
+                msg = data.get('message', {})
+                messages.append({
+                    'message': msg,
+                    'timestamp': msg.get('timestamp', 0),
+                    'data_timestamp': data.get('timestamp', ''),
+                })
+                if len(messages) >= limit:
+                    break
+        except json.JSONDecodeError:
+            continue
+
+    return messages[-limit:] if len(messages) > limit else messages
+
+
+def get_pending_tool_call_with_timestamp(agent_id: str) -> Optional[Dict[str, Any]]:
+    """
+    获取待处理的工具调用（包含时间戳）
+
+    复用 get_latest_tool_call 的匹配逻辑，但返回消息级别的时间戳
+
+    Args:
+        agent_id: Agent ID
+
+    Returns:
+        {'id': str, 'name': str, 'hasResult': bool, 'timestamp': int} or None
+        - timestamp: 工具调用时的时间戳（毫秒）
+    """
+    messages = get_recent_messages_with_timestamp(agent_id, limit=30)
+
+    tool_calls = {}  # id -> {name, timestamp, hasResult}
+    tool_results = set()
+
+    for item in messages:
+        msg = item.get('message', {})
+        ts = item.get('timestamp', 0)
+
+        if msg.get('role') == 'assistant':
+            content = msg.get('content', [])
+            if isinstance(content, str):
+                continue
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'toolCall':
+                    tool_id = c.get('id')
+                    if tool_id:
+                        tool_calls[tool_id] = {
+                            'id': tool_id,
+                            'name': c.get('name', 'unknown'),
+                            'timestamp': ts,
+                            'hasResult': False
+                        }
+
+        elif msg.get('role') == 'toolResult':
+            tool_call_id = msg.get('toolCallId') or msg.get('tool_call_id')
+            if tool_call_id:
+                tool_results.add(tool_call_id)
+
+    # 标记已有结果的 toolCall
+    for tool_id in tool_calls:
+        if tool_id in tool_results:
+            tool_calls[tool_id]['hasResult'] = True
+
+    # 返回最后一个未完成的 toolCall
+    for tool_id in reversed(list(tool_calls.keys())):
+        info = tool_calls[tool_id]
+        if not info['hasResult']:
+            return info
+
+    # 所有 toolCall 都已完成，返回最后一个
+    if tool_calls:
+        last_id = list(tool_calls.keys())[-1]
+        return tool_calls[last_id]
+
+    return None

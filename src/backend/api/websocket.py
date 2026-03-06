@@ -16,7 +16,7 @@ router = APIRouter()
 active_connections: Set[WebSocket] = set()
 
 # 周期性推送间隔（秒）
-BROADCAST_INTERVAL_SEC = 8
+BROADCAST_INTERVAL_SEC = 3
 _broadcast_task: asyncio.Task | None = None
 
 

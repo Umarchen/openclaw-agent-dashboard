@@ -75,6 +75,32 @@ def is_agent_working(agent_id: str) -> bool:
     return False
 
 
+def get_waiting_child_agent(agent_id: str) -> Optional[str]:
+    """
+    获取正在等待的子代理名称
+
+    当 Agent 作为 requester 派发任务给子 Agent 时，
+    该 Agent 正在等待子 Agent 完成任务。
+
+    Args:
+        agent_id: Agent ID
+
+    Returns:
+        子代理 ID，如果没有则返回 None
+    """
+    active_runs = get_active_runs()
+    for run in active_runs:
+        requester_key = run.get('requesterSessionKey', '')
+        # 检查这个 agent 是否是 requester（即它在等待子 agent）
+        if f'agent:{agent_id}:' in requester_key:
+            child_key = run.get('childSessionKey', '')
+            if child_key and ':' in child_key:
+                parts = child_key.split(':')
+                if len(parts) >= 2 and parts[0] == 'agent':
+                    return parts[1]
+    return None
+
+
 def get_agent_output_for_run(child_session_key: str, max_chars: int = 10000) -> Optional[str]:
     """
     从子 Agent 的 session 文件中提取最后一次 assistant 消息的文本输出。

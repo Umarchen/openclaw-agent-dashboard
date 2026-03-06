@@ -3,6 +3,8 @@
 符合 PRD: 展示老 K 与所有子 Agents 之间的连接关系，任务从老 K 流向子 Agents
 扩展: Agent 模型配置、模型节点、最近调用（光球展示）
 """
+import re
+import logging
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -16,6 +18,7 @@ TZ_DISPLAY = ZoneInfo('Asia/Shanghai')
 sys.path.append(str(Path(__file__).parent.parent))
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class CollaborationNode(BaseModel):
@@ -52,6 +55,14 @@ class ModelCall(BaseModel):
     time: str  # HH:MM:SS
 
 
+class AgentDisplayStatus(BaseModel):
+    """Agent 显示状态（基于时间阈值）"""
+    status: str  # 'idle' | 'working'
+    display: str  # 显示文本
+    duration: int  # 持续时间（秒）
+    alert: bool  # 是否需要警告
+
+
 class CollaborationFlow(BaseModel):
     nodes: List[CollaborationNode]
     edges: List[CollaborationEdge]
@@ -71,6 +82,86 @@ def _parse_agent_id(session_key: str) -> str:
     if len(parts) >= 2 and parts[0] == 'agent':
         return parts[1]
     return ''
+
+
+# ============================================================================
+# 模型 ID 规范化（TR9-2）
+# ============================================================================
+
+# 模块级缓存
+_model_mapping_cache: Optional[Dict[str, str]] = None
+
+
+def _get_model_mapping() -> Dict[str, str]:
+    """
+    获取 model 映射（带缓存）
+
+    Returns:
+        {'claude-sonnet-4.6': 'anthropic/claude-sonnet-4.6', ...}
+    """
+    global _model_mapping_cache
+    if _model_mapping_cache is None:
+        try:
+            from data.config_reader import get_all_models_from_agents
+            _model_mapping_cache = {}
+            for model_id in get_all_models_from_agents():
+                short = model_id.split('/')[-1]
+                # 精确匹配
+                _model_mapping_cache[short] = model_id
+                # 去除日期版本号的映射（使用正则精确匹配 -20YYMMDD）
+                base = re.sub(r'-20\d{6}$', '', short)
+                if base != short:
+                    _model_mapping_cache[base] = model_id
+        except Exception as e:
+            logger.warning(f"Failed to build model mapping: {e}")
+            _model_mapping_cache = {}
+    return _model_mapping_cache
+
+
+def _normalize_model_id(model_from_session: str) -> str:
+    """
+    将 session 中的 model 值规范化为标准格式
+
+    Args:
+        model_from_session: session 中的 model 值
+
+    Returns:
+        标准化的模型 ID，如 "anthropic/claude-sonnet-4.6"
+
+    Examples:
+        >>> _normalize_model_id("claude-sonnet-4.6")
+        "anthropic/claude-sonnet-4.6"
+        >>> _normalize_model_id("claude-sonnet-4.6-20250514")
+        "anthropic/claude-sonnet-4.6"
+        >>> _normalize_model_id("anthropic/claude-sonnet-4.6")
+        "anthropic/claude-sonnet-4.6"
+    """
+    if not model_from_session:
+        return '(unknown)'
+
+    # 已经是标准格式
+    if '/' in model_from_session:
+        return model_from_session
+
+    mapping = _get_model_mapping()
+
+    # 精确匹配
+    if model_from_session in mapping:
+        return mapping[model_from_session]
+
+    # 使用正则去除日期版本号后匹配
+    base_name = re.sub(r'-20\d{6}$', '', model_from_session)
+    if base_name in mapping:
+        return mapping[base_name]
+
+    logger.debug(f"Unknown model format: {model_from_session}")
+    return model_from_session
+
+
+def _clear_model_mapping_cache():
+    """清除模型映射缓存（配置变更时调用）"""
+    global _model_mapping_cache
+    _model_mapping_cache = None
 
 
 def _clean_task_name(task_name: str) -> str:
@@ -224,7 +315,20 @@ def _analyze_stuck_reason(agent_id: str, idle_seconds: int) -> Dict[str, Any]:
 
 
 def _get_recent_model_calls(minutes: int = 30) -> List[Dict]:
-    """获取最近 N 分钟的模型调用记录（用于光球展示）"""
+    """
+    获取最近 N 分钟的模型调用记录（用于光球展示）
+
+    Args:
+        minutes: 时间范围（分钟）
+
+    Returns:
+        调用记录列表，model 字段已规范化
+
+    注意:
+        - since 为 timezone-aware datetime (UTC)
+        - timestamp 统一处理为 UTC timezone-aware
+        - model 字段规范化为 provider/model 格式
+    """
     from api.performance import parse_session_file_with_details
 
     records = []
@@ -233,6 +337,7 @@ def _get_recent_model_calls(minutes: int = 30) -> List[Dict]:
     if not agents_path.exists():
         return []
 
+    # 确保 since 是 UTC timezone-aware
     now = datetime.now(timezone.utc)
     since = now - timedelta(minutes=minutes)
 
@@ -247,20 +352,26 @@ def _get_recent_model_calls(minutes: int = 30) -> List[Dict]:
             if 'lock' in session_file.name or 'deleted' in session_file.name:
                 continue
             for r in parse_session_file_with_details(session_file, agent_id):
-                if r['timestamp'] >= since:
-                    ts = r['timestamp']
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
+                ts = r['timestamp']
+                # 确保 timestamp 是 timezone-aware
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+
+                if ts >= since:
                     ts_local = ts.astimezone(TZ_DISPLAY)
+                    # 规范化 model 字段
+                    normalized_model = _normalize_model_id(r.get('model', ''))
+
                     records.append({
                         'agentId': agent_id,
-                        'model': r.get('model', ''),
+                        'model': normalized_model,  # 使用规范化后的值
                         'sessionId': r['sessionId'],
                         'trigger': r.get('trigger', ''),
                         'tokens': r.get('tokens', 0),
                         'timestamp': int(ts.timestamp() * 1000),
                         'time': ts_local.strftime('%H:%M:%S')
                     })
+
     records.sort(key=lambda x: x['timestamp'])
     return records[-100:]  # 最多 100 条
 
@@ -552,6 +663,7 @@ class CollaborationDynamic(BaseModel):
     activePath: List[str]
     recentCalls: List[ModelCall]
     agentStatuses: Dict[str, str]  # agentId -> idle/working/error
+    agentDynamicStatuses: Optional[Dict[str, AgentDisplayStatus]] = None  # 新增：详细显示状态
     taskNodes: List[CollaborationNode]
     taskEdges: List[CollaborationEdge]
     mainAgentId: str
@@ -563,10 +675,11 @@ async def get_collaboration_dynamic():
     """轻量接口：仅返回状态、小球、任务等动态数据，用于静默刷新，不触发整体重载"""
     from data.config_reader import get_agents_list, get_main_agent_id
     from data.subagent_reader import get_active_runs
-    from status.status_calculator import calculate_agent_status
+    from status.status_calculator import calculate_agent_status, get_display_status
 
     active_path = []
     agent_statuses: Dict[str, str] = {}
+    agent_dynamic_statuses: Dict[str, AgentDisplayStatus] = {}
     task_nodes: List[CollaborationNode] = []
     task_edges: List[CollaborationEdge] = []
     main_agent_id = 'main'
@@ -589,8 +702,32 @@ async def get_collaboration_dynamic():
                 status = 'idle'
             agent_statuses[aid] = status
 
+            # 获取详细显示状态
+            try:
+                dyn_status = get_display_status(aid)
+                agent_dynamic_statuses[aid] = AgentDisplayStatus(
+                    status=dyn_status['status'],
+                    display=dyn_status['display'],
+                    duration=dyn_status['duration'],
+                    alert=dyn_status['alert']
+                )
+            except Exception as e:
+                logger.warning(f"Failed to get display status for {aid}: {e}")
+
         main_status = "working" if active_runs else "idle"
         agent_statuses[main_agent_id] = main_status
+
+        # 获取主 agent 的详细显示状态
+        try:
+            main_dyn_status = get_display_status(main_agent_id)
+            agent_dynamic_statuses[main_agent_id] = AgentDisplayStatus(
+                status=main_dyn_status['status'],
+                display=main_dyn_status['display'],
+                duration=main_dyn_status['duration'],
+                alert=main_dyn_status['alert']
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get display status for {main_agent_id}: {e}")
 
         main_agent_task_created = False
         for run in active_runs[:10]:
@@ -644,7 +781,7 @@ async def get_collaboration_dynamic():
                     main_agent_task_created = True
             active_path.extend([main_agent_id, agent_id, task_id])
     except Exception as e:
-        print(f"Error building collaboration dynamic: {e}")
+        logger.error(f"Error building collaboration dynamic: {e}")
 
     recent_calls_raw = _get_recent_model_calls(30)
     model_calls = [
@@ -665,6 +802,7 @@ async def get_collaboration_dynamic():
         activePath=list(set(active_path)),
         recentCalls=model_calls,
         agentStatuses=agent_statuses,
+        agentDynamicStatuses=agent_dynamic_statuses,
         taskNodes=task_nodes,
         taskEdges=task_edges,
         mainAgentId=main_agent_id,

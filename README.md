@@ -12,7 +12,70 @@
 - **API 状态** - 展示 API 服务异常和限流情况
 - **性能监控** - Token 使用、响应时间等
 
+## 系统要求
+
+| 组件 | 要求 |
+|------|------|
+| **openclaw** | 已安装 (`npm install -g openclaw`) |
+| **Python** | 3.8+ |
+| **pip** | python3-pip |
+| **venv** | python3-venv（Linux 推荐） |
+
+### 各系统依赖安装
+
+**Debian / Ubuntu:**
+```bash
+sudo apt update
+sudo apt install python3 python3-pip python3-venv
+```
+
+**Fedora / CentOS / RHEL:**
+```bash
+sudo dnf install python3 python3-pip
+```
+
+**macOS:**
+```bash
+brew install python3
+```
+
+**Windows (Git Bash):**
+- 安装 [Git for Windows](https://git-scm.com/download/win)
+- 安装 [Python 3](https://www.python.org/downloads/)（勾选 "Add Python to PATH"）
+
 ## 快速安装
+
+### 方式一：一键安装（推荐）
+
+```bash
+# 一键安装（需已安装 openclaw：npm install -g openclaw）
+curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/main/scripts/install.sh | bash
+```
+
+安装完成后，执行任意 `openclaw` 命令时 Dashboard 会自动启动。
+
+访问地址: http://localhost:38271
+
+**可选参数**:
+
+```bash
+# 安装指定版本
+DASHBOARD_VERSION=1.0.0 curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/main/scripts/install.sh | bash
+
+# 使用自定义下载地址
+DASHBOARD_RELEASE_URL=https://example.com/openclaw-agent-dashboard-v1.0.0.tgz curl -fsSL ... | bash
+
+# 跳过 Python 依赖安装
+DASHBOARD_SKIP_PYTHON=1 curl -fsSL ... | bash
+
+# 显示详细输出（调试用）
+VERBOSE=1 curl -fsSL ... | bash
+
+# 预览安装过程（不执行实际安装）
+DRY_RUN=1 curl -fsSL ... | bash
+```
+
+### 方式二：从源码安装
 
 ```bash
 # 克隆仓库
@@ -23,9 +86,21 @@ cd openclaw-agent-dashboard
 npm run deploy
 ```
 
-安装完成后，执行任意 `openclaw` 命令时 Dashboard 会自动启动。
+### 方式三：手动下载安装
 
-访问地址: http://localhost:38271
+从 [GitHub Releases](https://github.com/Umarchen/openclaw-agent-dashboard/releases) 下载 tgz 包：
+
+```bash
+# 下载
+curl -LO https://github.com/Umarchen/openclaw-agent-dashboard/releases/download/v1.0.0/openclaw-agent-dashboard-v1.0.0.tgz
+
+# 安装
+openclaw plugins install openclaw-agent-dashboard-v1.0.0.tgz
+
+# 安装 Python 依赖
+cd ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard
+python3 -m pip install -r requirements.txt --user
+```
 
 ## 命令说明
 
@@ -60,6 +135,17 @@ cd openclaw-agent-dashboard
 npm run deploy
 ```
 
+## Python 依赖安装策略
+
+安装脚本采用以下策略安装 Python 依赖：
+
+1. **venv（推荐）** - 创建虚拟环境，隔离依赖，不受 PEP 668 影响
+2. **pip --user（回退）** - 安装到 `~/.local/`，适用于无 venv 的环境
+
+若安装失败，请确保已安装系统依赖（见 [系统要求](#系统要求)）。
+
+详见 [Python 环境兼容性](docs/python-environment-compatibility.md)。
+
 ## 独立运行（不作为插件）
 
 如果需要独立运行（不作为插件）：
@@ -90,7 +176,11 @@ openclaw-agent-dashboard/
 │   ├── data/             # 数据读取层
 │   └── main.py           # 入口
 ├── plugin/                # 插件打包配置
-├── scripts/               # 构建脚本
+├── scripts/               # 安装与构建脚本
+│   ├── lib/              # 公共函数库
+│   ├── install.sh        # 一键安装
+│   └── install-plugin.sh # 源码安装
+├── .github/workflows/     # CI/CD
 └── docs/                  # 设计文档
 ```
 
@@ -130,7 +220,28 @@ npm run deploy
 openclaw gateway restart
 ```
 
-## 无法访问时的排查
+## 故障排查
+
+### Python 依赖安装失败
+
+```
+❌ Python 依赖安装失败
+```
+
+**解决方案：**
+
+```bash
+# Debian/Ubuntu
+sudo apt update && sudo apt install python3 python3-pip python3-venv
+
+# 重新安装
+npm run deploy
+
+# 或手动安装依赖
+python3 -m pip install -r ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard/requirements.txt --user
+```
+
+### 无法访问 Dashboard
 
 若 http://localhost:38271 无法访问，可能是插件未随 Gateway 自动启动，可手动启动：
 
@@ -145,14 +256,14 @@ OPENCLAW_HOME=~/.openclaw python3 -m uvicorn main:app --host 0.0.0.0 --port 3827
 
 说明：`openclaw gateway restart` 重启的是 Gateway 网关（端口 18789），不是 Agent Dashboard（38271）。Dashboard 作为插件随 Gateway 加载，若 systemd 方式运行的 Gateway 未正确加载插件，需手动启动 Dashboard。
 
-## 安装报错：plugin not found / Invalid config
+### 安装报错：plugin not found / Invalid config
 
 若出现 `plugins.allow: plugin not found: openclaw-agent-dashboard` 或 `Invalid config`，说明配置中有脏数据（插件曾被加入 allow 但当前未被发现）。按以下步骤处理：
 
 **方式一：先清理再安装（推荐）**
 
 ```bash
-# 1. 卸载旧配置（会清理 plugins.entries、plugins.installs、plugins.allow 中的相关项）
+# 1. 卸载旧配置
 openclaw plugins uninstall openclaw-agent-dashboard
 
 # 2. 重新安装
@@ -168,16 +279,6 @@ npm run deploy
 - 若存在 `installs.openclaw-agent-dashboard`，可删除
 
 保存后执行 `npm run deploy`。
-
-**方式三：尝试 doctor 修复**
-
-```bash
-openclaw doctor --repair
-# 或
-openclaw doctor --yes
-```
-
-若 doctor 能修复配置，再执行 `npm run deploy`。
 
 ## 许可证
 

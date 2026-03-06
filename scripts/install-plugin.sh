@@ -3,162 +3,160 @@
 # OpenClaw Agent Dashboard 插件 - 安装/升级脚本
 # 用法: npm run deploy（推荐）或 ./scripts/install-plugin.sh
 #
+# 选项:
+#   VERBOSE=1   显示详细输出（包括 npm/pip 的错误信息）
+#   DRY_RUN=1   仅预览，不执行实际安装
+#
 # 配置目录与 OpenClaw 一致：OPENCLAW_STATE_DIR > OPENCLAW_HOME > HOME
 #
-set -e
+set -euo pipefail
+
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
+SCRIPT_DIR="$ROOT/scripts"
 
-# 解析 OpenClaw 配置目录（与 openclaw 内部逻辑一致）
-resolve_openclaw_config_dir() {
-  if [ -n "${OPENCLAW_STATE_DIR}" ]; then
-    echo "${OPENCLAW_STATE_DIR}"
-    return
-  fi
-  if [ -n "${CLAWDBOT_STATE_DIR}" ]; then
-    echo "${CLAWDBOT_STATE_DIR}"
-    return
-  fi
-  local home_dir="${OPENCLAW_HOME:-${HOME:-$USERPROFILE}}"
-  if [ -z "$home_dir" ]; then
-    home_dir="$HOME"
-  fi
-  # 展开 ~ 前缀（与 openclaw 行为一致）
-  if [[ "$home_dir" == '~'* ]]; then
-    home_dir="${HOME:-$HOME}${home_dir#\~}"
-  fi
-  echo "${home_dir}/.openclaw"
-}
+# 引入公共库
+source "$SCRIPT_DIR/lib/common.sh"
 
-OPENCLAW_CONFIG_DIR=$(resolve_openclaw_config_dir)
-PLUGIN_PATH="${OPENCLAW_CONFIG_DIR}/extensions/openclaw-agent-dashboard"
-NEW_VERSION=$(grep '"version"' "$ROOT/plugin/openclaw.plugin.json" | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+# 环境变量
+VERBOSE="${VERBOSE:-0}"
+DRY_RUN="${DRY_RUN:-0}"
+
+# ============================================
+# 本脚本特有函数
+# ============================================
 
 # 获取已安装版本
 get_installed_version() {
-  if [ -f "$PLUGIN_PATH/openclaw.plugin.json" ]; then
-    grep '"version"' "$PLUGIN_PATH/openclaw.plugin.json" | sed 's/.*"version": *"\([^"]*\)".*/\1/'
+  local plugin_path="$1"
+  if [ -f "$plugin_path/openclaw.plugin.json" ]; then
+    parse_json_version "$plugin_path/openclaw.plugin.json"
   else
     echo ""
   fi
 }
 
-OLD_VERSION=$(get_installed_version)
+# 检查命令是否存在
+check_cmd() {
+  if ! command -v "$1" &>/dev/null; then
+    log_error "未找到 $1，请先安装: $2"
+    exit 1
+  fi
+}
 
-echo "[安装] 配置目录: $OPENCLAW_CONFIG_DIR"
-echo "[安装] 插件路径: $PLUGIN_PATH"
+# ============================================
+# 主流程
+# ============================================
+
+OPENCLAW_CONFIG_DIR=$(resolve_openclaw_config_dir)
+PLUGIN_PATH="${OPENCLAW_CONFIG_DIR}/extensions/openclaw-agent-dashboard"
+NEW_VERSION=$(parse_json_version "$ROOT/plugin/openclaw.plugin.json")
+OLD_VERSION=$(get_installed_version "$PLUGIN_PATH")
+
+log_info "[安装] 配置目录: $OPENCLAW_CONFIG_DIR"
+log_info "[安装] 插件路径: $PLUGIN_PATH"
 echo ""
 
 # 显示标题（区分安装/升级）
 if [ -n "$OLD_VERSION" ] && [ -d "$PLUGIN_PATH" ]; then
-  echo "=== OpenClaw Agent Dashboard 插件升级 ==="
+  log_info "=== OpenClaw Agent Dashboard 插件升级 ==="
   echo ""
-  echo "  $OLD_VERSION → $NEW_VERSION"
+  log_info "  $OLD_VERSION → $NEW_VERSION"
 else
-  echo "=== OpenClaw Agent Dashboard 插件安装 ==="
+  log_info "=== OpenClaw Agent Dashboard 插件安装 ==="
   echo ""
-  echo "  版本: $NEW_VERSION"
+  log_info "  版本: $NEW_VERSION"
+fi
+
+# dry-run 模式：仅预览
+if [ "$DRY_RUN" = "1" ]; then
+  echo ""
+  log_info "[DRY-RUN] 将执行以下操作:"
+  log_info "  - 安装插件到: $PLUGIN_PATH"
+  log_info "  - 安装 Python 依赖到 venv 或 --user"
+  log_ok "预览完成，未执行实际安装"
+  exit 0
 fi
 
 # 1. 检查前置条件
-check_cmd() {
-  if ! command -v "$1" &>/dev/null; then
-    echo "❌ 未找到 $1，请先安装: $2"
-    exit 1
-  fi
-}
 check_cmd node "https://nodejs.org"
 check_cmd python3 "https://www.python.org"
 check_cmd openclaw "npm install -g openclaw"
 
 echo ""
-echo "✓ 前置条件检查通过"
+log_ok "前置条件检查通过"
 
 # 2. 构建前端（若通过 npm run deploy 调用，pack 已构建，跳过）
-if [ -d "$ROOT/frontend/dist" ] && [ -n "$(ls -A $ROOT/frontend/dist 2>/dev/null)" ]; then
-  echo ""
-  echo ">>> 1/4 前端已构建，跳过"
+if [ -d "$ROOT/frontend/dist" ] && [ -n "$(ls -A "$ROOT/frontend/dist" 2>/dev/null)" ]; then
+  log_step "1/4 前端已构建，跳过"
 else
-  echo ""
-  echo ">>> 1/4 构建前端..."
-  (cd frontend && npm install --silent 2>/dev/null; npm run build)
+  log_step "1/4 构建前端..."
+  (cd frontend && run_silent npm install && npm run build)
 fi
 
 # 3. 打包插件（若通过 npm run deploy 调用，pack 已完成，跳过）
 if [ -d "$ROOT/plugin/dashboard" ] && [ -f "$ROOT/plugin/dashboard/main.py" ]; then
-  echo ""
-  echo ">>> 2/4 插件已打包，跳过"
+  log_step "2/4 插件已打包，跳过"
 else
-  echo ""
-  echo ">>> 2/4 打包插件..."
+  log_step "2/4 打包插件..."
   node scripts/build-plugin.js
 fi
 
 # 4. 安装插件（升级时用 uninstall 清理配置+目录，避免 plugins.allow 引用已删目录导致校验失败）
-echo ""
 PLUGIN_ID="openclaw-agent-dashboard"
 if [ -d "$PLUGIN_PATH" ]; then
-  echo ">>> 3/4 移除旧版本后安装..."
-  echo "    执行: openclaw plugins uninstall $PLUGIN_ID"
-  if openclaw plugins uninstall "$PLUGIN_ID" --force; then
-    echo "    ✓ 已卸载"
+  log_step "3/4 移除旧版本后安装..."
+  log_info "    执行: openclaw plugins uninstall $PLUGIN_ID"
+  if run_silent openclaw plugins uninstall "$PLUGIN_ID" --force; then
+    log_ok "    已卸载（配置记录）"
   else
-    echo "    ⚠ uninstall 失败，尝试 rm -rf 后安装（若遇 plugins.allow 报错请手动 uninstall）"
-    rm -rf "$PLUGIN_PATH"
-    echo "    ✓ 已删除（回退）"
+    log_warn "    uninstall 失败（可能未注册）"
   fi
+  # uninstall 只删除配置记录，需要手动删除物理目录
+  rm -rf "$PLUGIN_PATH"
+  log_ok "    已删除旧目录"
 else
-  echo ">>> 3/4 安装插件..."
+  log_step "3/4 安装插件..."
 fi
-echo "    目标: $PLUGIN_PATH"
-echo "    执行: openclaw plugins install ./plugin"
-openclaw plugins install ./plugin
-echo "    ✓ 插件已安装"
+log_info "    目标: $PLUGIN_PATH"
+log_info "    执行: openclaw plugins install ./plugin"
+if ! openclaw plugins install ./plugin; then
+  log_error "插件安装失败"
+  exit 1
+fi
+log_ok "    插件已安装"
 
-# 5. 安装 Python 依赖（优先 python3 -m pip，兼容无 pip 命令的环境）
+# 5. 安装 Python 依赖
+# 详见 docs/python-environment-compatibility.md
 if [ -f "$PLUGIN_PATH/dashboard/requirements.txt" ]; then
-  echo ""
   if [ -n "$OLD_VERSION" ]; then
-    echo ">>> 4/4 检查 Python 依赖..."
+    log_step "4/4 检查 Python 依赖..."
   else
-    echo ">>> 4/4 安装 Python 依赖..."
+    log_step "4/4 安装 Python 依赖..."
   fi
-  REQ="$PLUGIN_PATH/dashboard/requirements.txt"
-  echo "    尝试: python3 -m pip（含 --user 兼容 PEP 668）"
-  if python3 -m pip install -r "$REQ" -q; then
-    echo "✓ Python 依赖已就绪 (python3 -m pip)"
-  elif python3 -m pip install -r "$REQ" -q --user; then
-    echo "✓ Python 依赖已就绪 (python3 -m pip --user)"
-  elif pip install -r "$REQ" -q; then
-    echo "✓ Python 依赖已就绪 (pip)"
-  elif pip install -r "$REQ" -q --user; then
-    echo "✓ Python 依赖已就绪 (pip --user)"
-  elif pip3 install -r "$REQ" -q; then
-    echo "✓ Python 依赖已就绪 (pip3)"
-  elif pip3 install -r "$REQ" -q --user; then
-    echo "✓ Python 依赖已就绪 (pip3 --user)"
-  else
-    echo "❌ Python 依赖安装失败（常见于 Debian/Ubuntu 的 externally-managed-environment）"
-    echo "   请手动执行:"
-    echo "   python3 -m pip install -r $REQ --user"
+
+  # 调用独立的 Python 依赖安装脚本
+  DEPS_OPTS=""
+  [ "$VERBOSE" = "1" ] && DEPS_OPTS="--verbose"
+
+  if ! bash "$SCRIPT_DIR/install-python-deps.sh" "$PLUGIN_PATH" $DEPS_OPTS; then
     exit 1
   fi
 else
-  echo ""
-  echo "⚠ 插件未正确安装（缺少 requirements.txt）"
+  log_warn "插件未正确安装（缺少 requirements.txt）"
 fi
 
 # 完成
 echo ""
 if [ -n "$OLD_VERSION" ]; then
-  echo "=== 升级完成 ($OLD_VERSION → $NEW_VERSION) ==="
+  log_ok "=== 升级完成 ($OLD_VERSION → $NEW_VERSION) ==="
 else
-  echo "=== 安装完成 (v$NEW_VERSION) ==="
+  log_ok "=== 安装完成 (v$NEW_VERSION) ==="
 fi
 echo ""
-echo "执行任意 openclaw 命令（如 openclaw tui）时，Dashboard 会自动启动。"
-echo "访问地址: http://localhost:38271"
+log_info "执行任意 openclaw 命令（如 openclaw tui）时，Dashboard 会自动启动。"
+log_info "访问地址: http://localhost:38271"
 echo ""
-echo "若端口被占用，可创建 ~/.openclaw/dashboard/config.json 设置端口:"
-echo '  {"port": 38271}'
+log_info "若端口被占用，可创建 ~/.openclaw/dashboard/config.json 设置端口:"
+log_info '  {"port": 38271}'
 echo ""

@@ -146,7 +146,14 @@ function startDashboard(config = {}) {
       DASHBOARD_PORT: String(port),
     };
 
-    const pythonCmd = process.env.PYTHON_CMD || 'python3';
+    // 优先使用插件 venv 的 Python（安装时 venv 优先，避免 PEP 668）
+    const venvPythonUnix = path.join(dashboardDir, '.venv', 'bin', 'python');
+    const venvPythonWin = path.join(dashboardDir, '.venv', 'Scripts', 'python.exe');
+    let pythonCmd =
+      process.env.PYTHON_CMD ||
+      (fs.existsSync(venvPythonUnix) ? venvPythonUnix : null) ||
+      (fs.existsSync(venvPythonWin) ? venvPythonWin : null) ||
+      'python3';
     const args = ['-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', String(port)];
 
     if (!isExplicitPort && port !== basePort) {

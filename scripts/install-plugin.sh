@@ -94,17 +94,24 @@ else
   node scripts/build-plugin.js
 fi
 
-# 4. 安装插件（openclaw 要求目标不存在，升级时需先删除；若遇 plugins.allow 报错请先 uninstall）
+# 4. 安装插件（升级时用 uninstall 清理配置+目录，避免 plugins.allow 引用已删目录导致校验失败）
 echo ""
+PLUGIN_ID="openclaw-agent-dashboard"
 if [ -d "$PLUGIN_PATH" ]; then
   echo ">>> 3/4 移除旧版本后安装..."
-  echo "    删除: $PLUGIN_PATH"
-  rm -rf "$PLUGIN_PATH"
-  echo "    ✓ 已删除"
+  echo "    执行: openclaw plugins uninstall $PLUGIN_ID"
+  if openclaw plugins uninstall "$PLUGIN_ID" --force; then
+    echo "    ✓ 已卸载"
+  else
+    echo "    ⚠ uninstall 失败，尝试 rm -rf 后安装（若遇 plugins.allow 报错请手动 uninstall）"
+    rm -rf "$PLUGIN_PATH"
+    echo "    ✓ 已删除（回退）"
+  fi
 else
   echo ">>> 3/4 安装插件..."
 fi
 echo "    目标: $PLUGIN_PATH"
+echo "    执行: openclaw plugins install ./plugin"
 openclaw plugins install ./plugin
 echo "    ✓ 插件已安装"
 
@@ -116,16 +123,24 @@ if [ -f "$PLUGIN_PATH/dashboard/requirements.txt" ]; then
   else
     echo ">>> 4/4 安装 Python 依赖..."
   fi
-  echo "    尝试: python3 -m pip → pip → pip3"
-  if python3 -m pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q; then
+  REQ="$PLUGIN_PATH/dashboard/requirements.txt"
+  echo "    尝试: python3 -m pip（含 --user 兼容 PEP 668）"
+  if python3 -m pip install -r "$REQ" -q; then
     echo "✓ Python 依赖已就绪 (python3 -m pip)"
-  elif pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q; then
+  elif python3 -m pip install -r "$REQ" -q --user; then
+    echo "✓ Python 依赖已就绪 (python3 -m pip --user)"
+  elif pip install -r "$REQ" -q; then
     echo "✓ Python 依赖已就绪 (pip)"
-  elif pip3 install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q; then
+  elif pip install -r "$REQ" -q --user; then
+    echo "✓ Python 依赖已就绪 (pip --user)"
+  elif pip3 install -r "$REQ" -q; then
     echo "✓ Python 依赖已就绪 (pip3)"
+  elif pip3 install -r "$REQ" -q --user; then
+    echo "✓ Python 依赖已就绪 (pip3 --user)"
   else
-    echo "❌ Python 依赖安装失败，请手动执行:"
-    echo "   python3 -m pip install -r $PLUGIN_PATH/dashboard/requirements.txt"
+    echo "❌ Python 依赖安装失败（常见于 Debian/Ubuntu 的 externally-managed-environment）"
+    echo "   请手动执行:"
+    echo "   python3 -m pip install -r $REQ --user"
     exit 1
   fi
 else

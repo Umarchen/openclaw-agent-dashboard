@@ -17,6 +17,7 @@
 | 组件 | 要求 |
 |------|------|
 | **openclaw** | 已安装 (`npm install -g openclaw`) |
+| **Node.js** | 16+ |
 | **Python** | 3.8+ |
 | **pip** | python3-pip |
 | **venv** | python3-venv（Linux 推荐） |
@@ -39,9 +40,11 @@ sudo dnf install python3 python3-pip
 brew install python3
 ```
 
-**Windows (Git Bash):**
-- 安装 [Git for Windows](https://git-scm.com/download/win)
-- 安装 [Python 3](https://www.python.org/downloads/)（勾选 "Add Python to PATH"）
+**Windows:**
+1. 安装 [Node.js](https://nodejs.org/)（LTS 版本）
+2. 安装 [Python 3](https://www.python.org/downloads/)
+   - ⚠️ 安装时务必勾选 **"Add Python to PATH"**
+3. 安装 [Git for Windows](https://git-scm.com/download/win)（可选，用于 `curl | bash` 安装方式）
 
 ## 快速安装
 
@@ -83,6 +86,17 @@ git clone https://github.com/Umarchen/openclaw-agent-dashboard.git
 cd openclaw-agent-dashboard
 
 # 部署到 OpenClaw（构建前端 + 打包插件 + 安装）
+npm run deploy
+```
+
+**Windows 用户**：源码安装使用 Node.js 脚本，无需 Git Bash，在 PowerShell 或 CMD 中直接运行：
+
+```powershell
+# 克隆仓库
+git clone https://github.com/Umarchen/openclaw-agent-dashboard.git
+cd openclaw-agent-dashboard
+
+# 部署（跨平台）
 npm run deploy
 ```
 

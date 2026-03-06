@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "pack": "node scripts/build-plugin.js",
-    "deploy": "npm run pack && bash scripts/install-plugin.sh",
+    "install-plugin": "node scripts/install.js",
+    "deploy": "npm run pack && npm run install-plugin",
     "upgrade": "git pull && npm run deploy",
     "bundle": "bash scripts/bundle.sh",
     "start": "cd src/backend && OPENCLAW_HOME=${OPENCLAW_HOME:-$HOME/.openclaw} python3 -m uvicorn main:app --host 0.0.0.0 --port ${DASHBOARD_PORT:-38271}"

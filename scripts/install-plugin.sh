@@ -3,11 +3,35 @@
 # OpenClaw Agent Dashboard 插件 - 安装/升级脚本
 # 用法: npm run deploy（推荐）或 ./scripts/install-plugin.sh
 #
+# 配置目录与 OpenClaw 一致：OPENCLAW_STATE_DIR > OPENCLAW_HOME > HOME
+#
 set -e
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 
-PLUGIN_PATH="$HOME/.openclaw/extensions/openclaw-agent-dashboard"
+# 解析 OpenClaw 配置目录（与 openclaw 内部逻辑一致）
+resolve_openclaw_config_dir() {
+  if [ -n "${OPENCLAW_STATE_DIR}" ]; then
+    echo "${OPENCLAW_STATE_DIR}"
+    return
+  fi
+  if [ -n "${CLAWDBOT_STATE_DIR}" ]; then
+    echo "${CLAWDBOT_STATE_DIR}"
+    return
+  fi
+  local home_dir="${OPENCLAW_HOME:-${HOME:-$USERPROFILE}}"
+  if [ -z "$home_dir" ]; then
+    home_dir="$HOME"
+  fi
+  # 展开 ~ 前缀（与 openclaw 行为一致）
+  if [[ "$home_dir" == '~'* ]]; then
+    home_dir="${HOME:-$HOME}${home_dir#\~}"
+  fi
+  echo "${home_dir}/.openclaw"
+}
+
+OPENCLAW_CONFIG_DIR=$(resolve_openclaw_config_dir)
+PLUGIN_PATH="${OPENCLAW_CONFIG_DIR}/extensions/openclaw-agent-dashboard"
 NEW_VERSION=$(grep '"version"' "$ROOT/plugin/openclaw.plugin.json" | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 
 # 获取已安装版本

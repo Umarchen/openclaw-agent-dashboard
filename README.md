@@ -117,7 +117,10 @@ openclaw-agent-dashboard/
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `OPENCLAW_HOME` | OpenClaw 配置目录 | `~/.openclaw` |
+| `OPENCLAW_STATE_DIR` | OpenClaw 配置根目录（优先级最高） | - |
+| `OPENCLAW_HOME` | 替代 HOME，用于解析 `~/.openclaw` | `$HOME` |
+
+插件安装路径与 `openclaw` 命令一致：`$OPENCLAW_STATE_DIR/extensions/` 或 `$OPENCLAW_HOME/.openclaw/extensions/` 或 `~/.openclaw/extensions/`，确保 Gateway 能正确发现插件。
 
 ## 开发调试
 

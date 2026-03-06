@@ -117,11 +117,11 @@ if [ -f "$PLUGIN_PATH/dashboard/requirements.txt" ]; then
     echo ">>> 4/4 安装 Python 依赖..."
   fi
   echo "    尝试: python3 -m pip → pip → pip3"
-  if python3 -m pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q 2>/dev/null; then
+  if python3 -m pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q; then
     echo "✓ Python 依赖已就绪 (python3 -m pip)"
-  elif pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q 2>/dev/null; then
+  elif pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q; then
     echo "✓ Python 依赖已就绪 (pip)"
-  elif pip3 install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q 2>/dev/null; then
+  elif pip3 install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q; then
     echo "✓ Python 依赖已就绪 (pip3)"
   else
     echo "❌ Python 依赖安装失败，请手动执行:"

@@ -145,6 +145,40 @@ OPENCLAW_HOME=~/.openclaw python3 -m uvicorn main:app --host 0.0.0.0 --port 3827
 
 说明：`openclaw gateway restart` 重启的是 Gateway 网关（端口 18789），不是 Agent Dashboard（38271）。Dashboard 作为插件随 Gateway 加载，若 systemd 方式运行的 Gateway 未正确加载插件，需手动启动 Dashboard。
 
+## 安装报错：plugin not found / Invalid config
+
+若出现 `plugins.allow: plugin not found: openclaw-agent-dashboard` 或 `Invalid config`，说明配置中有脏数据（插件曾被加入 allow 但当前未被发现）。按以下步骤处理：
+
+**方式一：先清理再安装（推荐）**
+
+```bash
+# 1. 卸载旧配置（会清理 plugins.entries、plugins.installs、plugins.allow 中的相关项）
+openclaw plugins uninstall openclaw-agent-dashboard
+
+# 2. 重新安装
+npm run deploy
+```
+
+**方式二：手动编辑配置**
+
+编辑 `~/.openclaw/openclaw.json`，在 `plugins` 下：
+
+- 若存在 `allow` 数组且包含 `"openclaw-agent-dashboard"`，将其移除
+- 若存在 `entries.openclaw-agent-dashboard`，可删除
+- 若存在 `installs.openclaw-agent-dashboard`，可删除
+
+保存后执行 `npm run deploy`。
+
+**方式三：尝试 doctor 修复**
+
+```bash
+openclaw doctor --repair
+# 或
+openclaw doctor --yes
+```
+
+若 doctor 能修复配置，再执行 `npm run deploy`。
+
 ## 许可证
 
 MIT

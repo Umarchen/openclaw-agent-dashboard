@@ -90,30 +90,26 @@ else
   node scripts/build-plugin.js
 fi
 
-# 4. 安装插件（若已存在则先删除）
-if [ -d "$PLUGIN_PATH" ]; then
-  echo ""
-  echo ">>> 3/4 移除旧版本..."
-  rm -rf "$PLUGIN_PATH"
-fi
-
+# 4. 安装插件（openclaw install 会覆盖，无需先 rm，避免 plugins.allow 校验失败）
 echo ""
-echo ">>> 4/4 安装新版本..."
+echo ">>> 3/4 安装/覆盖插件..."
 openclaw plugins install ./plugin
 
-# 5. 安装 Python 依赖
+# 5. 安装 Python 依赖（优先 python3 -m pip，兼容无 pip 命令的环境）
 if [ -f "$PLUGIN_PATH/dashboard/requirements.txt" ]; then
   echo ""
   if [ -n "$OLD_VERSION" ]; then
-    echo ">>> 检查 Python 依赖..."
+    echo ">>> 4/4 检查 Python 依赖..."
   else
-    echo ">>> 安装 Python 依赖..."
+    echo ">>> 4/4 安装 Python 依赖..."
   fi
-  if pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" 2>/dev/null || pip3 install -r "$PLUGIN_PATH/dashboard/requirements.txt" 2>/dev/null; then
+  if python3 -m pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q \
+    || pip install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q \
+    || pip3 install -r "$PLUGIN_PATH/dashboard/requirements.txt" -q; then
     echo "✓ Python 依赖已就绪"
   else
     echo "❌ Python 依赖安装失败，请手动执行:"
-    echo "   pip install -r $PLUGIN_PATH/dashboard/requirements.txt"
+    echo "   python3 -m pip install -r $PLUGIN_PATH/dashboard/requirements.txt"
     exit 1
   fi
 else

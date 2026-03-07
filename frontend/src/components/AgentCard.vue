@@ -31,13 +31,33 @@
         </span>
       </div>
 
-      <!-- 当前任务 -->
-      <div v-if="currentTask" class="current-task">
+      <!-- 当前任务（单任务模式） -->
+      <div v-if="currentTask && !showTaskList" class="current-task">
         <div class="task-header">
           <span class="task-icon">▶</span>
           <span class="task-label">当前任务</span>
         </div>
         <div class="task-name" :title="currentTask">{{ currentTask }}</div>
+      </div>
+
+      <!-- 多任务并行展示 -->
+      <div v-if="showTaskList" class="multi-tasks">
+        <div class="tasks-header" @click.stop="tasksExpanded = !tasksExpanded">
+          <span class="tasks-icon">📋</span>
+          <span class="tasks-label">并行任务</span>
+          <span class="tasks-count">{{ taskCount }}</span>
+          <span class="tasks-toggle">{{ tasksExpanded ? '▲' : '▼' }}</span>
+        </div>
+        <div class="tasks-list" :class="{ expanded: tasksExpanded }">
+          <div v-for="task in visibleTasks" :key="task.id" class="task-item" :class="`task-status-${task.status}`">
+            <span class="task-status-dot"></span>
+            <span class="task-name" :title="task.name">{{ task.name }}</span>
+            <span v-if="task.childAgentId" class="task-child-agent">→ {{ task.childAgentId }}</span>
+          </div>
+          <div v-if="hiddenTaskCount > 0" class="tasks-more">
+            +{{ hiddenTaskCount }} 更多任务
+          </div>
+        </div>
       </div>
 
       <!-- 详细状态（工作中时显示） -->
@@ -134,6 +154,16 @@ interface StuckWarning {
   }
 }
 
+/** 活跃任务（多任务并行展示） */
+interface ActiveTask {
+  id: string
+  name: string
+  status: 'working' | 'retrying' | 'failed'
+  timestamp?: number
+  childAgentId?: string
+  featureId?: string
+}
+
 const props = defineProps<{
   agent: Agent
   modelInfo?: { primary?: string; fallbacks?: string[] }
@@ -148,6 +178,8 @@ const props = defineProps<{
   currentAction?: string
   toolName?: string
   waitingFor?: string
+  // 多任务并行：活跃任务列表
+  agentTasks?: ActiveTask[]
 }>()
 
 const emit = defineEmits<{
@@ -156,6 +188,7 @@ const emit = defineEmits<{
 }>()
 
 const showDetailModal = ref(false)
+const tasksExpanded = ref(false)
 
 const EMOJI_POOL = ['🤖', '👤', '📊', '🏗️', '💻', '🧪', '🔧', '📋', '🎯', '⚙️']
 
@@ -177,6 +210,21 @@ const emoji = computed(() => {
 const statusText = computed(() => {
   const map = { idle: '空闲', working: '工作中', down: '异常' }
   return map[props.agent.status] || '未知'
+})
+
+const taskCount = computed(() => props.agentTasks?.length || 0)
+
+const showTaskList = computed(() => taskCount.value > 1)
+
+const visibleTasks = computed(() => {
+  if (!props.agentTasks) return []
+  // 最多显示3个任务，其余折叠
+  return props.agentTasks.slice(0, 3)
+})
+
+const hiddenTaskCount = computed(() => {
+  if (!props.agentTasks) return 0
+  return Math.max(0, props.agentTasks.length - 3)
 })
 
 const subStatusIcon = computed(() => {
@@ -576,5 +624,128 @@ function navigateToAgent(agentId: string) {
 @keyframes pulse-subtle {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
+}
+
+/* 多任务并行展示 */
+.multi-tasks {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tasks-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tasks-header:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.tasks-icon {
+  font-size: 0.75rem;
+}
+
+.tasks-label {
+  font-size: 0.7rem;
+  color: #3b82f6;
+  font-weight: 500;
+}
+
+.tasks-count {
+  font-size: 0.65rem;
+  background: #3b82f6;
+  color: white;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+  margin-left: 0.25rem;
+}
+
+.tasks-toggle {
+  font-size: 0.6rem;
+  color: #64748b;
+  margin-left: auto;
+}
+
+.tasks-list {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.tasks-list.expanded {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid #e0e7ff;
+  font-size: 0.75rem;
+}
+
+.task-item:hover {
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.task-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.task-item.task-status-working .task-status-dot {
+  background: #3b82f6;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.task-item.task-status-retrying .task-status-dot {
+  background: #f59e0b;
+}
+
+.task-item.task-status-failed .task-status-dot {
+  background: #ef4444;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.8); }
+}
+
+.task-item .task-name {
+  flex: 1;
+  color: #1e40af;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-child-agent {
+  font-size: 0.65rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.tasks-more {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.7rem;
+  color: #64748b;
+  text-align: center;
+  border-top: 1px solid #e0e7ff;
+  background: rgba(59, 130, 246, 0.03);
 }
 </style>

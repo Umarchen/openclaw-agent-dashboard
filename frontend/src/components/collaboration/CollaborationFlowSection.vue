@@ -72,6 +72,7 @@
                   :current-action="node.currentAction"
                   :tool-name="node.toolName"
                   :waiting-for="node.waitingFor"
+                  :agent-tasks="getAgentActiveTasks(node.id)"
                 />
               </div>
             </div>
@@ -177,7 +178,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRealtime } from '../../composables'
 import AgentCard from '../AgentCard.vue'
-import type { CollaborationNode, CollaborationEdge, CollaborationFlow, CollaborationDynamic, ModelCall, AgentDisplayStatus } from '../../types'
+import type { CollaborationNode, CollaborationEdge, CollaborationFlow, CollaborationDynamic, ModelCall, AgentDisplayStatus, ActiveTask } from '../../types'
 
 const DYNAMIC_POLL_INTERVAL_MS = 3000
 
@@ -219,6 +220,7 @@ const hierarchy = ref<Record<string, string[]>>({})
 const depths = ref<Record<string, number>>({})
 const backendMainAgentId = ref<string>('')
 const modelPanelExpanded = ref(true)
+const agentActiveTasks = ref<Record<string, ActiveTask[]>>({})
 
 // DOM refs
 const agentAreaRef = ref<HTMLElement | null>(null)
@@ -331,6 +333,10 @@ function getModelInfoForNode(node: CollaborationNode): { primary?: string; fallb
   return agentModels.value[node.id]
 }
 
+function getAgentActiveTasks(agentId: string): ActiveTask[] | undefined {
+  return agentActiveTasks.value[agentId]
+}
+
 function getAgentTasks(agentId: string): TaskInfo[] {
   const tasks = nodes.value.filter(n => n.type === 'task')
   const taskEdges = edges.value.filter(e => e.type === 'calls' && e.source === agentId)
@@ -424,6 +430,7 @@ async function fetchData(): Promise<void> {
     if (data.hierarchy) hierarchy.value = data.hierarchy
     if (data.depths) depths.value = data.depths
     if (data.mainAgentId) backendMainAgentId.value = data.mainAgentId
+    if (data.agentActiveTasks) agentActiveTasks.value = data.agentActiveTasks
 
     nextTick(updateEdges)
   } catch (e) {
@@ -447,12 +454,14 @@ function handleCollaborationUpdate(data: unknown): void {
   if (flow.hierarchy) hierarchy.value = flow.hierarchy
   if (flow.depths) depths.value = flow.depths
   if (flow.mainAgentId) backendMainAgentId.value = flow.mainAgentId
+  if (flow.agentActiveTasks) agentActiveTasks.value = flow.agentActiveTasks
   nextTick(updateEdges)
 }
 
 function handleCollaborationDynamicUpdate(dyn: CollaborationDynamic): void {
   activePath.value = dyn.activePath || []
   recentCalls.value = dyn.recentCalls || []
+  if (dyn.agentActiveTasks) agentActiveTasks.value = dyn.agentActiveTasks
   const agentNodesLocal = nodes.value.filter(n => n.type === 'agent')
   for (const node of agentNodesLocal) {
     if (node.id && dyn.agentStatuses && dyn.agentStatuses[node.id] !== undefined) {

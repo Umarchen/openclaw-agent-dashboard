@@ -63,6 +63,122 @@ class AgentDisplayStatus(BaseModel):
     alert: bool  # 是否需要警告
 
 
+class ActiveTask(BaseModel):
+    """单个活跃任务（用于多任务并行展示）"""
+    id: str                      # task-{runId}
+    name: str                    # 任务名称（清理后）
+    status: str = "working"      # working | retrying | failed
+    timestamp: Optional[int] = None  # 开始时间
+    childAgentId: Optional[str] = None  # 主 Agent 任务时，指向被派发的子 Agent
+    featureId: Optional[str] = None     # FEATURE_ID（如果有）
+
+
+def _extract_feature_id(task_name: str) -> Optional[str]:
+    """从任务名称中提取 FEATURE_ID"""
+    if not task_name:
+        return None
+    # 匹配 [FEATURE_ID] xxx 格式
+    match = re.search(r'\[FEATURE_ID\]\s*(\S+)', task_name)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _build_agent_active_tasks(
+    active_runs: List[Dict[str, Any]],
+    main_agent_id: str
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    构建每个 Agent 的活跃任务列表（支持多任务并行展示）
+
+    自适应不同组网：
+    - 单 Agent 模式：main 没有子 agent，任务直接执行
+    - 主从模式：main 派发给子 agent
+    - 嵌套模式：子 agent 可以再派发给孙 agent
+
+    Args:
+        active_runs: 从 runs.json 读取的活跃任务
+        main_agent_id: 主 Agent ID
+
+    Returns:
+        {
+            "main": [task1, task2, ...],           # PM 派发的任务
+            "analyst-agent": [task3, ...],          # 分析师执行的任务
+            ...
+        }
+    """
+    agent_active_tasks: Dict[str, List[Dict[str, Any]]] = {}
+
+    for run in active_runs:
+        child_key = run.get('childSessionKey', '')
+        requester_key = run.get('requesterSessionKey', '')
+
+        # 解析执行者 Agent
+        child_agent_id = _parse_agent_id(child_key)
+        # 解析派发者 Agent
+        requester_agent_id = _parse_agent_id(requester_key)
+
+        if not child_agent_id:
+            continue
+
+        # 清理任务名称
+        task_name = _clean_task_name(run.get('task', ''))
+        if not task_name:
+            task_name = '未命名任务'
+
+        run_id = run.get('runId', child_agent_id)
+
+        # 提取 featureId
+        feature_id = _extract_feature_id(run.get('task', ''))
+
+        # 构建任务对象
+        task_item: Dict[str, Any] = {
+            'id': f"task-{run_id}",
+            'name': task_name,
+            'status': 'working',
+            'timestamp': run.get('startedAt'),
+            'featureId': feature_id
+        }
+
+        # 如果有派发者，添加 childAgentId（用于主 Agent 显示任务流向）
+        if requester_agent_id and requester_agent_id != child_agent_id:
+            task_item['childAgentId'] = child_agent_id
+
+        # 1. 添加到派发者（如果派发者是某个已知 agent）
+        if requester_agent_id:
+            if requester_agent_id not in agent_active_tasks:
+                agent_active_tasks[requester_agent_id] = []
+            agent_active_tasks[requester_agent_id].append(task_item)
+
+        # 2. 添加到执行者（不带 childAgentId）
+        if child_agent_id not in agent_active_tasks:
+            agent_active_tasks[child_agent_id] = []
+        child_task = {k: v for k, v in task_item.items() if k != 'childAgentId'}
+        agent_active_tasks[child_agent_id].append(child_task)
+
+    return agent_active_tasks
+
+
+def _get_display_task_summary(tasks: List[Dict[str, Any]]) -> str:
+    """
+    获取用于显示的任务摘要
+
+    策略：
+    - 0 个任务：返回空
+    - 1 个任务：显示任务名称
+    - 2+ 个任务：显示 "N 个任务进行中"
+    """
+    count = len(tasks)
+    if count == 0:
+        return ''
+    elif count == 1:
+        # 截断过长任务名
+        name = tasks[0].get('name', '')
+        return name[:50] + '...' if len(name) > 50 else name
+    else:
+        return f"{count} 个任务进行中"
+
+
 class CollaborationFlow(BaseModel):
     nodes: List[CollaborationNode]
     edges: List[CollaborationEdge]
@@ -74,6 +190,10 @@ class CollaborationFlow(BaseModel):
     recentCalls: Optional[List[ModelCall]] = None
     hierarchy: Optional[Dict[str, List[str]]] = None  # agentId -> 子 agent 列表
     depths: Optional[Dict[str, int]] = None  # agentId -> 层级深度 (0=主, 1=子, 2=孙...)
+    # 多任务并行展示：每个 Agent 的活跃任务列表
+    agentActiveTasks: Optional[Dict[str, List[ActiveTask]]] = None
+    # 多任务并行展示：每个 Agent 的活跃任务列表
+    agentActiveTasks: Optional[Dict[str, List[ActiveTask]]] = None
 
 
 def _parse_agent_id(session_key: str) -> str:
@@ -518,8 +638,7 @@ async def get_collaboration():
                     ))
 
         # 5. 活跃任务与 spawn 链：requesterSessionKey -> childSessionKey -> task
-        main_agent_task_created = False
-        for run in active_runs[:10]:
+        for run in active_runs[:20]:
             child_key = run.get('childSessionKey', '')
             requester_key = run.get('requesterSessionKey', '')
             agent_id = _parse_agent_id(child_key)
@@ -557,7 +676,8 @@ async def get_collaboration():
                     label="派发"
                 ))
                 # 如果 requester 是主 agent，给主 agent 也添加一个任务节点（用户命令）
-                if requester_id == main_agent_id and not main_agent_task_created:
+                # 移除 main_agent_task_created 限制，支持多任务并行显示
+                if requester_id == main_agent_id:
                     # 主 agent 的任务就是用户原始命令
                     main_task_id = f"task-main-{run.get('runId', 'current')}"
                     main_task_node = CollaborationNode(
@@ -575,7 +695,6 @@ async def get_collaboration():
                         type="calls",
                         label="执行"
                     ))
-                    main_agent_task_created = True
 
             active_path.extend([main_agent_id, agent_id, task_id])
 
@@ -644,6 +763,9 @@ async def get_collaboration():
         if aid not in depths:
             depths[aid] = 1
 
+    # 构建多任务并行数据
+    agent_active_tasks = _build_agent_active_tasks(active_runs, main_agent_id)
+
     return CollaborationFlow(
         nodes=nodes,
         edges=edges,
@@ -654,7 +776,8 @@ async def get_collaboration():
         models=models_list,
         recentCalls=model_calls,
         hierarchy=hierarchy,
-        depths=depths
+        depths=depths,
+        agentActiveTasks=agent_active_tasks
     )
 
 
@@ -663,11 +786,13 @@ class CollaborationDynamic(BaseModel):
     activePath: List[str]
     recentCalls: List[ModelCall]
     agentStatuses: Dict[str, str]  # agentId -> idle/working/error
-    agentDynamicStatuses: Optional[Dict[str, AgentDisplayStatus]] = None  # 新增：详细显示状态
+    agentDynamicStatuses: Optional[Dict[str, AgentDisplayStatus]] = None  # 详细显示状态
     taskNodes: List[CollaborationNode]
     taskEdges: List[CollaborationEdge]
     mainAgentId: str
     lastUpdate: int
+    # 多任务并行展示：每个 Agent 的活跃任务列表
+    agentActiveTasks: Optional[Dict[str, List[ActiveTask]]] = None
 
 
 @router.get("/collaboration/dynamic", response_model=CollaborationDynamic)
@@ -729,8 +854,8 @@ async def get_collaboration_dynamic():
         except Exception as e:
             logger.warning(f"Failed to get display status for {main_agent_id}: {e}")
 
-        main_agent_task_created = False
-        for run in active_runs[:10]:
+        # 处理活跃任务（移除 main_agent_task_created 限制，支持多任务并行）
+        for run in active_runs[:20]:
             child_key = run.get('childSessionKey', '')
             requester_key = run.get('requesterSessionKey', '')
             agent_id = _parse_agent_id(child_key)
@@ -761,8 +886,8 @@ async def get_collaboration_dynamic():
                     type="delegates",
                     label="派发"
                 ))
-                # 如果 requester 是主 agent，给主 agent 也添加任务节点
-                if requester_id == main_agent_id and not main_agent_task_created:
+                # 如果 requester 是主 agent，给主 agent 也添加任务节点（支持多任务）
+                if requester_id == main_agent_id:
                     main_task_id = f"task-main-{run.get('runId', 'current')}"
                     task_nodes.append(CollaborationNode(
                         id=main_task_id,
@@ -778,7 +903,6 @@ async def get_collaboration_dynamic():
                         type="calls",
                         label="执行"
                     ))
-                    main_agent_task_created = True
             active_path.extend([main_agent_id, agent_id, task_id])
     except Exception as e:
         logger.error(f"Error building collaboration dynamic: {e}")
@@ -798,6 +922,9 @@ async def get_collaboration_dynamic():
         for i, r in enumerate(recent_calls_raw)
     ]
 
+    # 构建多任务并行数据
+    agent_active_tasks = _build_agent_active_tasks(active_runs, main_agent_id)
+
     return CollaborationDynamic(
         activePath=list(set(active_path)),
         recentCalls=model_calls,
@@ -807,4 +934,5 @@ async def get_collaboration_dynamic():
         taskEdges=task_edges,
         mainAgentId=main_agent_id,
         lastUpdate=int(__import__('time').time() * 1000),
+        agentActiveTasks=agent_active_tasks
     )

@@ -80,6 +80,8 @@ export interface CollaborationFlow {
   // 拓扑信息（用于嵌套组网布局）
   hierarchy?: Record<string, string[]>  // agentId -> [子 agent IDs]
   depths?: Record<string, number>  // agentId -> 层级深度
+  // 多任务并行数据（按 agent 分组）
+  agentActiveTasks?: Record<string, ActiveTask[]>
 }
 
 export interface AgentDynamicStatus {
@@ -101,6 +103,22 @@ export interface AgentDisplayStatus {
   alert: boolean
 }
 
+/** 单个活跃任务（用于多任务并行展示） */
+export interface ActiveTask {
+  /** 任务ID */
+  id: string
+  /** 任务名称（清理后） */
+  name: string
+  /** 状态：working | retrying | failed */
+  status: 'working' | 'retrying' | 'failed'
+  /** 开始时间戳 */
+  timestamp?: number
+  /** 主 Agent 任务时，指向被派发的子 Agent */
+  childAgentId?: string
+  /** FEATURE_ID（如果有） */
+  featureId?: string
+}
+
 export interface CollaborationDynamic {
   activePath: string[]
   recentCalls: ModelCall[]
@@ -112,4 +130,6 @@ export interface CollaborationDynamic {
   taskEdges: CollaborationEdge[]
   mainAgentId: string
   lastUpdate: number
+  /** 多任务并行数据（按 agent 分组） */
+  agentActiveTasks?: Record<string, ActiveTask[]>
 }

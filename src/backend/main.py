@@ -47,16 +47,13 @@ app.add_middleware(
 import sys
 sys.path.append(str(Path(__file__).parent))
 
-from api import agents, subagents, workflow, api_status, websocket, performance, collaboration, agents_config, mechanisms, errors, timeline, chains, agent_config_api, error_analysis
+from api import agents, subagents, websocket, performance, collaboration, agents_config, errors, timeline, chains, agent_config_api, error_analysis
 
 # 注册 API 路由
 app.include_router(agents.router, prefix="/api", tags=["agents"])
-app.include_router(mechanisms.router, prefix="/api", tags=["mechanisms"])
 app.include_router(errors.router, prefix="/api", tags=["errors"])
 app.include_router(agents_config.router, prefix="/api", tags=["agents-config"])
 app.include_router(subagents.router, prefix="/api", tags=["subagents"])
-app.include_router(workflow.router, prefix="/api", tags=["workflow"])
-app.include_router(api_status.router, prefix="/api", tags=["api-status"])
 app.include_router(websocket.router, tags=["websocket"])
 app.include_router(performance.router, prefix="/api", tags=["performance"])
 app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])

@@ -32,31 +32,9 @@
         <PerformancePanel />
       </section>
 
-      <!-- 机制追踪 -->
-      <section class="mechanism-section">
-        <MechanismTrackingPanel />
-      </section>
-
-      <!-- 错误中心 -->
+      <!-- 错误中心（含 API 状态） -->
       <section class="error-center-section">
         <ErrorCenterPanel />
-      </section>
-
-      <!-- 项目流水线 -->
-      <section class="workflow">
-        <WorkflowView />
-      </section>
-
-      <!-- API 状态 -->
-      <section class="api-status">
-        <h2>API 状态</h2>
-        <div class="status-grid">
-          <ApiStatusCard
-            v-for="status in apiStatusList"
-            :key="status.model"
-            :status="status"
-          />
-        </div>
       </section>
     </main>
 
@@ -78,17 +56,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, provide } from 'vue'
-import ApiStatusCard from './components/ApiStatusCard.vue'
 import AgentDetailPanel from './components/AgentDetailPanel.vue'
-import WorkflowView from './components/WorkflowView.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
-import PerformanceMonitor from './components/PerformanceMonitor.vue'
 
-// 新增组件
+// 核心组件
 import CollaborationFlowWrapper from './components/collaboration/CollaborationFlowWrapper.vue'
 import TaskStatusSection from './components/tasks/TaskStatusSection.vue'
 import PerformancePanel from './components/performance/PerformancePanel.vue'
-import MechanismTrackingPanel from './components/MechanismTrackingPanel.vue'
 import ErrorCenterPanel from './components/ErrorCenterPanel.vue'
 
 // 数据管理
@@ -105,14 +79,6 @@ interface Agent {
   error?: any
 }
 
-interface ApiStatus {
-  provider: string
-  model: string
-  status: 'healthy' | 'degraded' | 'down'
-  lastError?: any
-  errorCount: number
-}
-
 // 初始化管理器
 const realtimeManager = getRealtimeManager()
 const stateManager = getStateManager()
@@ -124,7 +90,6 @@ provide('stateManager', stateManager)
 provide('eventDispatcher', eventDispatcher)
 
 const agents = ref<Agent[]>([])
-const apiStatusList = ref<ApiStatus[]>([])
 const selectedAgent = ref<Agent | null>(null)
 const showSettings = ref(false)
 
@@ -167,10 +132,6 @@ async function refreshData() {
     const main = agentsList.find((a: { id?: string }) => a.id === mainAgentId.value)
     if (main) mainAgent.value = main
     subAgents.value = agentsList.filter((a: { id?: string }) => a.id !== mainAgentId.value)
-
-    // 获取 API 状态
-    const apiRes = await fetch('/api/api-status')
-    apiStatusList.value = await apiRes.json()
   } catch (error) {
     console.error('刷新数据失败:', error)
   }
@@ -206,7 +167,6 @@ function handleConnectionStateChange(state: ConnectionState) {
 
 let unsubState: (() => void) | null = null
 let unsubAgents: (() => void) | null = null
-let unsubApiStatus: (() => void) | null = null
 
 onMounted(() => {
   refreshData()
@@ -220,15 +180,11 @@ onMounted(() => {
       subAgents.value = (data as Agent[]).filter(a => a.id !== mainAgentId.value)
     }
   })
-  unsubApiStatus = realtimeManager.subscribe('api-status', (data: unknown) => {
-    if (Array.isArray(data)) apiStatusList.value = data as ApiStatus[]
-  })
 })
 
 onUnmounted(() => {
   unsubState?.()
   unsubAgents?.()
-  unsubApiStatus?.()
   realtimeManager.disconnect()
 })
 </script>
@@ -342,26 +298,8 @@ main {
   margin-bottom: 2rem;
 }
 
-.mechanism-section {
-  margin-bottom: 2rem;
-}
-
 .error-center-section {
   margin-bottom: 2rem;
-}
-
-.workflow {
-  margin-bottom: 2rem;
-}
-
-.api-status {
-  margin-bottom: 2rem;
-}
-
-.status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-  gap: 1rem;
 }
 
 h2 {
@@ -374,13 +312,9 @@ h2 {
   main {
     padding: 1rem;
   }
-  
+
   header {
     padding: 1rem;
-  }
-  
-  .status-grid {
-    grid-template-columns: 1fr;
   }
 }
 

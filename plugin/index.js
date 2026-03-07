@@ -14,7 +14,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const net = require('net');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 let dashboardProcess = null;
 
@@ -147,13 +147,23 @@ function startDashboard(config = {}) {
     };
 
     // 优先使用插件 venv 的 Python（安装时 venv 优先，避免 PEP 668）
+    // 若 venv 存在但不完整（如缺 python3-venv 导致 ensurepip 失败、无 uvicorn），回退到 python3
     const venvPythonUnix = path.join(dashboardDir, '.venv', 'bin', 'python');
     const venvPythonWin = path.join(dashboardDir, '.venv', 'Scripts', 'python.exe');
-    let pythonCmd =
-      process.env.PYTHON_CMD ||
-      (fs.existsSync(venvPythonUnix) ? venvPythonUnix : null) ||
-      (fs.existsSync(venvPythonWin) ? venvPythonWin : null) ||
-      'python3';
+    let pythonCmd = process.env.PYTHON_CMD;
+    if (!pythonCmd) {
+      const venvPython = fs.existsSync(venvPythonUnix) ? venvPythonUnix : (fs.existsSync(venvPythonWin) ? venvPythonWin : null);
+      if (venvPython) {
+        try {
+          execFileSync(venvPython, ['-c', 'import uvicorn'], { stdio: 'ignore', timeout: 3000 });
+          pythonCmd = venvPython;
+        } catch (_) {
+          pythonCmd = 'python3'; // venv 不完整，回退到系统 python3
+        }
+      } else {
+        pythonCmd = 'python3';
+      }
+    }
     const args = ['-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', String(port)];
 
     if (!isExplicitPort && port !== basePort) {
@@ -166,9 +176,7 @@ function startDashboard(config = {}) {
       env,
       cwd: dashboardDir,
       stdio: ['ignore', 'ignore', 'ignore'],
-      detached: true,
     });
-    dashboardProcess.unref();
 
     dashboardProcess.on('error', (err) => {
       console.error('[OpenClaw-Dashboard] 启动失败:', err.message);

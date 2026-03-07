@@ -3,9 +3,21 @@
     <div class="section-header">
       <h2>任务状态</h2>
       <div class="summary-stats">
-        <span class="stat running">执行中: {{ summary.running }}</span>
-        <span class="stat completed">已完成: {{ summary.completed }}</span>
-        <span class="stat failed">失败: {{ summary.failed }}</span>
+        <span
+          class="stat running clickable"
+          :class="{ active: activeFilters.includes('running') }"
+          @click="quickFilter('running')"
+        >执行中: {{ summary.running }}</span>
+        <span
+          class="stat completed clickable"
+          :class="{ active: activeFilters.includes('completed') }"
+          @click="quickFilter('completed')"
+        >已完成: {{ summary.completed }}</span>
+        <span
+          class="stat failed clickable"
+          :class="{ active: activeFilters.includes('failed') }"
+          @click="quickFilter('failed')"
+        >失败: {{ summary.failed }}</span>
         <span class="stat total">总计: {{ summary.total }}</span>
       </div>
     </div>
@@ -136,6 +148,18 @@
               </div>
             </div>
           </div>
+          <div v-if="taskTimeline.length > 0" class="detail-row">
+            <span class="detail-label">执行时间线</span>
+            <div class="timeline-container">
+              <div class="timeline">
+                <div v-for="(item, i) in taskTimeline" :key="i" class="timeline-item" :class="item.type">
+                  <span class="timeline-time">{{ formatTimelineTime(item.time) }}</span>
+                  <span class="timeline-dot"></span>
+                  <span class="timeline-desc">{{ item.description }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -143,7 +167,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRealtime, useDebounce } from '../../composables'
 import type { Task, TaskStatus as TaskStatusType } from '../../types'
 
@@ -156,6 +180,8 @@ const searchQuery = ref('')
 const activeFilters = ref<TaskStatusType[]>([])
 const selectedTask = ref<Task | null>(null)
 const containerRef = ref<HTMLElement | null>(null)
+const taskTimeline = ref<Array<{time: number, type: string, description: string}>>([])
+const timelineLoading = ref(false)
 
 // 符合 PRD: 待分配/分配中/执行中/已完成/失败
 const statusFilters = [
@@ -263,6 +289,15 @@ function toggleFilter(status: TaskStatusType): void {
   }
 }
 
+function quickFilter(status: TaskStatusType): void {
+  // 单击快速筛选：如果已选中则取消，否则只选中该状态
+  if (activeFilters.value.length === 1 && activeFilters.value[0] === status) {
+    activeFilters.value = []
+  } else {
+    activeFilters.value = [status]
+  }
+}
+
 function getShortTaskName(task: Task): string {
   const full = sanitizeTaskDisplay(task.task ?? task.name)
   const firstLine = full.split('\n')[0].trim()
@@ -361,6 +396,41 @@ function handleTasksUpdate(data: unknown): void {
   }
 }
 
+function formatTimelineTime(timestamp: number | undefined): string {
+  if (!timestamp) return ''
+  const d = new Date(timestamp)
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+async function fetchTimeline(taskId: string): Promise<void> {
+  if (!taskId) {
+    taskTimeline.value = []
+    return
+  }
+  timelineLoading.value = true
+  try {
+    const res = await fetch(`/api/tasks/${taskId}/timeline`)
+    if (res.ok) {
+      const data = await res.json()
+      taskTimeline.value = data.timeline || []
+    }
+  } catch (e) {
+    console.error('Failed to fetch timeline:', e)
+    taskTimeline.value = []
+  } finally {
+    timelineLoading.value = false
+  }
+}
+
+// 监听选中任务变化，加载时间线
+watch(selectedTask, (newTask) => {
+  if (newTask) {
+    fetchTimeline(newTask.id)
+  } else {
+    taskTimeline.value = []
+  }
+})
+
 let unsubscribe: (() => void) | null = null
 
 onMounted(() => {
@@ -423,6 +493,21 @@ onUnmounted(() => {
 .stat.failed {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.stat.clickable {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.stat.clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.stat.clickable.active {
+  font-weight: 600;
+  box-shadow: 0 0 0 2px currentColor;
 }
 
 .filters-row {
@@ -765,6 +850,89 @@ onUnmounted(() => {
   margin-left: auto;
   font-size: 0.8rem;
   color: #b91c1c;
+}
+
+/* 时间线样式 */
+.timeline-container {
+  flex: 1;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.timeline {
+  position: relative;
+  padding-left: 20px;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #e5e7eb;
+}
+
+.timeline-item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 0.85rem;
+}
+
+.timeline-dot {
+  position: absolute;
+  left: -17px;
+  top: 12px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #9ca3af;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2px #e5e7eb;
+}
+
+.timeline-item.created .timeline-dot {
+  background: #3b82f6;
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+
+.timeline-item.completed .timeline-dot {
+  background: #10b981;
+  box-shadow: 0 0 0 2px #10b981;
+}
+
+.timeline-item.failed .timeline-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 2px #ef4444;
+}
+
+.timeline-item.tool .timeline-dot {
+  background: #f59e0b;
+}
+
+.timeline-item.start .timeline-dot {
+  background: #6366f1;
+}
+
+.timeline-time {
+  flex-shrink: 0;
+  width: 70px;
+  font-size: 0.75rem;
+  color: #6b7280;
+  font-family: monospace;
+}
+
+.timeline-desc {
+  flex: 1;
+  color: #374151;
+}
+
+.timeline-item.failed .timeline-desc {
+  color: #991b1b;
 }
 
 

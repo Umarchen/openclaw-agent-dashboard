@@ -32,12 +32,16 @@
       </div>
 
       <!-- 当前任务（单任务模式） -->
-      <div v-if="currentTask && !showTaskList" class="current-task">
+      <div v-if="displayTaskName && !showTaskList" class="current-task">
         <div class="task-header">
           <span class="task-icon">▶</span>
           <span class="task-label">当前任务</span>
         </div>
-        <div class="task-name" :title="currentTask">{{ currentTask }}</div>
+        <div class="task-name" :title="displayTaskName">{{ displayTaskName }}</div>
+        <div v-if="displayTaskChildAgent" class="task-child-info">
+          <span class="child-arrow">→</span>
+          <span class="child-name">{{ displayTaskChildAgent }}</span>
+        </div>
       </div>
 
       <!-- 多任务并行展示 -->
@@ -214,7 +218,7 @@ const statusText = computed(() => {
 
 const taskCount = computed(() => props.agentTasks?.length || 0)
 
-const showTaskList = computed(() => taskCount.value > 1)
+const showTaskList = computed(() => taskCount.value >= 1)
 
 const visibleTasks = computed(() => {
   if (!props.agentTasks) return []
@@ -225,6 +229,22 @@ const visibleTasks = computed(() => {
 const hiddenTaskCount = computed(() => {
   if (!props.agentTasks) return 0
   return Math.max(0, props.agentTasks.length - 3)
+})
+
+// 单任务时显示的任务名（优先使用 agentTasks，否则用 currentTask）
+const displayTaskName = computed(() => {
+  if (props.agentTasks && props.agentTasks.length === 1) {
+    return props.agentTasks[0].name
+  }
+  return props.currentTask
+})
+
+// 单任务时的子 Agent（仅 agentTasks 有此信息）
+const displayTaskChildAgent = computed(() => {
+  if (props.agentTasks && props.agentTasks.length === 1) {
+    return props.agentTasks[0].childAgentId
+  }
+  return undefined
 })
 
 const subStatusIcon = computed(() => {
@@ -564,6 +584,29 @@ function navigateToAgent(agentId: string) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 任务子 Agent 信息 */
+.task-child-info {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed #bfdbfe;
+}
+
+.child-arrow {
+  font-size: 0.7rem;
+  color: #64748b;
+}
+
+.child-name {
+  font-size: 0.7rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 3px;
 }
 
 /* 空闲提示 */

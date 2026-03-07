@@ -319,14 +319,7 @@ function getStatusText(status: string): string {
 
 function getAgentName(agentId: string): string {
   const agent = agents.value.find(a => a.id === agentId)
-  if (agent) return agent.name
-  const names: Record<string, string> = {
-    main: '主 Agent',
-    'analyst-agent': '分析师',
-    'architect-agent': '架构师',
-    'devops-agent': 'DevOps'
-  }
-  return names[agentId] || agentId
+  return agent ? agent.name : agentId
 }
 
 function toggleDetail(id: string): void {

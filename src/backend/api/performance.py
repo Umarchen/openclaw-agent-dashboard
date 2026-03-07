@@ -165,40 +165,47 @@ def parse_session_file_with_details(session_path: Path, agent_id: str) -> List[D
         return []
 
 
-def parse_session_file(session_path: Path) -> List[Dict]:
-    """解析单个 session 文件，提取每条消息的 token 统计"""
+def parse_session_file(session_path: Path, range_hours: int = 1) -> List[Dict]:
+    """解析单个 session 文件，提取每条消息的 token 统计
+
+    Args:
+        session_path: session 文件路径
+        range_hours: 时间范围（小时），0 表示不限制
+    """
     messages = []
-    
+
     try:
         with open(session_path, 'r', encoding='utf-8') as f:
             for line in f:
                 try:
                     data = json.loads(line)
-                    
+
                     # 只处理有 usage 和 timestamp 的消息
                     if 'message' in data and 'usage' in data['message'] and 'timestamp' in data:
                         usage = data['message']['usage']
                         tokens = usage.get('totalTokens', 0) or 0
                         is_request = data.get('message', {}).get('role') == 'assistant'
-                        
+
                         try:
                             timestamp = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
-                            
-                            # 只统计最近1小时的消息
-                            now = datetime.now(timezone.utc)
-                            one_hour_ago = now - timedelta(hours=1)
-                            
-                            if timestamp >= one_hour_ago:
-                                messages.append({
-                                    'timestamp': timestamp,
-                                    'tokens': tokens,
-                                    'is_request': is_request
-                                })
+
+                            # 根据 range_hours 过滤时间范围，0 表示不过滤
+                            if range_hours > 0:
+                                now = datetime.now(timezone.utc)
+                                time_ago = now - timedelta(hours=range_hours)
+                                if timestamp < time_ago:
+                                    continue
+
+                            messages.append({
+                                'timestamp': timestamp,
+                                'tokens': tokens,
+                                'is_request': is_request
+                            })
                         except:
                             pass
                 except:
                     continue
-        
+
         return messages
     except Exception as e:
         print(f"解析 session 文件失败 {session_path}: {e}")
@@ -208,170 +215,228 @@ def parse_session_file(session_path: Path) -> List[Dict]:
 @router.get("/performance")
 async def get_performance_stats(range: str = "20m"):
     """获取性能统计
-    
+
     Args:
-        range: 时间范围 (20m, 1h)
+        range: 时间范围 (20m, 1h, 24h)
     """
-    import time
-    start = time.perf_counter()
-    range_minutes = {
-        "20m": 20,
-        "1h": 60
-    }.get(range, 20)
-    
-    stats = await get_real_stats(range_minutes)
-    # 接口处理耗时作为延迟参考（毫秒）
-    stats['current']['latency'] = int((time.perf_counter() - start) * 1000)
+    range_config = {
+        "20m": {"minutes": 20, "hours": 1, "granularity": "minute"},
+        "1h": {"minutes": 60, "hours": 1, "granularity": "minute"},
+        "24h": {"minutes": 1440, "hours": 24, "granularity": "hour"}
+    }
+
+    config = range_config.get(range, range_config["20m"])
+    stats = await get_real_stats(config["minutes"], config["hours"], config["granularity"])
     return stats
 
 
-async def get_real_stats(range_minutes: int = 20) -> Dict:
+async def get_real_stats(range_minutes: int = 20, range_hours: int = 1, granularity: str = "minute") -> Dict:
     """获取真实的 TPM/RPM 统计
-    
+
     Args:
         range_minutes: 时间范围（分钟）
+        range_hours: 用于解析 session 的时间范围（小时）
+        granularity: 聚合粒度 (minute, hour)
     """
     stats = {
         'current': {
             'tpm': 0,
             'rpm': 0,
-            'latency': 0,
-            'errorRate': 0.0
+            'windowTotal': {
+                'tokens': 0,
+                'requests': 0
+            }
         },
         'history': {
             'tpm': [],
             'rpm': [],
             'timestamps': []
         },
-        'total': {
-            'tokens': 0,
-            'requests': 0
+        'statistics': {
+            'avgTpm': 0,
+            'peakTpm': 0,
+            'peakTime': ''
         }
     }
-    
-    # 读取所有 session 文件
-    openclaw_path = Path.home() / '.openclaw'
+
+    # 使用环境变量或默认路径
+    openclaw_path = _openclaw_path()
     agents_path = openclaw_path / 'agents'
-    
+
     if not agents_path.exists():
         return stats
-    
-    # 按分钟统计
-    minutes_stats = {}
-    
+
+    # 按时间槽统计（分钟或小时）
+    time_slot_stats = {}
+
     # 扫描所有 agent 的 sessions
     for agent_dir in agents_path.iterdir():
         if not agent_dir.is_dir():
             continue
-        
+
         sessions_path = agent_dir / 'sessions'
         if not sessions_path.exists():
             continue
-        
+
         # 扫描所有 .jsonl 文件
         for session_file in sessions_path.glob('*.jsonl'):
             # 跳过 lock 和 deleted 文件
             if 'lock' in session_file.name or 'deleted' in session_file.name:
                 continue
-            
+
             # 解析 session 文件，获取所有消息
-            messages = parse_session_file(session_file)
-            
-            # 按分钟逐条累加
+            messages = parse_session_file(session_file, range_hours)
+
+            # 按时间槽逐条累加
             for msg in messages:
-                minute_key = msg['timestamp'].strftime('%Y-%m-%d %H:%M')
-                
-                if minute_key not in minutes_stats:
-                    minutes_stats[minute_key] = {
+                if granularity == "hour":
+                    slot_key = msg['timestamp'].strftime('%Y-%m-%d %H:00')
+                else:
+                    slot_key = msg['timestamp'].strftime('%Y-%m-%d %H:%M')
+
+                if slot_key not in time_slot_stats:
+                    time_slot_stats[slot_key] = {
                         'tokens': 0,
                         'requests': 0
                     }
-                
-                minutes_stats[minute_key]['tokens'] += msg['tokens']
+
+                time_slot_stats[slot_key]['tokens'] += msg['tokens']
                 if msg['is_request']:
-                    minutes_stats[minute_key]['requests'] += 1
-    
-    # 排序并转换为列表
-    sorted_minutes = sorted(minutes_stats.items())
-    
-    # 填充最近 range_minutes 分钟的数据（缺失的分钟补0）
+                    time_slot_stats[slot_key]['requests'] += 1
+
+    # 填充时间槽数据
     timestamps = []
     tpm_data = []
     rpm_data = []
-    
     now = datetime.now(timezone.utc)
-    for i in range(range_minutes):
-        minute_time = now - timedelta(minutes=(range_minutes - i - 1))
-        minute_key = minute_time.strftime('%Y-%m-%d %H:%M')
-        
-        # 发送 Unix 时间戳(毫秒)，前端可正确转换为本地时区
-        timestamps.append(int(minute_time.timestamp() * 1000))
-        
-        if minute_key in minutes_stats:
-            tpm_data.append(minutes_stats[minute_key]['tokens'])
-            rpm_data.append(minutes_stats[minute_key]['requests'])
-        else:
-            tpm_data.append(0)
-            rpm_data.append(0)
-    
+
+    if granularity == "hour":
+        # 24h 模式：24 个小时槽
+        for i in range(24):
+            hour_time = now - timedelta(hours=(23 - i))
+            slot_key = hour_time.strftime('%Y-%m-%d %H:00')
+            timestamps.append(int(hour_time.timestamp() * 1000))
+
+            if slot_key in time_slot_stats:
+                tpm_data.append(time_slot_stats[slot_key]['tokens'])
+                rpm_data.append(time_slot_stats[slot_key]['requests'])
+            else:
+                tpm_data.append(0)
+                rpm_data.append(0)
+    else:
+        # 20m / 1h 模式：分钟槽
+        for i in range(range_minutes):
+            minute_time = now - timedelta(minutes=(range_minutes - i - 1))
+            slot_key = minute_time.strftime('%Y-%m-%d %H:%M')
+            timestamps.append(int(minute_time.timestamp() * 1000))
+
+            if slot_key in time_slot_stats:
+                tpm_data.append(time_slot_stats[slot_key]['tokens'])
+                rpm_data.append(time_slot_stats[slot_key]['requests'])
+            else:
+                tpm_data.append(0)
+                rpm_data.append(0)
+
     stats['history']['tpm'] = tpm_data
     stats['history']['rpm'] = rpm_data
     stats['history']['timestamps'] = timestamps
-    
-    # 当前分钟的统计
-    current_minute = now.strftime('%Y-%m-%d %H:%M')
-    if current_minute in minutes_stats:
-        stats['current']['tpm'] = minutes_stats[current_minute]['tokens']
-        stats['current']['rpm'] = minutes_stats[current_minute]['requests']
-    else:
-        stats['current']['tpm'] = 0
-        stats['current']['rpm'] = 0
 
-    # 总计（基于历史数据）
-    total_tokens = sum([s['tokens'] for s in minutes_stats.values()])
-    total_requests = sum([s['requests'] for s in minutes_stats.values()])
-    
-    stats['total']['tokens'] = total_tokens
-    stats['total']['requests'] = total_requests
-    
+    # 当前时间槽的统计
+    if granularity == "hour":
+        current_slot = now.strftime('%Y-%m-%d %H:00')
+    else:
+        current_slot = now.strftime('%Y-%m-%d %H:%M')
+
+    if current_slot in time_slot_stats:
+        stats['current']['tpm'] = time_slot_stats[current_slot]['tokens']
+        stats['current']['rpm'] = time_slot_stats[current_slot]['requests']
+
+    # 时间窗口总计
+    stats['current']['windowTotal']['tokens'] = sum(tpm_data)
+    stats['current']['windowTotal']['requests'] = sum(rpm_data)
+
+    # 统计摘要
+    non_zero_tpm = [t for t in tpm_data if t > 0]
+    if non_zero_tpm:
+        stats['statistics']['avgTpm'] = int(sum(non_zero_tpm) / len(non_zero_tpm))
+        stats['statistics']['peakTpm'] = max(non_zero_tpm)
+        peak_idx = tpm_data.index(max(non_zero_tpm))
+        # 格式化峰值时间
+        peak_ts = datetime.fromtimestamp(timestamps[peak_idx] / 1000, tz=TZ_DISPLAY)
+        if granularity == "hour":
+            stats['statistics']['peakTime'] = peak_ts.strftime('%H:00')
+        else:
+            stats['statistics']['peakTime'] = peak_ts.strftime('%H:%M')
+
     return stats
 
 
-async def get_minute_details(timestamp_ms: int) -> Dict[str, Any]:
-    """获取指定分钟的调用详情，用于柱体点击钻取。时间展示使用 Asia/Shanghai 时区"""
+async def get_minute_details(
+    timestamp_ms: int,
+    granularity: str = "minute",
+    agent: Optional[str] = None,
+    search: Optional[str] = None,
+    sort: str = "tokens_desc",
+    limit: int = 50
+) -> Dict[str, Any]:
+    """获取指定时间窗口的调用详情，用于柱体点击钻取。时间展示使用 Asia/Shanghai 时区
+
+    Args:
+        timestamp_ms: Unix 毫秒时间戳
+        granularity: 粒度 (minute, hour)
+        agent: 筛选指定 Agent
+        search: 搜索触发内容
+        sort: 排序方式 (tokens_desc, tokens_asc, time_asc, time_desc)
+        limit: 返回数量限制
+    """
     try:
         ts = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
         ts_local = ts.astimezone(TZ_DISPLAY)
-        minute_key = ts_local.strftime('%Y-%m-%d %H:%M')
-        minute_start = ts.replace(second=0, microsecond=0)
-        minute_end = minute_start + timedelta(minutes=1)
-        
-        openclaw_path = Path.home() / '.openclaw'
+
+        if granularity == "hour":
+            time_key = ts_local.strftime('%Y-%m-%d %H:00')
+            time_start = ts.replace(minute=0, second=0, microsecond=0)
+            time_end = time_start + timedelta(hours=1)
+        else:
+            time_key = ts_local.strftime('%Y-%m-%d %H:%M')
+            time_start = ts.replace(second=0, microsecond=0)
+            time_end = time_start + timedelta(minutes=1)
+
+        openclaw_path = _openclaw_path()
         agents_path = openclaw_path / 'agents'
         if not agents_path.exists():
-            return {'minute': minute_key, 'calls': [], 'totalTokens': 0}
-        
+            return {'timeWindow': time_key, 'calls': [], 'totalCalls': 0, 'totalTokens': 0, 'summary': {'avgTokens': 0}, 'agents': []}
+
         all_calls = []
+        agent_set = set()
+
         for agent_dir in agents_path.iterdir():
             if not agent_dir.is_dir():
                 continue
             agent_id = agent_dir.name
+            agent_set.add(agent_id)
+
+            # 如果指定了 agent 筛选，跳过不匹配的
+            if agent and agent_id != agent:
+                continue
+
             sessions_path = agent_dir / 'sessions'
             if not sessions_path.exists():
                 continue
-            
+
             for session_file in sessions_path.glob('*.jsonl'):
                 if 'lock' in session_file.name or 'deleted' in session_file.name:
                     continue
                 records = parse_session_file_with_details(session_file, agent_id)
                 for r in records:
-                    if minute_start <= r['timestamp'] < minute_end:
+                    if time_start <= r['timestamp'] < time_end:
                         # 转为 Asia/Shanghai 时区展示
                         r_ts = r['timestamp']
                         if r_ts.tzinfo is None:
                             r_ts = r_ts.replace(tzinfo=timezone.utc)
                         r_local = r_ts.astimezone(TZ_DISPLAY)
-                        all_calls.append({
+
+                        call_item = {
                             'agentId': r['agentId'],
                             'sessionId': r['sessionId'],
                             'model': r['model'],
@@ -379,32 +444,77 @@ async def get_minute_details(timestamp_ms: int) -> Dict[str, Any]:
                             'trigger': r['trigger'],
                             'inputTokens': r.get('inputTokens', 0),
                             'outputTokens': r.get('outputTokens', 0),
-                            'time': r_local.strftime('%H:%M:%S')
-                        })
-        
-        all_calls.sort(key=lambda x: x['time'])
+                            'time': r_local.strftime('%H:%M:%S'),
+                            'timestamp': int(r_ts.timestamp() * 1000)
+                        }
+
+                        # 如果指定了搜索关键词，过滤触发内容
+                        if search:
+                            if search.lower() not in call_item['trigger'].lower():
+                                continue
+
+                        all_calls.append(call_item)
+
+        # 排序
+        if sort == "tokens_desc":
+            all_calls.sort(key=lambda x: x['tokens'], reverse=True)
+        elif sort == "tokens_asc":
+            all_calls.sort(key=lambda x: x['tokens'])
+        elif sort == "time_asc":
+            all_calls.sort(key=lambda x: x['timestamp'])
+        elif sort == "time_desc":
+            all_calls.sort(key=lambda x: x['timestamp'], reverse=True)
+
+        # 计算统计信息
         total_tokens = sum(c['tokens'] for c in all_calls)
+        avg_tokens = int(total_tokens / len(all_calls)) if all_calls else 0
+
+        # 分页
+        total_count = len(all_calls)
+        paginated_calls = all_calls[:limit]
+
         return {
-            'minute': minute_key,
-            'calls': all_calls,
-            'totalCalls': len(all_calls),
-            'totalTokens': total_tokens
+            'timeWindow': time_key,
+            'calls': paginated_calls,
+            'totalCalls': total_count,
+            'totalTokens': total_tokens,
+            'summary': {
+                'avgTokens': avg_tokens
+            },
+            'agents': sorted(list(agent_set)),
+            'pagination': {
+                'total': total_count,
+                'limit': limit,
+                'hasMore': total_count > limit
+            }
         }
     except Exception as e:
-        print(f"获取分钟详情失败: {e}")
+        print(f"获取调用详情失败: {e}")
         import traceback
         traceback.print_exc()
-        return {'minute': '', 'calls': [], 'totalTokens': 0}
+        return {'timeWindow': '', 'calls': [], 'totalCalls': 0, 'totalTokens': 0, 'summary': {'avgTokens': 0}, 'agents': [], 'pagination': {'total': 0, 'limit': limit, 'hasMore': False}}
 
 
 @router.get("/performance/details")
-async def get_performance_details(timestamp: int):
-    """获取指定分钟的 TPM/RPM 调用详情（柱体点击钻取）
-    
+async def get_performance_details(
+    timestamp: int,
+    granularity: str = "minute",
+    agent: Optional[str] = None,
+    search: Optional[str] = None,
+    sort: str = "tokens_desc",
+    limit: int = 50
+):
+    """获取指定时间窗口的调用详情（柱体点击钻取）
+
     Args:
-        timestamp: 分钟起始的 Unix 毫秒时间戳
+        timestamp: 时间窗口起始的 Unix 毫秒时间戳
+        granularity: 粒度 (minute, hour)
+        agent: 筛选指定 Agent
+        search: 搜索触发内容
+        sort: 排序方式 (tokens_desc, tokens_asc, time_asc, time_desc)
+        limit: 返回数量限制
     """
-    return await get_minute_details(timestamp)
+    return await get_minute_details(timestamp, granularity, agent, search, sort, limit)
 
 
 def _openclaw_path() -> Path:
@@ -418,60 +528,262 @@ def _openclaw_path() -> Path:
 
 
 @router.get("/tokens/analysis")
-async def get_tokens_analysis():
+async def get_tokens_analysis(range: str = "all"):
     """
     Token 分析视图：按 agent、按 session 汇总 usage
+
+    Args:
+        range: 时间范围 (20m, 1h, 24h, all)
+
     数据来源：sessions.json (inputTokens, outputTokens, cacheRead, cacheWrite)
     """
+    # 保存参数避免与 Python 内置 range() 冲突
+    time_range = range
     openclaw_path = _openclaw_path()
     agents_path = openclaw_path / 'agents'
-    
-    result = {"byAgent": {}, "total": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}
-    
+
+    # 默认定价 (Claude 3.5 Sonnet)
+    PRICING = {
+        'inputPrice': 3.00,      # 每 1M Token
+        'outputPrice': 15.00,
+        'cacheReadPrice': 0.30,
+        'cacheWritePrice': 3.75
+    }
+
+    result = {
+        "summary": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0,
+            "cacheHitRate": 0.0
+        },
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0,
+            "total": 0.0,
+            "saved": 0.0,
+            "savedPercent": 0.0
+        },
+        "byAgent": [],
+        "trend": None
+    }
+
     if not agents_path.exists():
         return result
-    
-    for agent_dir in agents_path.iterdir():
-        if not agent_dir.is_dir():
-            continue
-        agent_id = agent_dir.name
-        sessions_index = agent_dir / 'sessions' / 'sessions.json'
-        if not sessions_index.exists():
-            continue
-        
-        try:
-            with open(sessions_index, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
+
+    # 确定是否需要趋势数据
+    need_trend = time_range in ('20m', '1h', '24h')
+    trend_data = {"timestamps": [], "input": [], "output": []} if need_trend else None
+
+    if need_trend:
+        # 从 jsonl 文件计算带时间范围的统计
+        now = datetime.now(timezone.utc)
+        if time_range == '20m':
+            time_ago = now - timedelta(minutes=20)
+            granularity = 'minute'
+            num_slots = 20
+        elif time_range == '1h':
+            time_ago = now - timedelta(hours=1)
+            granularity = 'minute'
+            num_slots = 60
+        else:  # 24h
+            time_ago = now - timedelta(hours=24)
+            granularity = 'hour'
+            num_slots = 24
+
+        # 初始化时间槽数据
+        slot_stats = {}
+        for i in range(num_slots):
+            if granularity == 'hour':
+                slot_time = now - timedelta(hours=(num_slots - i - 1))
+                slot_key = slot_time.strftime('%Y-%m-%d %H:00')
+            else:
+                slot_time = now - timedelta(minutes=(num_slots - i - 1))
+                slot_key = slot_time.strftime('%Y-%m-%d %H:%M')
+            slot_stats[slot_key] = {
+                'timestamp': int(slot_time.timestamp() * 1000),
+                'input': 0,
+                'output': 0,
+                'cacheRead': 0,
+                'cacheWrite': 0
+            }
+
+        agent_totals = {}
+
+        for agent_dir in agents_path.iterdir():
+            if not agent_dir.is_dir():
                 continue
-            
-            agent_total = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "sessions": []}
-            for session_key, entry in data.items():
-                if not isinstance(entry, dict):
+            agent_id = agent_dir.name
+            sessions_path = agent_dir / 'sessions'
+            if not sessions_path.exists():
+                continue
+
+            agent_totals[agent_id] = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+
+            for session_file in sessions_path.glob('*.jsonl'):
+                if 'lock' in session_file.name or 'deleted' in session_file.name:
                     continue
-                inp = entry.get('inputTokens', 0) or 0
-                out = entry.get('outputTokens', 0) or 0
-                cr = entry.get('cacheRead', 0) or 0
-                cw = entry.get('cacheWrite', 0) or 0
-                agent_total["input"] += inp
-                agent_total["output"] += out
-                agent_total["cacheRead"] += cr
-                agent_total["cacheWrite"] += cw
-                agent_total["sessions"].append({
-                    "sessionKey": session_key,
-                    "input": inp,
-                    "output": out,
-                    "cacheRead": cr,
-                    "cacheWrite": cw,
-                    "total": inp + out,
+
+                try:
+                    with open(session_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            try:
+                                data = json.loads(line)
+                                if data.get('type') != 'message':
+                                    continue
+                                msg = data.get('message', {})
+                                if msg.get('role') != 'assistant' or 'usage' not in msg:
+                                    continue
+
+                                try:
+                                    ts = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+                                except:
+                                    continue
+
+                                if ts < time_ago:
+                                    continue
+
+                                usage = msg['usage']
+                                inp = usage.get('input', 0) or 0
+                                out = usage.get('output', 0) or 0
+                                cr = usage.get('cacheRead', 0) or 0
+                                cw = usage.get('cacheWrite', 0) or 0
+
+                                # 确定时间槽
+                                if granularity == 'hour':
+                                    slot_key = ts.strftime('%Y-%m-%d %H:00')
+                                else:
+                                    slot_key = ts.strftime('%Y-%m-%d %H:%M')
+
+                                if slot_key in slot_stats:
+                                    slot_stats[slot_key]['input'] += inp
+                                    slot_stats[slot_key]['output'] += out
+                                    slot_stats[slot_key]['cacheRead'] += cr
+                                    slot_stats[slot_key]['cacheWrite'] += cw
+
+                                agent_totals[agent_id]["input"] += inp
+                                agent_totals[agent_id]["output"] += out
+                                agent_totals[agent_id]["cacheRead"] += cr
+                                agent_totals[agent_id]["cacheWrite"] += cw
+                            except:
+                                continue
+                except:
+                    continue
+
+        # 汇总趋势数据
+        sorted_slots = sorted(slot_stats.items())
+        trend_data = {
+            "timestamps": [s[1]['timestamp'] for s in sorted_slots],
+            "input": [s[1]['input'] for s in sorted_slots],
+            "output": [s[1]['output'] for s in sorted_slots]
+        }
+
+        # 汇总 agent 数据
+        for agent_id, totals in agent_totals.items():
+            total_tokens = totals["input"] + totals["output"]
+            if total_tokens > 0:
+                result["byAgent"].append({
+                    "agent": agent_id,
+                    "input": totals["input"],
+                    "output": totals["output"],
+                    "cacheRead": totals["cacheRead"],
+                    "cacheWrite": totals["cacheWrite"],
+                    "total": total_tokens
                 })
-            
-            result["byAgent"][agent_id] = agent_total
-            result["total"]["input"] += agent_total["input"]
-            result["total"]["output"] += agent_total["output"]
-            result["total"]["cacheRead"] += agent_total["cacheRead"]
-            result["total"]["cacheWrite"] += agent_total["cacheWrite"]
-        except Exception:
-            continue
-    
+            result["summary"]["input"] += totals["input"]
+            result["summary"]["output"] += totals["output"]
+            result["summary"]["cacheRead"] += totals["cacheRead"]
+            result["summary"]["cacheWrite"] += totals["cacheWrite"]
+    else:
+        # 从 sessions.json 读取全部数据
+        for agent_dir in agents_path.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            agent_id = agent_dir.name
+            sessions_index = agent_dir / 'sessions' / 'sessions.json'
+            if not sessions_index.exists():
+                continue
+
+            try:
+                with open(sessions_index, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    continue
+
+                agent_total = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+                for session_key, entry in data.items():
+                    if not isinstance(entry, dict):
+                        continue
+                    inp = entry.get('inputTokens', 0) or 0
+                    out = entry.get('outputTokens', 0) or 0
+                    cr = entry.get('cacheRead', 0) or 0
+                    cw = entry.get('cacheWrite', 0) or 0
+                    agent_total["input"] += inp
+                    agent_total["output"] += out
+                    agent_total["cacheRead"] += cr
+                    agent_total["cacheWrite"] += cw
+
+                agent_total_tokens = agent_total["input"] + agent_total["output"]
+                result["byAgent"].append({
+                    "agent": agent_id,
+                    "input": agent_total["input"],
+                    "output": agent_total["output"],
+                    "cacheRead": agent_total["cacheRead"],
+                    "cacheWrite": agent_total["cacheWrite"],
+                    "total": agent_total_tokens
+                })
+
+                result["summary"]["input"] += agent_total["input"]
+                result["summary"]["output"] += agent_total["output"]
+                result["summary"]["cacheRead"] += agent_total["cacheRead"]
+                result["summary"]["cacheWrite"] += agent_total["cacheWrite"]
+            except Exception:
+                continue
+
+    # 计算汇总
+    result["summary"]["total"] = result["summary"]["input"] + result["summary"]["output"]
+
+    # 计算缓存命中率
+    total_input = result["summary"]["input"] + result["summary"]["cacheRead"]
+    if total_input > 0:
+        result["summary"]["cacheHitRate"] = round(result["summary"]["cacheRead"] / total_input, 4)
+
+    # 计算成本
+    def calc_cost(tokens: int, price_per_m: float) -> float:
+        return round((tokens / 1_000_000) * price_per_m, 4)
+
+    result["cost"]["input"] = calc_cost(result["summary"]["input"], PRICING['inputPrice'])
+    result["cost"]["output"] = calc_cost(result["summary"]["output"], PRICING['outputPrice'])
+    result["cost"]["cacheRead"] = calc_cost(result["summary"]["cacheRead"], PRICING['cacheReadPrice'])
+    result["cost"]["cacheWrite"] = calc_cost(result["summary"]["cacheWrite"], PRICING['cacheWritePrice'])
+    result["cost"]["total"] = round(
+        result["cost"]["input"] + result["cost"]["output"] +
+        result["cost"]["cacheRead"] + result["cost"]["cacheWrite"], 4
+    )
+
+    # 计算节省金额（如果不用缓存，这些 input 要按原价付费）
+    saved_by_cache = calc_cost(result["summary"]["cacheRead"], PRICING['inputPrice']) - result["cost"]["cacheRead"]
+    result["cost"]["saved"] = round(saved_by_cache, 4)
+
+    # 节省百分比
+    if result["cost"]["total"] > 0:
+        result["cost"]["savedPercent"] = round(saved_by_cache / (result["cost"]["total"] + saved_by_cache), 4)
+
+    # 按 total 降序排序 byAgent
+    result["byAgent"].sort(key=lambda x: x["total"], reverse=True)
+
+    # 计算占比
+    grand_total = result["summary"]["total"]
+    if grand_total > 0:
+        for agent in result["byAgent"]:
+            agent["percent"] = round(agent["total"] / grand_total, 4)
+
+    # 添加趋势数据
+    if trend_data:
+        result["trend"] = trend_data
+
     return result

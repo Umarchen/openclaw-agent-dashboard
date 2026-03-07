@@ -27,19 +27,14 @@
         <TaskStatusSection />
       </section>
 
-      <!-- 性能数据展示区域 -->
+      <!-- 性能数据展示区域 (整合 TPM/Token) -->
       <section class="performance-section">
-        <PerformanceSection />
+        <PerformancePanel />
       </section>
 
       <!-- 机制追踪 -->
       <section class="mechanism-section">
         <MechanismTrackingPanel />
-      </section>
-
-      <!-- Token 分析 -->
-      <section class="token-section">
-        <TokenAnalysisPanel />
       </section>
 
       <!-- 错误中心 -->
@@ -92,9 +87,8 @@ import PerformanceMonitor from './components/PerformanceMonitor.vue'
 // 新增组件
 import CollaborationFlowWrapper from './components/collaboration/CollaborationFlowWrapper.vue'
 import TaskStatusSection from './components/tasks/TaskStatusSection.vue'
-import PerformanceSection from './components/performance/PerformanceSection.vue'
+import PerformancePanel from './components/performance/PerformancePanel.vue'
 import MechanismTrackingPanel from './components/MechanismTrackingPanel.vue'
-import TokenAnalysisPanel from './components/TokenAnalysisPanel.vue'
 import ErrorCenterPanel from './components/ErrorCenterPanel.vue'
 
 // 数据管理
@@ -349,10 +343,6 @@ main {
 }
 
 .mechanism-section {
-  margin-bottom: 2rem;
-}
-
-.token-section {
   margin-bottom: 2rem;
 }
 

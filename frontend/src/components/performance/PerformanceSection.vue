@@ -2,7 +2,7 @@
   <div class="performance-section">
     <div class="section-header">
       <h2>性能数据</h2>
-      <div v-if="timeRanges.length > 1" class="time-range-selector">
+      <div class="time-range-selector">
         <button
           v-for="range in timeRanges"
           :key="range.value"
@@ -28,7 +28,7 @@
     <template v-else>
       <!-- Metric Cards -->
       <div class="metrics-grid">
-        <div class="metric-card">
+        <div class="metric-card primary">
           <div class="metric-icon">⚡</div>
           <div class="metric-content">
             <div class="metric-label">TPM</div>
@@ -47,28 +47,26 @@
           </div>
         </div>
 
-        <div class="metric-card">
-          <div class="metric-icon">⏱️</div>
-          <div class="metric-content">
-            <div class="metric-label">延迟</div>
-            <div class="metric-value">{{ formatLatency(performanceData.current.latency) }}</div>
-            <div class="metric-unit">毫秒</div>
-          </div>
-          <div v-if="hasAlert('high_latency')" class="metric-alert">⚠️</div>
-        </div>
-
-        <div class="metric-card">
+        <div class="metric-card highlight">
           <div class="metric-icon">📊</div>
           <div class="metric-content">
-            <div class="metric-label">错误率</div>
-            <div class="metric-value">{{ formatErrorRate(performanceData.current.errorRate) }}</div>
-            <div class="metric-unit">Errors</div>
+            <div class="metric-label">总 Token</div>
+            <div class="metric-value">{{ formatNumber(performanceData.current.windowTotal.tokens) }}</div>
+            <div class="metric-unit">{{ timeRangeLabel }}</div>
           </div>
-          <div v-if="hasAlert('high_error_rate')" class="metric-alert">⚠️</div>
+        </div>
+
+        <div class="metric-card highlight">
+          <div class="metric-icon">🔢</div>
+          <div class="metric-content">
+            <div class="metric-label">总请求</div>
+            <div class="metric-value">{{ formatNumber(performanceData.current.windowTotal.requests) }}</div>
+            <div class="metric-unit">{{ timeRangeLabel }}</div>
+          </div>
         </div>
       </div>
 
-      <!-- Trend Charts - 上下排列 -->
+      <!-- Trend Charts -->
       <div class="charts-stack">
         <div class="chart-card">
           <div class="chart-header">
@@ -83,7 +81,7 @@
                 class="chart-bar clickable"
                 :style="{ height: `${getBarHeight(point.tpm, maxValue('tpm'))}%` }"
                 :title="`${formatTime(point.timestamp)}: ${formatNumber(point.tpm)} TPM - 点击查看详情`"
-                @click="showBarDetail(point, 'tpm')"
+                @click="showBarDetail(point)"
               >
                 <span class="bar-value">{{ formatNumber(point.tpm) }}</span>
                 <span class="bar-time-label">{{ formatTime(point.timestamp) }}</span>
@@ -105,7 +103,7 @@
                 class="chart-bar clickable"
                 :style="{ height: `${getBarHeight(point.rpm, maxValue('rpm'))}%` }"
                 :title="`${formatTime(point.timestamp)}: ${point.rpm} RPM - 点击查看调用详情`"
-                @click="showBarDetail(point, 'rpm')"
+                @click="showBarDetail(point)"
               >
                 <span class="bar-value">{{ point.rpm }}</span>
                 <span class="bar-time-label">{{ formatTime(point.timestamp) }}</span>
@@ -115,33 +113,22 @@
         </div>
       </div>
 
-      <!-- Summary -->
+      <!-- Statistics Summary -->
       <div class="summary-section">
         <h3>统计摘要</h3>
         <div class="summary-grid">
           <div class="summary-item">
             <span class="summary-label">平均 TPM</span>
-            <span class="summary-value">{{ formatNumber(performanceData.aggregates.avgTpm) }}</span>
+            <span class="summary-value">{{ formatNumber(performanceData.statistics.avgTpm) }}</span>
           </div>
           <div class="summary-item">
-            <span class="summary-label">平均延迟</span>
-            <span class="summary-value">{{ formatLatency(performanceData.aggregates.avgLatency) }}ms</span>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">最大 TPM</span>
-            <span class="summary-value">{{ formatNumber(performanceData.aggregates.maxTpm) }}</span>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">最大延迟</span>
-            <span class="summary-value">{{ formatLatency(performanceData.aggregates.maxLatency) }}ms</span>
+            <span class="summary-label">峰值 TPM</span>
+            <span class="summary-value">{{ formatNumber(performanceData.statistics.peakTpm) }}</span>
+            <span v-if="performanceData.statistics.peakTime" class="summary-sub">峰值时间: {{ performanceData.statistics.peakTime }}</span>
           </div>
           <div class="summary-item highlight">
-            <span class="summary-label">总 Token</span>
-            <span class="summary-value">{{ formatNumber(performanceData.aggregates.totalTokens) }}</span>
-          </div>
-          <div class="summary-item highlight">
-            <span class="summary-label">总请求</span>
-            <span class="summary-value">{{ formatNumber(performanceData.aggregates.totalRequests) }}</span>
+            <span class="summary-label">时间窗口</span>
+            <span class="summary-value">{{ timeRangeLabel }}</span>
           </div>
         </div>
       </div>
@@ -157,13 +144,32 @@
             <div v-if="detailLoading" class="detail-loading">加载详情...</div>
             <div v-else-if="detailData?.calls?.length" class="detail-calls">
               <div class="detail-summary">
-                {{ detailData.totalCalls }} 次调用 · {{ formatNumber(detailData.totalTokens) }} Tokens
+                {{ filteredCalls.length }} / {{ detailData.totalCalls }} 次调用 · {{ formatNumber(filteredTotalTokens) }} Tokens · 平均 {{ formatNumber(detailData.summary?.avgTokens || 0) }} Tokens/调用
+              </div>
+              <!-- 搜索和筛选 -->
+              <div class="detail-filters">
+                <input
+                  v-model="detailSearch"
+                  type="text"
+                  class="search-input"
+                  placeholder="搜索触发内容..."
+                />
+                <select v-model="detailAgentFilter" class="agent-filter">
+                  <option value="">全部 Agent</option>
+                  <option v-for="agent in detailAgents" :key="agent" :value="agent">{{ agent }}</option>
+                </select>
+                <select v-model="detailSort" class="sort-select">
+                  <option value="tokens_desc">Token 降序</option>
+                  <option value="tokens_asc">Token 升序</option>
+                  <option value="time_asc">时间 升序</option>
+                  <option value="time_desc">时间 降序</option>
+                </select>
               </div>
               <div v-if="detailData.calls.some((c: { trigger?: string }) => c.trigger?.startsWith('【完成回传】'))" class="detail-call-hint">
                 <span class="hint-badge">完成回传</span>
                 <span class="hint-text">此时间戳为子任务完成后的回传时间，不是派发时间</span>
               </div>
-              <div v-for="(call, i) in detailData.calls" :key="i" class="detail-call-item">
+              <div v-for="(call, i) in filteredCalls" :key="i" class="detail-call-item">
                 <div class="call-header">
                   <span class="call-agent">{{ call.agentId }}</span>
                   <span class="call-time">{{ call.time }}</span>
@@ -192,7 +198,7 @@
             :class="alert.type"
           >
             <span class="alert-message">{{ alert.message }}</span>
-            <span class="alert-value">{{ alert.value }} (阈值: {{ alert.threshold }})</span>
+            <span class="alert-value">{{ formatNumber(alert.value) }} (阈值: {{ formatNumber(alert.threshold) }})</span>
             <span class="alert-time">{{ formatTime(alert.timestamp) }}</span>
             <button class="ack-btn" @click="acknowledgeAlert(alert.id)">确认</button>
           </div>
@@ -204,10 +210,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRealtime } from '../../composables'
-import type { PerformanceData, PerformanceMetric, PerformanceAlert, TimeRange } from '../../types'
-
-const { connectionState, subscribe } = useRealtime()
+import type { PerformanceData, TimeRange, PerformanceAlert, CallDetailsResponse } from '../../types/performance'
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -217,35 +220,103 @@ const alerts = ref<PerformanceAlert[]>([])
 // 柱体详情弹窗
 const detailModalVisible = ref(false)
 const detailLoading = ref(false)
-const detailData = ref<{ minute: string; calls: Array<{ agentId: string; sessionId: string; model: string; tokens: number; trigger: string; time: string }>; totalCalls: number; totalTokens: number } | null>(null)
+const detailData = ref<CallDetailsResponse | null>(null)
 const detailModalTitle = ref('')
+const detailSearch = ref('')
+const detailAgentFilter = ref('')
+const detailSort = ref('tokens_desc')
+
+// 从详情数据中提取所有 Agent
+const detailAgents = computed(() => {
+  if (!detailData.value?.calls) return []
+  const agents = new Set(detailData.value.calls.map(c => c.agentId))
+  return Array.from(agents).sort()
+})
+
+// 筛选后的调用列表
+const filteredCalls = computed(() => {
+  if (!detailData.value?.calls) return []
+
+  let calls = [...detailData.value.calls]
+
+  // 搜索过滤
+  if (detailSearch.value) {
+    const search = detailSearch.value.toLowerCase()
+    calls = calls.filter(c => c.trigger?.toLowerCase().includes(search))
+  }
+
+  // Agent 筛选
+  if (detailAgentFilter.value) {
+    calls = calls.filter(c => c.agentId === detailAgentFilter.value)
+  }
+
+  // 排序
+  switch (detailSort.value) {
+    case 'tokens_desc':
+      calls.sort((a, b) => b.tokens - a.tokens)
+      break
+    case 'tokens_asc':
+      calls.sort((a, b) => a.tokens - b.tokens)
+      break
+    case 'time_asc':
+      calls.sort((a, b) => a.time.localeCompare(b.time))
+      break
+    case 'time_desc':
+      calls.sort((a, b) => b.time.localeCompare(a.time))
+      break
+  }
+
+  return calls
+})
+
+// 筛选后的总 Token
+const filteredTotalTokens = computed(() => {
+  return filteredCalls.value.reduce((sum, c) => sum + c.tokens, 0)
+})
 
 // 默认性能数据
 const performanceData = ref<PerformanceData>({
   current: {
-    timestamp: Date.now(),
     tpm: 0,
     rpm: 0,
-    latency: 0,
-    errorRate: 0
+    windowTotal: {
+      tokens: 0,
+      requests: 0
+    }
   },
-  history: [],
-  aggregates: {
+  history: {
+    tpm: [],
+    rpm: [],
+    timestamps: []
+  },
+  statistics: {
     avgTpm: 0,
-    avgLatency: 0,
-    totalTokens: 0,
-    totalRequests: 0,
-    maxTpm: 0,
-    maxLatency: 0
+    peakTpm: 0,
+    peakTime: ''
   }
 })
 
 const timeRanges = [
-  { value: '20m' as TimeRange, label: '20分钟' }
+  { value: '20m' as TimeRange, label: '20分钟' },
+  { value: '1h' as TimeRange, label: '1小时' },
+  { value: '24h' as TimeRange, label: '24小时' }
 ]
 
-// 根据时间范围获取数据点数（固定20分钟）
-const dataPoints = computed(() => 20)
+// 时间范围标签
+const timeRangeLabel = computed(() => {
+  const range = timeRanges.find(r => r.value === selectedRange.value)
+  return range ? `最近 ${range.label}` : ''
+})
+
+// 根据时间范围获取数据点数
+const dataPoints = computed(() => {
+  switch (selectedRange.value) {
+    case '20m': return 20
+    case '1h': return 60
+    case '24h': return 24
+    default: return 20
+  }
+})
 
 // 图表数据
 const chartData = computed(() => {
@@ -253,33 +324,24 @@ const chartData = computed(() => {
   const points = dataPoints.value
 
   // 如果历史数据不够，用数据填充
-  if (history.length === 0) {
+  if (history.tpm.length === 0) {
+    const interval = selectedRange.value === '24h' ? 3600000 : 60000
     return Array.from({ length: points }, (_, i) => ({
-      timestamp: Date.now() - (points - i - 1) * 60000,
+      timestamp: Date.now() - (points - i - 1) * interval,
       tpm: 0,
-      rpm: 0,
-      latency: 0,
-      errorRate: 0
+      rpm: 0
     }))
   }
 
-  // 如果历史数据不够，填充 0
-  const data = [...history]
-  while (data.length < points) {
-    const lastTimestamp = data[data.length - 1]?.timestamp || Date.now()
-    data.unshift({
-      timestamp: lastTimestamp - 60000,
-      tpm: 0,
-      rpm: 0,
-      latency: 0,
-      errorRate: 0
-    })
-  }
-
-  return data.slice(-points)
+  // 直接使用后端返回的数据
+  return history.tpm.map((tpm, i) => ({
+    timestamp: history.timestamps[i] || Date.now() - i * 60000,
+    tpm,
+    rpm: history.rpm[i] || 0
+  }))
 })
 
-function maxValue(metric: 'tpm' | 'rpm' | 'latency'): number {
+function maxValue(metric: 'tpm' | 'rpm'): number {
   const values = chartData.value.map(p => p[metric])
   const max = Math.max(...values, 1)
   return max * 1.2 // 添加 20% 余量
@@ -287,18 +349,6 @@ function maxValue(metric: 'tpm' | 'rpm' | 'latency'): number {
 
 function getBarHeight(value: number, max: number): number {
   return Math.max((value / max) * 100, 5)
-}
-
-function formatLatency(val: number | undefined): string {
-  if (val === undefined || val === null || isNaN(Number(val))) return '--'
-  const n = Number(val)
-  return n >= 0 ? String(Math.round(n)) : '--'
-}
-
-function formatErrorRate(val: number | undefined): string {
-  if (val === undefined || val === null || isNaN(Number(val))) return '0.0'
-  const n = Number(val)
-  return (Math.max(0, Math.min(1, n)) * 100).toFixed(1) + '%'
 }
 
 function formatNumber(num: number): string {
@@ -310,14 +360,13 @@ function formatNumber(num: number): string {
   return num.toString()
 }
 
-// 图表右上角时间：仅在数据更新时刷新，避免每秒重渲染导致页面抖动
+// 图表右上角时间
 const chartDisplayTime = ref(Date.now())
 
 function formatDateTime(timestamp: number | string | undefined): string {
   const ts = timestamp ?? Date.now()
   const num = typeof ts === 'number' ? ts : Number(ts)
   if (isNaN(num)) return new Date().toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-  // 若为秒级时间戳（10位），转为毫秒
   const ms = num < 1e12 ? num * 1000 : num
   const date = new Date(ms)
   if (isNaN(date.getTime())) return new Date().toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
@@ -333,11 +382,9 @@ function formatDateTime(timestamp: number | string | undefined): string {
 }
 
 function formatTime(timestamp: number | string | undefined): string {
-  // 无效值
   if (timestamp === undefined || timestamp === null) {
     return '--:--'
   }
-  // 字符串格式 'HH:MM'（兼容旧数据）- 按 UTC 解析后转本地
   if (typeof timestamp === 'string') {
     const parts = timestamp.split(':').map(Number)
     if (parts.length >= 2) {
@@ -359,11 +406,18 @@ function formatTime(timestamp: number | string | undefined): string {
     }
     return timestamp
   }
-  // 数字时间戳 - 使用本地时区
   const ts = Number(timestamp)
   if (isNaN(ts)) return '--:--'
   const date = new Date(ts)
   if (isNaN(date.getTime())) return '--:--'
+
+  // 24h 模式显示小时，其他显示分钟
+  if (selectedRange.value === '24h') {
+    return date.toLocaleString('zh-CN', {
+      hour: '2-digit',
+      hour12: false
+    }) + ':00'
+  }
   return date.toLocaleString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
@@ -385,37 +439,31 @@ function acknowledgeAlert(id: string): void {
 async function fetchData(): Promise<void> {
   loading.value = true
   error.value = null
-  
+
   try {
     const response = await fetch(`/api/performance?range=${selectedRange.value}`)
     if (!response.ok) throw new Error('Failed to fetch performance data')
-    
+
     const data = await response.json()
-    const prev = performanceData.value.current
-    const curr = data.current || {}
     performanceData.value = {
       current: {
-        timestamp: curr.timestamp ?? prev.timestamp,
-        tpm: curr.tpm ?? 0,
-        rpm: curr.rpm ?? 0,
-        latency: curr.latency ?? prev.latency ?? 0,
-        errorRate: typeof curr.errorRate === 'number' ? curr.errorRate : (prev.errorRate ?? 0)
+        tpm: data.current?.tpm ?? 0,
+        rpm: data.current?.rpm ?? 0,
+        windowTotal: {
+          tokens: data.current?.windowTotal?.tokens ?? 0,
+          requests: data.current?.windowTotal?.requests ?? 0
+        }
       },
-      history: data.history?.tpm?.map((tpm: number, i: number) => ({
-        timestamp: data.history.timestamps?.[i] || Date.now() - i * 60000,
-        tpm,
-        rpm: data.history.rpm?.[i] || 0,
-        latency: 0,
-        errorRate: 0
-      })) || [],
-      aggregates: data.total ? {
-        avgTpm: data.current?.tpm || 0,
-        avgLatency: 0,
-        totalTokens: data.total.tokens || 0,
-        totalRequests: data.total.requests || 0,
-        maxTpm: Math.max(...(data.history?.tpm || [0])),
-        maxLatency: 0
-      } : performanceData.value.aggregates
+      history: {
+        tpm: data.history?.tpm ?? [],
+        rpm: data.history?.rpm ?? [],
+        timestamps: data.history?.timestamps ?? []
+      },
+      statistics: {
+        avgTpm: data.statistics?.avgTpm ?? 0,
+        peakTpm: data.statistics?.peakTpm ?? 0,
+        peakTime: data.statistics?.peakTime ?? ''
+      }
     }
     chartDisplayTime.value = Date.now()
     checkAlerts()
@@ -428,7 +476,7 @@ async function fetchData(): Promise<void> {
 
 function checkAlerts(): void {
   const { current } = performanceData.value
-  
+
   // TPM 告警阈值
   if (current.tpm > 100000) {
     alerts.value.push({
@@ -441,20 +489,7 @@ function checkAlerts(): void {
       acknowledged: false
     })
   }
-  
-  // 延迟告警阈值
-  if (current.latency > 5000) {
-    alerts.value.push({
-      id: `high_latency_${Date.now()}`,
-      type: 'high_latency',
-      message: 'API 延迟过高',
-      value: current.latency,
-      threshold: 5000,
-      timestamp: Date.now(),
-      acknowledged: false
-    })
-  }
-  
+
   // 保留最近 10 条告警
   alerts.value = alerts.value.slice(-10)
 }
@@ -463,19 +498,17 @@ function refreshData(): void {
   fetchData()
 }
 
-async function showBarDetail(point: { timestamp: number | string; tpm?: number; rpm?: number }, type: 'tpm' | 'rpm'): Promise<void> {
+async function showBarDetail(point: { timestamp: number | string; tpm?: number; rpm?: number }): Promise<void> {
   let tsMs: number
   if (typeof point.timestamp === 'number') {
     tsMs = point.timestamp < 1e12 ? point.timestamp * 1000 : point.timestamp
   } else if (typeof point.timestamp === 'string') {
-    // 后端可能返回 "HH:MM" 格式（UTC），需按 UTC 解析
     const parts = point.timestamp.split(':').map(Number)
     if (parts.length >= 2) {
       const now = new Date()
       let utcDate = now.getUTCDate()
       const slotMins = parts[0] * 60 + parts[1]
       const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes()
-      // 若 slot 时间大于当前时间（如 23:50 vs 00:10），说明是前一天
       if (slotMins > nowMins + 10) {
         utcDate -= 1
       }
@@ -495,74 +528,64 @@ async function showBarDetail(point: { timestamp: number | string; tpm?: number; 
   } else {
     return
   }
+
+  const granularity = selectedRange.value === '24h' ? 'hour' : 'minute'
+
   detailModalVisible.value = true
-  detailModalTitle.value = `${formatTime(point.timestamp)} 调用详情 (${type.toUpperCase()})`
+  detailModalTitle.value = `${formatTime(point.timestamp)} 调用详情`
   detailData.value = null
   detailLoading.value = true
+  // 重置筛选器
+  detailSearch.value = ''
+  detailAgentFilter.value = ''
+  detailSort.value = 'tokens_desc'
+
   try {
-    const res = await fetch(`/api/performance/details?timestamp=${tsMs}`)
+    const res = await fetch(`/api/performance/details?timestamp=${tsMs}&granularity=${granularity}`)
     const data = await res.json()
     if (!res.ok) {
-      detailData.value = { minute: formatTime(point.timestamp), calls: [], totalCalls: 0, totalTokens: 0 }
+      detailData.value = { timeWindow: formatTime(point.timestamp), calls: [], totalCalls: 0, totalTokens: 0, summary: { avgTokens: 0 } }
     } else {
       detailData.value = data
-      detailModalTitle.value = `${data.minute || formatTime(point.timestamp)} 调用详情`
+      detailModalTitle.value = `${data.timeWindow || formatTime(point.timestamp)} 调用详情`
     }
   } catch (e) {
-    detailData.value = { minute: formatTime(point.timestamp), calls: [], totalCalls: 0, totalTokens: 0 }
+    detailData.value = { timeWindow: formatTime(point.timestamp), calls: [], totalCalls: 0, totalTokens: 0, summary: { avgTokens: 0 } }
   } finally {
     detailLoading.value = false
   }
 }
 
-function handlePerformanceUpdate(data: unknown): void {
-  const raw = data as { current?: object; history?: { tpm?: number[]; rpm?: number[]; timestamps?: number[] }; total?: { tokens?: number; requests?: number } }
-  if (!raw?.current) return
-  const prev = performanceData.value.current
-  const curr = raw.current as Record<string, unknown>
-  performanceData.value = {
-    current: {
-      timestamp: (curr.timestamp as number) ?? prev.timestamp,
-      tpm: (curr.tpm as number) ?? 0,
-      rpm: (curr.rpm as number) ?? 0,
-      latency: (curr.latency as number) ?? prev.latency ?? 0,
-      errorRate: typeof curr.errorRate === 'number' ? curr.errorRate : (prev.errorRate ?? 0)
-    },
-    history: raw.history?.tpm?.map((tpm: number, i: number) => ({
-      timestamp: raw.history?.timestamps?.[i] ?? Date.now() - i * 60000,
-      tpm,
-      rpm: raw.history?.rpm?.[i] ?? 0,
-      latency: 0,
-      errorRate: 0
-    })) ?? [],
-    aggregates: raw.total ? {
-      avgTpm: (curr.tpm as number) ?? 0,
-      avgLatency: 0,
-      totalTokens: raw.total.tokens ?? 0,
-      totalRequests: raw.total.requests ?? 0,
-      maxTpm: Math.max(...(raw.history?.tpm ?? [0])),
-      maxLatency: 0
-    } : performanceData.value.aggregates
-  }
-  chartDisplayTime.value = Date.now()
-  checkAlerts()
+// 自动刷新定时器
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+function startAutoRefresh(): void {
+  stopAutoRefresh()
+  // 根据时间范围设置刷新间隔
+  const interval = selectedRange.value === '24h' ? 300000 : 30000 // 24h: 5分钟, 其他: 30秒
+  refreshTimer = setInterval(fetchData, interval)
 }
 
-// 节流更新
-let unsubscribe: (() => void) | null = null
+function stopAutoRefresh(): void {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
 
 onMounted(() => {
   fetchData()
-  unsubscribe = subscribe('performance', handlePerformanceUpdate)
+  startAutoRefresh()
 })
 
 onUnmounted(() => {
-  if (unsubscribe) unsubscribe()
+  stopAutoRefresh()
 })
 
 // 时间范围变化时重新获取数据
 watch(selectedRange, () => {
   fetchData()
+  startAutoRefresh()
 })
 </script>
 
@@ -665,6 +688,16 @@ watch(selectedRange, () => {
   position: relative;
 }
 
+.metric-card.primary {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border-color: #93c5fd;
+}
+
+.metric-card.highlight {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
 .metric-icon {
   font-size: 2rem;
 }
@@ -745,7 +778,7 @@ watch(selectedRange, () => {
   flex: 1;
   display: flex;
   align-items: flex-end;
-  gap: 6px;
+  gap: 4px;
   padding-bottom: 36px;
   padding-top: 28px;
   overflow-x: auto;
@@ -754,7 +787,7 @@ watch(selectedRange, () => {
 
 .chart-bar {
   flex: 1;
-  min-width: 28px;
+  min-width: 16px;
   background: linear-gradient(to top, #4a9eff, #6bb9ff);
   border-radius: 3px 3px 0 0;
   min-height: 8px;
@@ -775,7 +808,7 @@ watch(selectedRange, () => {
   top: -22px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   color: #6b7280;
   white-space: nowrap;
 }
@@ -785,7 +818,7 @@ watch(selectedRange, () => {
   bottom: -30px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: #6b7280;
   white-space: nowrap;
 }
@@ -831,6 +864,11 @@ watch(selectedRange, () => {
   font-size: 1.25rem;
   font-weight: 600;
   color: #333;
+}
+
+.summary-sub {
+  font-size: 0.75rem;
+  color: #6b7280;
 }
 
 .chart-bar.clickable {
@@ -896,6 +934,43 @@ watch(selectedRange, () => {
   font-size: 0.9rem;
   color: #6b7280;
   margin-bottom: 1rem;
+}
+
+.detail-filters {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 150px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: #4a9eff;
+}
+
+.agent-filter,
+.sort-select {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: white;
+  cursor: pointer;
+  outline: none;
+}
+
+.agent-filter:focus,
+.sort-select:focus {
+  border-color: #4a9eff;
 }
 .detail-calls {
   display: flex;
@@ -1041,22 +1116,22 @@ watch(selectedRange, () => {
     flex-direction: column;
     align-items: flex-start;
   }
-  
+
   .time-range-selector {
     width: 100%;
     justify-content: space-between;
   }
-  
+
   .range-btn {
     flex: 1;
     text-align: center;
     padding: 0.5rem;
     font-size: 0.75rem;
   }
-  
+
   .metrics-grid {
     grid-template-columns: 1fr 1fr;
   }
-  
+
 }
 </style>

@@ -148,21 +148,17 @@ export class RealtimeDataManager {
    */
   async fetchInitialData(): Promise<void> {
     try {
-      const [collaboration, tasks, performance, agents, apiStatus, workflows] = await Promise.all([
+      const [collaboration, tasks, performance, agents] = await Promise.all([
         fetch('/api/collaboration').then(r => r.json()).catch(() => null),
         fetch('/api/tasks').then(r => r.json()).catch(() => null),
         fetch('/api/performance?range=20m').then(r => r.json()).catch(() => null),
-        fetch('/api/agents').then(r => r.json()).catch(() => null),
-        fetch('/api/api-status').then(r => r.json()).catch(() => null),
-        fetch('/api/workflows').then(r => r.json()).catch(() => null)
+        fetch('/api/agents').then(r => r.json()).catch(() => null)
       ])
 
       if (collaboration) this.emit('collaboration', collaboration)
       if (tasks) this.emit('tasks', tasks)
       if (performance) this.emit('performance', performance)
       if (agents) this.emit('agents', agents)
-      if (apiStatus) this.emit('api-status', apiStatus)
-      if (Array.isArray(workflows)) this.emit('workflows', workflows)
     } catch (error) {
       console.error('Failed to fetch initial data:', error)
     }
@@ -177,12 +173,10 @@ export class RealtimeDataManager {
     if (message.type === 'full_state' && message.data) {
       const data = message.data as Record<string, unknown>
       if (data.agents) this.emit('agents', data.agents)
-      if (data.apiStatus) this.emit('api-status', data.apiStatus)
       if (data.subagents) this.emit('subagents', data.subagents)
       if (data.collaboration) this.emit('collaboration', data.collaboration)
       if (data.tasks) this.emit('tasks', data.tasks)
       if (data.performance) this.emit('performance', data.performance)
-      if (Array.isArray(data.workflows)) this.emit('workflows', data.workflows)
       return
     }
 

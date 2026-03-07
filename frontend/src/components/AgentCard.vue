@@ -218,7 +218,9 @@ const statusText = computed(() => {
 
 const taskCount = computed(() => props.agentTasks?.length || 0)
 
-const showTaskList = computed(() => taskCount.value >= 1)
+// 只有主 Agent 且有 2+ 任务时才显示"并行任务"列表
+// 子 Agent 或单任务直接显示任务内容
+const showTaskList = computed(() => props.isMain && taskCount.value >= 2)
 
 const visibleTasks = computed(() => {
   if (!props.agentTasks) return []

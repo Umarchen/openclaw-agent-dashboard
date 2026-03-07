@@ -750,7 +750,7 @@ onUnmounted(() => {
 
 /* 主 agent 卡片 - 更大 */
 .level-section:first-child .agent-card-wrapper.main-agent {
-  width: 260px;
+  width: 320px;
   max-width: 100%;
 }
 
@@ -993,7 +993,7 @@ onUnmounted(() => {
 /* 响应式适配 */
 @media (max-width: 1280px) {
   .level-section:first-child .agent-card-wrapper.main-agent {
-    width: 240px;
+    width: 280px;
   }
 
   .level-section:not(:first-child) .level-cards {

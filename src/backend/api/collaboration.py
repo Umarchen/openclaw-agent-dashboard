@@ -854,7 +854,8 @@ async def get_collaboration_dynamic():
         except Exception as e:
             logger.warning(f"Failed to get display status for {main_agent_id}: {e}")
 
-        # 处理活跃任务（移除 main_agent_task_created 限制，支持多任务并行）
+        # 处理活跃任务（简化：不在流程图中创建任务节点，任务信息由 agentActiveTasks 提供）
+        # 任务详情在 Agent 卡片内显示，流程图只显示 Agent 之间的委托关系
         for run in active_runs[:20]:
             child_key = run.get('childSessionKey', '')
             requester_key = run.get('requesterSessionKey', '')
@@ -862,48 +863,10 @@ async def get_collaboration_dynamic():
             requester_id = _parse_agent_id(requester_key)
             if not agent_id:
                 continue
-            task_name = _clean_task_name(run.get('task', ''))
-            task_id = f"task-{run.get('runId', agent_id)}"
-            task_nodes.append(CollaborationNode(
-                id=task_id,
-                type="task",
-                name=task_name,
-                status="working",
-                timestamp=run.get('startedAt')
-            ))
-            task_edges.append(CollaborationEdge(
-                id=f"edge-{agent_id}-{task_id}",
-                source=agent_id,
-                target=task_id,
-                type="calls",
-                label="执行"
-            ))
+            # 只更新 activePath，不创建任务节点
+            active_path.extend([agent_id])
             if requester_id and requester_id != agent_id:
-                task_edges.append(CollaborationEdge(
-                    id=f"edge-spawn-{requester_id}-{task_id}",
-                    source=requester_id,
-                    target=task_id,
-                    type="delegates",
-                    label="派发"
-                ))
-                # 如果 requester 是主 agent，给主 agent 也添加任务节点（支持多任务）
-                if requester_id == main_agent_id:
-                    main_task_id = f"task-main-{run.get('runId', 'current')}"
-                    task_nodes.append(CollaborationNode(
-                        id=main_task_id,
-                        type="task",
-                        name=task_name,
-                        status="working",
-                        timestamp=run.get('startedAt')
-                    ))
-                    task_edges.append(CollaborationEdge(
-                        id=f"edge-{main_agent_id}-{main_task_id}",
-                        source=main_agent_id,
-                        target=main_task_id,
-                        type="calls",
-                        label="执行"
-                    ))
-            active_path.extend([main_agent_id, agent_id, task_id])
+                active_path.extend([requester_id])
     except Exception as e:
         logger.error(f"Error building collaboration dynamic: {e}")
 

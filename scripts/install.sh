@@ -2,9 +2,10 @@
 #
 # OpenClaw Agent Dashboard - 一键安装脚本
 # 用法: curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/main/scripts/install.sh | bash
+# 默认安装仓库中标记为 Latest 的发布（即你最近推送的 release）。
 #
 # 选项:
-#   DASHBOARD_VERSION=x.x.x     安装指定版本 (默认: latest)
+#   DASHBOARD_VERSION=x.x.x     安装指定版本 (默认: latest，即 Latest release)
 #   DASHBOARD_RELEASE_URL=URL   使用自定义下载地址
 #   DASHBOARD_SKIP_PYTHON=1     跳过 Python 依赖安装
 #   VERBOSE=1                   显示详细输出
@@ -201,10 +202,16 @@ print_python_deps_help() {
   
   # 检测系统并给出针对性建议
   if [ -f /etc/debian_version ]; then
-    echo "检测到 Debian/Ubuntu 系统，请执行："
+    echo "检测到 Debian/Ubuntu 系统（PEP 668 限制，请用 venv 安装）："
     echo ""
-    echo "  sudo apt update"
-    echo "  sudo apt install python3 python3-pip python3-venv"
+    echo "  1. 安装 python3-venv："
+    echo "     sudo apt update"
+    echo "     sudo apt install python3 python3-pip python3-venv"
+    echo ""
+    echo "  2. 在插件目录下用 venv 安装依赖（推荐）："
+    echo "     cd ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard"
+    echo "     python3 -m venv .venv"
+    echo "     .venv/bin/pip install -r requirements.txt"
     echo ""
   elif [ -f /etc/redhat-release ]; then
     echo "检测到 RedHat/CentOS/Fedora 系统，请执行："
@@ -230,9 +237,11 @@ print_python_deps_help() {
   echo ""
   echo "  curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/main/scripts/install.sh | bash"
   echo ""
-  echo "或手动安装 Python 依赖："
+  echo "或手动用 venv 安装 Python 依赖（Debian/Ubuntu 请用此方式）："
   echo ""
-  echo "  python3 -m pip install -r $req_file --user"
+  echo "  cd \$(dirname $req_file)"
+  echo "  python3 -m venv .venv"
+  echo "  .venv/bin/pip install -r requirements.txt"
   echo ""
 }
 

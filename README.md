@@ -111,9 +111,10 @@ curl -LO https://github.com/Umarchen/openclaw-agent-dashboard/releases/download/
 # 安装
 openclaw plugins install openclaw-agent-dashboard-v1.0.0.tgz
 
-# 安装 Python 依赖
+# 安装 Python 依赖（Debian/Ubuntu 请用 venv，避免 PEP 668 报错）
 cd ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard
-python3 -m pip install -r requirements.txt --user
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 ## 命令说明
@@ -153,8 +154,8 @@ npm run deploy
 
 安装脚本采用以下策略安装 Python 依赖：
 
-1. **venv（推荐）** - 创建虚拟环境，隔离依赖，不受 PEP 668 影响
-2. **pip --user（回退）** - 安装到 `~/.local/`，适用于无 venv 的环境
+1. **venv（推荐）** - 在插件目录下创建 `.venv`，隔离依赖，不受 PEP 668 影响；Debian/Ubuntu 下**必须**用此方式（系统禁止 pip 装到系统/用户目录）。
+2. **pip --user（回退）** - 仅在不支持 venv 或非 Debian/Ubuntu 环境下尝试，安装到 `~/.local/`。
 
 若安装失败，请确保已安装系统依赖（见 [系统要求](#系统要求)）。
 
@@ -165,7 +166,7 @@ npm run deploy
 如果需要独立运行（不作为插件）：
 
 ```bash
-# 1. 安装后端依赖
+# 1. 安装后端依赖（Debian/Ubuntu 建议用 venv：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt）
 cd src/backend
 pip install -r requirements.txt
 
@@ -245,14 +246,16 @@ openclaw gateway restart
 **解决方案：**
 
 ```bash
-# Debian/Ubuntu
+# Debian/Ubuntu（需安装 python3-venv，否则请用下方 venv 手动安装）
 sudo apt update && sudo apt install python3 python3-pip python3-venv
 
-# 重新安装
+# 重新安装（安装脚本会优先使用 venv）
 npm run deploy
 
-# 或手动安装依赖
-python3 -m pip install -r ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard/requirements.txt --user
+# 或手动用 venv 安装依赖（推荐，避免 externally-managed-environment）
+cd ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 ### 无法访问 Dashboard
@@ -263,7 +266,7 @@ python3 -m pip install -r ~/.openclaw/extensions/openclaw-agent-dashboard/dashbo
 # 方式一：在项目目录下（需先 npm run deploy）
 npm run start
 
-# 方式二：使用已安装的插件目录
+# 方式二：使用已安装的插件目录（若有 .venv 可用 .venv/bin/python 替代 python3）
 cd ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard
 OPENCLAW_HOME=~/.openclaw python3 -m uvicorn main:app --host 0.0.0.0 --port 38271
 ```

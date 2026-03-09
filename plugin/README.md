@@ -93,6 +93,7 @@ npm run pack
 # 2. 安装插件
 openclaw plugins install ./plugin
 
-# 3. 安装 Python 依赖（通常不需要，脚本会自动完成）
-pip install -r ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard/requirements.txt
+# 3. 安装 Python 依赖（通常不需要，脚本会自动完成；Debian/Ubuntu 请用 venv）
+cd ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```

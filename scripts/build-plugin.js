@@ -39,13 +39,17 @@ function copyDir(src, dest, exclude = []) {
 }
 
 console.log('[pack] 1. 构建前端...');
-// 检查是否需要安装依赖
+// 检查是否需要安装依赖：无 node_modules 或缺少 .bin（如 Windows 下 .bin 未生成）时都执行 install
 const nodeModulesPath = path.join(FRONTEND_DIR, 'node_modules');
-if (!fs.existsSync(nodeModulesPath)) {
+const binVite = path.join(nodeModulesPath, '.bin', 'vite');
+const binViteCmd = path.join(nodeModulesPath, '.bin', 'vite.cmd'); // Windows
+const needInstall = !fs.existsSync(nodeModulesPath) ||
+  !(fs.existsSync(binVite) || fs.existsSync(binViteCmd));
+if (needInstall) {
   console.log('[pack] 安装前端依赖...');
-  execSync('npm install', { cwd: FRONTEND_DIR, stdio: 'inherit' });
+  execSync('npm install --no-audit', { cwd: FRONTEND_DIR, stdio: 'inherit', env: process.env });
 }
-execSync('npm run build', { cwd: FRONTEND_DIR, stdio: 'inherit' });
+execSync('npm run build', { cwd: FRONTEND_DIR, stdio: 'inherit', env: process.env });
 
 console.log('[pack] 2. 复制 backend -> plugin/dashboard');
 rmrf(DASHBOARD_DEST);

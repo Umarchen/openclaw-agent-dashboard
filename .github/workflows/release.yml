@@ -51,5 +51,6 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Release ${{ steps.version.outputs.tag }}
           generate_release_notes: true
+          make_latest: true
           files: |
             openclaw-agent-dashboard-v*.tgz

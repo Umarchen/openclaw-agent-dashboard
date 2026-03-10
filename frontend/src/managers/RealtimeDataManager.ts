@@ -175,7 +175,9 @@ export class RealtimeDataManager {
       if (data.agents) this.emit('agents', data.agents)
       if (data.subagents) this.emit('subagents', data.subagents)
       if (data.collaboration) this.emit('collaboration', data.collaboration)
-      if (data.tasks) this.emit('tasks', data.tasks)
+      // 统一为 { tasks: array }，与 HTTP 轮询和组件 handleTasksUpdate 约定一致，避免形态不一致导致不更新或误覆盖
+      const tasksArray = Array.isArray(data.tasks) ? data.tasks : []
+      this.emit('tasks', { tasks: tasksArray })
       if (data.performance) this.emit('performance', data.performance)
       return
     }

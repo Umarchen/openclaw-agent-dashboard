@@ -17,9 +17,13 @@ def _get_watch_dirs() -> list[tuple[Path, bool]]:
     subagents = OPENCLAW_DIR / "subagents"
     if subagents.exists():
         dirs.append((subagents, False))
-    dashboard = OPENCLAW_DIR / "dashboard"
-    if dashboard.exists():
-        dirs.append((dashboard, False))
+    try:
+        from data.task_history import get_dashboard_data_dir
+        dashboard_data = get_dashboard_data_dir()
+        if dashboard_data.exists():
+            dirs.append((dashboard_data, False))
+    except Exception:
+        pass
     # workspace/*/memory: 从配置读取，或回退到 workspace-main
     try:
         from data.config_reader import get_workspace_paths

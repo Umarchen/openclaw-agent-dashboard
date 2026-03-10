@@ -6,7 +6,7 @@
  *
  * 端口配置优先级（高到低）：
  * 1. 环境变量 DASHBOARD_PORT
- * 2. ~/.openclaw/dashboard/config.json
+ * 2. ~/.openclaw-agent-dashboard/config.json（或 OPENCLAW_AGENT_DASHBOARD_DATA/config.json）
  * 3. openclaw.json 中 plugins.entries.openclaw-agent-dashboard.config.port
  * 4. 默认 38271
  */
@@ -22,13 +22,38 @@ function getOpenClawHome() {
   return process.env.OPENCLAW_HOME || path.join(os.homedir(), '.openclaw');
 }
 
+/** Dashboard 数据目录，与 Python 端一致：本工程数据统一放此，不写入 ~/.openclaw */
+function getDashboardDataDir() {
+  return process.env.OPENCLAW_AGENT_DASHBOARD_DATA || path.join(os.homedir(), '.openclaw-agent-dashboard');
+}
+
 function getDashboardDir() {
   const pluginDir = __dirname;
   return path.join(pluginDir, 'dashboard');
 }
 
+/** 兼容旧路径：若存在 ~/.openclaw/dashboard 或 ~/.openclaw-dashboard 下的 config.json 则迁移到新目录一次 */
+function migrateLegacyConfigIfNeeded() {
+  const openclawHome = getOpenClawHome();
+  const newDir = getDashboardDataDir();
+  const newPath = path.join(newDir, 'config.json');
+  if (fs.existsSync(newPath)) return;
+  const legacyPaths = [
+    path.join(openclawHome, 'dashboard', 'config.json'),
+    path.join(os.homedir(), '.openclaw-dashboard', 'config.json')
+  ];
+  for (const legacyPath of legacyPaths) {
+    if (!fs.existsSync(legacyPath)) continue;
+    try {
+      if (!fs.existsSync(newDir)) fs.mkdirSync(newDir, { recursive: true });
+      fs.copyFileSync(legacyPath, newPath);
+    } catch (_) {}
+    return;
+  }
+}
+
 /**
- * 加载配置，优先级：env > 用户 config.json > api.pluginConfig > 默认
+ * 加载配置，优先级：env > 用户 config.json（新路径 > 旧路径）> api.pluginConfig > 默认
  */
 function loadConfig(apiPluginConfig = {}) {
   const openclawHome = getOpenClawHome();
@@ -49,10 +74,15 @@ function loadConfig(apiPluginConfig = {}) {
     } catch (_) {}
   }
 
-  const userConfigPath = path.join(openclawHome, 'dashboard', 'config.json');
-  if (fs.existsSync(userConfigPath)) {
+  migrateLegacyConfigIfNeeded();
+  const userConfigPath = path.join(getDashboardDataDir(), 'config.json');
+  const legacyUserConfigPath = path.join(openclawHome, 'dashboard', 'config.json');
+  const prevUserConfigPath = path.join(os.homedir(), '.openclaw-dashboard', 'config.json');
+  const pathToRead = fs.existsSync(userConfigPath) ? userConfigPath
+    : (fs.existsSync(prevUserConfigPath) ? prevUserConfigPath : legacyUserConfigPath);
+  if (pathToRead && fs.existsSync(pathToRead)) {
     try {
-      const data = JSON.parse(fs.readFileSync(userConfigPath, 'utf8'));
+      const data = JSON.parse(fs.readFileSync(pathToRead, 'utf8'));
       if (typeof data.port === 'number') config.port = data.port;
     } catch (_) {}
   }

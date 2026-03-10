@@ -85,7 +85,7 @@ def get_agent_model_config(agent_id: str) -> Dict[str, Any]:
 
 
 def get_all_available_models() -> List[Dict[str, Any]]:
-    """获取所有可用模型列表"""
+    """获取所有可用模型列表：优先从 openclaw.json 的 models.providers 读取；若无则从各 Agent 已配置的主模型与 fallback 收集"""
     config = load_full_config()
     providers = config.get('models', {}).get('providers', {})
 
@@ -102,6 +102,28 @@ def get_all_available_models() -> List[Dict[str, Any]]:
                 'reasoning': model.get('reasoning', False),
                 'input': model.get('input', ['text']),
             })
+
+    if models:
+        return models
+
+    # 无 models.providers 或为空时：从各 Agent 配置中收集已使用的主模型与 fallback，保证下拉框有选项
+    try:
+        from data.config_reader import get_all_models_from_agents, get_model_display_name
+        for model_id in get_all_models_from_agents():
+            if not model_id:
+                continue
+            provider = model_id.split('/')[0] if '/' in model_id else 'default'
+            models.append({
+                'id': model_id,
+                'name': get_model_display_name(model_id),
+                'provider': provider,
+                'contextWindow': 0,
+                'maxTokens': 0,
+                'reasoning': False,
+                'input': ['text'],
+            })
+    except Exception as e:
+        print(f"[AgentConfig] 从 Agent 配置收集模型列表失败: {e}")
 
     return models
 

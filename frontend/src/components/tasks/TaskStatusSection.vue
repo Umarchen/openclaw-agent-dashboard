@@ -390,10 +390,20 @@ function mapTaskFromApi(t: any): Task {
 }
 
 function handleTasksUpdate(data: unknown): void {
-  const taskData = data as { tasks?: any[] }
-  if (taskData.tasks) {
-    tasks.value = taskData.tasks.map((t: any) => mapTaskFromApi(t))
+  // 兼容两种形态：WebSocket/轮询 可能传 { tasks: array }，历史代码或其它路径可能传 array
+  const rawList: any[] = Array.isArray(data)
+    ? data
+    : (data && typeof data === 'object' && 'tasks' in data)
+      ? (data as { tasks?: any[] }).tasks ?? []
+      : []
+  const newTasks = rawList.map((t: any) => mapTaskFromApi(t))
+
+  // 防止”概率性丢失”：后端/网络暂时返回空时，不覆盖已有列表（点 fetch 会重新拉取）
+  if (newTasks.length === 0 && tasks.value.length > 0) {
+    return
   }
+
+  tasks.value = newTasks
 }
 
 function formatTimelineTime(timestamp: number | undefined): string {

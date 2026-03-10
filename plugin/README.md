@@ -71,7 +71,7 @@ npm run upgrade
 优先级从高到低：
 
 1. **环境变量**：`DASHBOARD_PORT=38271`
-2. **独立配置文件**：`~/.openclaw/dashboard/config.json`
+2. **独立配置文件**：`~/.openclaw-agent-dashboard/config.json`（可与 `OPENCLAW_AGENT_DASHBOARD_DATA` 环境变量配合）
    ```json
    { "port": 38271 }
    ```

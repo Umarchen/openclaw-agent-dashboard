@@ -359,7 +359,7 @@ main() {
   log_info "执行任意 openclaw 命令（如 openclaw tui）时，Dashboard 会自动启动。"
   log_info "访问地址: http://localhost:38271"
   echo ""
-  log_info "若端口被占用，可创建 ~/.openclaw/dashboard/config.json 设置端口:"
+  log_info "若端口被占用，可创建 ~/.openclaw-agent-dashboard/config.json 设置端口:"
   log_info '  {"port": 38271}'
   echo ""
 }

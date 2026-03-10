@@ -540,5 +540,5 @@ interface UnifiedTask {
 | 文件 | 说明 |
 |------|------|
 | `~/.openclaw/subagents/runs.json` | 子代理运行记录 |
-| `~/.openclaw/dashboard/task_history.json` | 任务历史持久化 |
+| `~/.openclaw-agent-dashboard/task_history.json`（或 `$OPENCLAW_AGENT_DASHBOARD_DATA/task_history.json`） | 任务历史持久化 |
 | `~/.openclaw/agents/*/sessions/*.jsonl` | Session 消息日志 |

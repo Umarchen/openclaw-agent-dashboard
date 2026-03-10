@@ -256,7 +256,7 @@ async function main() {
   logInfo('执行任意 openclaw 命令（如 openclaw tui）时，Dashboard 会自动启动。');
   logInfo('访问地址: http://localhost:38271');
   console.log('');
-  logInfo('若端口被占用，可创建 ~/.openclaw/dashboard/config.json 设置端口:');
+  logInfo('若端口被占用，可创建 ~/.openclaw-agent-dashboard/config.json 设置端口:');
   logInfo('  {"port": 38271}');
   console.log('');
 }

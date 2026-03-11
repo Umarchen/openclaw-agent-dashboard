@@ -93,9 +93,33 @@ def get_agent_models(agent_id: str) -> Dict[str, Any]:
 
 
 def get_all_models_from_agents() -> List[str]:
-    """从所有 Agent 配置中收集用到的模型 ID（provider/model 格式）"""
+    """
+    从配置中收集模型 ID（provider/model 格式），用于无 models.providers 时的下拉选项。
+    来源（合并去重）：
+    1. agents.defaults.model（primary + fallbacks）
+    2. agents.defaults.models（已有展示名配置的模型，OpenClaw 可能从 providers 同步）
+    3. 各 agents.list[].model（primary + fallbacks）
+    """
     agents = get_agents_list()
     model_ids = set()
+
+    defaults = get_default_config()
+
+    # 1. defaults.model
+    default_model = defaults.get('model', {})
+    if default_model.get('primary'):
+        model_ids.add(default_model['primary'])
+    for fb in default_model.get('fallbacks') or []:
+        model_ids.add(fb)
+
+    # 2. defaults.models（已有展示名/别名的模型，确保配置过的能选）
+    models_cfg = defaults.get('models', {}) or {}
+    if isinstance(models_cfg, dict):
+        for mid in models_cfg.keys():
+            if mid and isinstance(mid, str):
+                model_ids.add(mid)
+
+    # 3. 各 agent 的 model
     for agent in agents:
         cfg = get_agent_models(agent.get('id', ''))
         if cfg.get('primary'):
@@ -106,16 +130,8 @@ def get_all_models_from_agents() -> List[str]:
 
 
 def get_model_display_name(model_id: str) -> str:
-    """获取模型显示名（provider/model -> 简短名）"""
-    config = load_config()
-    agents = config.get('agents')
-    if agents is None or not isinstance(agents, dict):
-        parts = model_id.split('/')
-        return parts[-1] if len(parts) > 1 else model_id
-    defaults = agents.get('defaults', {}) or {}
-    models_cfg = defaults.get('models', {}) or {}
-    alias = models_cfg.get(model_id, {}).get('alias') if isinstance(models_cfg.get(model_id), dict) else None
-    if alias:
-        return alias
+    """获取模型显示名。展示策略：使用 id 不用别名（与 OpenClaw 白名单逻辑一致）"""
+    if not model_id:
+        return ''
     parts = model_id.split('/')
     return parts[-1] if len(parts) > 1 else model_id

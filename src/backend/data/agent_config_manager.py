@@ -84,11 +84,19 @@ def get_agent_model_config(agent_id: str) -> Dict[str, Any]:
     }
 
 
-def _model_entry_from_id(model_id: str, name: str, provider: str) -> Dict[str, Any]:
-    """由 model_id 与展示名、provider 构造与 providers 结构一致的单项"""
+def _model_id_to_display_name(model_id: str) -> str:
+    """展示策略：使用 id 不用别名。取 provider/model 的 model 部分，或原样返回"""
+    if not model_id:
+        return ''
+    parts = model_id.split('/')
+    return parts[-1] if len(parts) > 1 else model_id
+
+
+def _model_entry_from_id(model_id: str, provider: str) -> Dict[str, Any]:
+    """由 model_id 与 provider 构造与 providers 结构一致的单项（展示用 id 不用别名）"""
     return {
         'id': model_id,
-        'name': name,
+        'name': _model_id_to_display_name(model_id),
         'provider': provider,
         'contextWindow': 0,
         'maxTokens': 0,
@@ -97,18 +105,32 @@ def _model_entry_from_id(model_id: str, name: str, provider: str) -> Dict[str, A
     }
 
 
+def _get_allowlist_model_ids(config: Dict[str, Any]) -> List[str]:
+    """
+    获取模型白名单（与 OpenClaw buildAllowedModelSet 一致）。
+    来源：agents.defaults.models 的 key。
+    注：OpenClaw 源码仅使用 agents.defaults.models，未使用 agents.list[].models 作为白名单。
+    """
+    defaults = config.get('agents', {}).get('defaults', {})
+    models_cfg = defaults.get('models', {}) or {}
+    if not isinstance(models_cfg, dict):
+        return []
+    return [k for k in models_cfg.keys() if k and isinstance(k, str)]
+
+
 def get_all_available_models() -> List[Dict[str, Any]]:
     """
-    获取所有可用模型列表，遵循 openclaw.json 的 models 与 agents 约定：
-    - 若有 models.providers：以其为「目录」主列表，并追加 agents 中已用但不在目录中的 model_id（混合场景）。
-    - 若无或为空：仅从 agents.defaults.model 与各 agents.list[].model 的 primary/fallbacks 收集，保证下拉不为空。
+    获取所有可用模型列表，与 OpenClaw 逻辑保持一致：
+    - 若存在 agents.defaults.models（白名单）：仅显示白名单中的模型，展示用 id 不用别名。
+    - 若无白名单：显示 models.providers 完整目录；若无 providers 则从 agents 收集。
     详见 docs/design/openclaw-config-models-and-agents.md
     """
-    from data.config_reader import get_all_models_from_agents, get_model_display_name
+    from data.config_reader import get_all_models_from_agents
 
     config = load_full_config()
     providers = config.get('models', {}).get('providers', {})
 
+    # 构建 providers 目录
     catalog_models: List[Dict[str, Any]] = []
     catalog_ids: set = set()
     for provider_name, provider_cfg in providers.items():
@@ -117,7 +139,7 @@ def get_all_available_models() -> List[Dict[str, Any]]:
             catalog_ids.add(model_id)
             catalog_models.append({
                 'id': model_id,
-                'name': model.get('name', model.get('id', '')),
+                'name': _model_id_to_display_name(model_id),  # 展示用 id 不用别名
                 'provider': provider_name,
                 'contextWindow': model.get('contextWindow', 0),
                 'maxTokens': model.get('maxTokens', 0),
@@ -125,29 +147,48 @@ def get_all_available_models() -> List[Dict[str, Any]]:
                 'input': model.get('input', ['text']),
             })
 
-    try:
-        used_ids = set(get_all_models_from_agents())
-    except Exception as e:
-        print(f"[AgentConfig] 从 Agent 配置收集模型 ID 失败: {e}")
-        used_ids = set()
+    allowlist = _get_allowlist_model_ids(config)
 
+    if allowlist:
+        # 有白名单：仅显示白名单中的模型，与 OpenClaw 一致
+        allowed_set = set(allowlist)
+        result = []
+        for m in catalog_models:
+            if m['id'] in allowed_set:
+                result.append(m)
+        for model_id in allowed_set:
+            if model_id not in catalog_ids:
+                provider = model_id.split('/')[0] if '/' in model_id else 'default'
+                result.append(_model_entry_from_id(model_id, provider))
+        return result
+
+    # 无白名单：显示 providers 或从 agents 收集
     if catalog_models:
-        # 有目录：主列表用目录，再追加「已在 agents 中使用但不在目录中」的项
+        try:
+            used_ids = set(get_all_models_from_agents())
+        except Exception as e:
+            print(f"[AgentConfig] 从 Agent 配置收集模型 ID 失败: {e}")
+            used_ids = set()
         result = list(catalog_models)
         for model_id in used_ids:
             if not model_id or model_id in catalog_ids:
                 continue
             provider = model_id.split('/')[0] if '/' in model_id else 'default'
-            result.append(_model_entry_from_id(model_id, get_model_display_name(model_id), provider))
+            result.append(_model_entry_from_id(model_id, provider))
         return result
 
-    # 无目录：仅用 agents 中已配置的 primary/fallbacks 构成列表
+    # 无 providers：从 agents 收集
+    try:
+        used_ids = set(get_all_models_from_agents())
+    except Exception as e:
+        print(f"[AgentConfig] 从 Agent 配置收集模型 ID 失败: {e}")
+        used_ids = set()
     result = []
     for model_id in used_ids:
         if not model_id:
             continue
         provider = model_id.split('/')[0] if '/' in model_id else 'default'
-        result.append(_model_entry_from_id(model_id, get_model_display_name(model_id), provider))
+        result.append(_model_entry_from_id(model_id, provider))
     return result
 
 

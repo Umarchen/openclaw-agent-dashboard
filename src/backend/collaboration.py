@@ -111,7 +111,7 @@ def _get_recent_model_calls(minutes: int = 30) -> List[Dict]:
 async def get_collaboration():
     """获取协作流程数据 - 主 Agent 与子 Agents 的拓扑关系，含模型配置与最近调用"""
     from data.config_reader import (
-        get_agents_list, get_agent_models, get_all_models_from_agents,
+        get_agents_list, get_agent_models, get_models_configured_by_agents,
         get_model_display_name, get_main_agent_id
     )
     from data.subagent_reader import get_active_runs
@@ -138,7 +138,7 @@ async def get_collaboration():
         for agent in all_agents:
             aid = agent.get('id', '')
             agent_models[aid] = get_agent_models(aid)
-        models_list = get_all_models_from_agents()
+        models_list = get_models_configured_by_agents()
         recent_calls = _get_recent_model_calls(30)
 
         main_display_name = (main_agent_config.get('name') if main_agent_config else None) or "主 Agent"

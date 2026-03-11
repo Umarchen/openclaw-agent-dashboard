@@ -92,40 +92,42 @@ def get_agent_models(agent_id: str) -> Dict[str, Any]:
     return {'primary': primary, 'fallbacks': fallbacks}
 
 
-def get_all_models_from_agents() -> List[str]:
+def get_models_configured_by_agents() -> List[str]:
     """
-    从配置中收集模型 ID（provider/model 格式），用于无 models.providers 时的下拉选项。
-    来源（合并去重）：
-    1. agents.defaults.model（primary + fallbacks）
-    2. agents.defaults.models（已有展示名配置的模型，OpenClaw 可能从 providers 同步）
-    3. 各 agents.list[].model（primary + fallbacks）
+    从配置中收集「各 Agent 实际配置使用」的模型 ID（仅 primary + fallbacks）。
+    用于协作流程右侧模型面板：只显示有 Agent 配置的模型，不含白名单中未使用的。
     """
     agents = get_agents_list()
     model_ids = set()
-
     defaults = get_default_config()
-
-    # 1. defaults.model
     default_model = defaults.get('model', {})
     if default_model.get('primary'):
         model_ids.add(default_model['primary'])
     for fb in default_model.get('fallbacks') or []:
         model_ids.add(fb)
-
-    # 2. defaults.models（已有展示名/别名的模型，确保配置过的能选）
-    models_cfg = defaults.get('models', {}) or {}
-    if isinstance(models_cfg, dict):
-        for mid in models_cfg.keys():
-            if mid and isinstance(mid, str):
-                model_ids.add(mid)
-
-    # 3. 各 agent 的 model
     for agent in agents:
         cfg = get_agent_models(agent.get('id', ''))
         if cfg.get('primary'):
             model_ids.add(cfg['primary'])
         for fb in cfg.get('fallbacks', []):
             model_ids.add(fb)
+    return sorted(model_ids)
+
+
+def get_all_models_from_agents() -> List[str]:
+    """
+    从配置中收集模型 ID（provider/model 格式），用于无 models.providers 时的下拉选项。
+    来源（合并去重）：
+    1. 各 Agent 实际配置（primary + fallbacks）
+    2. agents.defaults.models（白名单 key，确保配置过的能选）
+    """
+    model_ids = set(get_models_configured_by_agents())
+    defaults = get_default_config()
+    models_cfg = defaults.get('models', {}) or {}
+    if isinstance(models_cfg, dict):
+        for mid in models_cfg.keys():
+            if mid and isinstance(mid, str):
+                model_ids.add(mid)
     return sorted(model_ids)
 
 

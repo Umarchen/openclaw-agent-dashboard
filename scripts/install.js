@@ -237,7 +237,16 @@ function resolveVersion(requested) {
     return requested;
   }
 
-  // 从 GitHub API 获取最新 release 版本
+  // 优先从本地 package.json 读取版本（npm/npx 安装时自带）
+  try {
+    const pkgPath = path.join(__dirname, '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (pkg.version) return pkg.version;
+  } catch {
+    // ignore
+  }
+
+  // fallback: 从 GitHub API 获取最新 release 版本
   try {
     const https = require('https');
     const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;

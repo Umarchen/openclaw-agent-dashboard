@@ -168,7 +168,7 @@ async function getPipMirrorArgs() {
  * @param {boolean} silent
  * @returns {boolean}
  */
-function installWithVenv(reqFile, venvDir, silent) {
+async function installWithVenv(reqFile, venvDir, silent) {
   logInfo('  尝试: venv（推荐，不受 PEP 668 影响）');
 
   // 清理旧 venv
@@ -237,7 +237,7 @@ function installWithVenv(reqFile, venvDir, silent) {
  * @param {boolean} silent
  * @returns {{ success: boolean, method: string | null }}
  */
-function installWithPipUser(reqFile, silent) {
+async function installWithPipUser(reqFile, silent) {
   logInfo('  尝试: pip --user（PEP 668 兜底）');
 
   const pipMirrorArgs = await getPipMirrorArgs();
@@ -299,7 +299,7 @@ function installPythonDeps(pluginDir, options = {}) {
 
   // 策略 1: venv（推荐）
   if (checkVenvModule()) {
-    if (installWithVenv(reqFile, venvDir, silent)) {
+    if (await installWithVenv(reqFile, venvDir, silent)) {
       success = true;
       method = 'venv';
     }

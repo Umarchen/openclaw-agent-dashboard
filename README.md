@@ -48,16 +48,35 @@ brew install python3
 
 ## 快速安装
 
-### 方式一：一键安装（推荐）
+### 方式一：npx 安装（推荐，全平台）
 
 ```bash
-# 一键安装（需已安装 openclaw：npm install -g openclaw）
-curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/main/scripts/install.sh | bash
+npx openclaw-agent-dashboard
 ```
 
-安装完成后，执行任意 `openclaw` 命令时 Dashboard 会自动启动。
+一行搞定，自动从 GitHub Release 下载最新版并安装。升级也是同一行命令。
 
-访问地址: http://localhost:38271
+**可选参数**:
+
+```powershell
+# 指定版本
+npx openclaw-agent-dashboard --version 1.0.4
+
+# 跳过 Python 依赖安装
+npx openclaw-agent-dashboard --skip-python
+
+# 显示详细输出（调试用）
+npx openclaw-agent-dashboard --verbose
+
+# 预览安装过程（不执行实际安装）
+npx openclaw-agent-dashboard --dry-run
+```
+
+### 方式二：一键脚本（Linux / macOS）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/main/scripts/install.sh | bash
+```
 
 **可选参数**:
 
@@ -65,20 +84,14 @@ curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/m
 # 安装指定版本
 DASHBOARD_VERSION=1.0.0 curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/main/scripts/install.sh | bash
 
-# 使用自定义下载地址
-DASHBOARD_RELEASE_URL=https://example.com/openclaw-agent-dashboard-v1.0.0.tgz curl -fsSL ... | bash
-
 # 跳过 Python 依赖安装
 DASHBOARD_SKIP_PYTHON=1 curl -fsSL ... | bash
 
 # 显示详细输出（调试用）
 VERBOSE=1 curl -fsSL ... | bash
-
-# 预览安装过程（不执行实际安装）
-DRY_RUN=1 curl -fsSL ... | bash
 ```
 
-### 方式二：从源码安装
+### 方式三：从源码安装
 
 ```bash
 # 克隆仓库
@@ -100,7 +113,7 @@ cd openclaw-agent-dashboard
 npm run deploy
 ```
 
-### 方式三：手动下载安装
+### 方式四：手动下载安装
 
 从 [GitHub Releases](https://github.com/Umarchen/openclaw-agent-dashboard/releases) 下载 tgz 包：
 
@@ -111,11 +124,14 @@ curl -LO https://github.com/Umarchen/openclaw-agent-dashboard/releases/download/
 # 安装
 openclaw plugins install openclaw-agent-dashboard-v1.0.0.tgz
 
-# 安装 Python 依赖（Debian/Ubuntu 请用 venv，避免 PEP 668 报错）
+# 安装 Python 依赖
 cd ~/.openclaw/extensions/openclaw-agent-dashboard/dashboard
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
+
+> 安装完成后，执行任意 `openclaw` 命令时 Dashboard 会自动启动。
+> 访问地址: http://localhost:38271
 
 ## 命令说明
 

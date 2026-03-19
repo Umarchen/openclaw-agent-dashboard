@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 # 创建 FastAPI 应用
 app = FastAPI(
     lifespan=lifespan,
-    title="OpenClow Agent Dashboard",
+    title="OpenClaw Agent Dashboard",
     description="多 Agent 可视化看板 API",
     version="1.0.0"
 )

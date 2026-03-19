@@ -278,10 +278,60 @@ function resolveVersion(requested) {
 }
 
 // ============================================
-// 远程模式：下载安装
+// 远程模式：从 npm 包自带的 plugin 目录安装（无需下载 tgz）
 // ============================================
 
-/**
+async function localPluginInstall(bundledPluginDir, pluginPath, options) {
+  const newVersion = parseJsonVersion(path.join(bundledPluginDir, 'openclaw.plugin.json'));
+  const oldVersion = fs.existsSync(path.join(pluginPath, 'openclaw.plugin.json'))
+    ? parseJsonVersion(path.join(pluginPath, 'openclaw.plugin.json'))
+    : null;
+
+  logInfo(`版本: ${newVersion}（npm 包自带）`);
+  if (oldVersion) {
+    logInfo(`  ${oldVersion} → ${newVersion}`);
+  }
+
+  // 备份旧版本
+  if (fs.existsSync(pluginPath)) {
+    logStep('备份旧版本...');
+    backupDir(pluginPath);
+    const extDir = path.dirname(pluginPath);
+    cleanupOldBackups(extDir, `${PLUGIN_ID}.backup-`, 2);
+    logOk('备份完成');
+  }
+
+  // 复制到插件目录
+  logStep('安装插件...');
+  if (fs.existsSync(pluginPath)) {
+    rmrf(pluginPath);
+  }
+  copyDir(bundledPluginDir, pluginPath);
+  logOk('插件已安装');
+
+  // 安装 Python 依赖
+  if (!options.skipPython && fs.existsSync(path.join(pluginPath, 'dashboard', 'requirements.txt'))) {
+    logStep('安装 Python 依赖...');
+    const scriptPath = path.join(__dirname, 'install-python-deps.js');
+    const args = [scriptPath, pluginPath];
+    if (options.verbose) args.push('--verbose');
+    const result = runCommand('node', args, { silent: !options.verbose });
+    if (!result.success) {
+      logWarn('Python 依赖安装失败，Dashboard 启动时可能需要手动安装');
+    }
+  }
+
+  // 清理旧备份
+  logStep('清理旧备份...');
+  const extDir = path.dirname(pluginPath);
+  cleanupOldBackups(extDir, `${PLUGIN_ID}.backup-`, 1);
+
+  return true;
+}
+
+// ============================================
+// 远程模式：下载安装
+// ============================================/**
  * 获取 tgz 缓存目录
  * @returns {string}
  */
@@ -299,6 +349,14 @@ function getCacheDir() {
 async function remoteInstall(pluginPath, options) {
   const tmpDir = path.join(require('os').tmpdir(), `oc-dashboard-install-${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
+
+  // 优先使用 npm 包自带的 plugin 目录（npx 模式下 plugin 就在包里）
+  const bundledPluginDir = path.join(__dirname, '..', 'plugin');
+  const bundledPluginJson = path.join(bundledPluginDir, 'openclaw.plugin.json');
+
+  if (fs.existsSync(bundledPluginJson)) {
+    return await localPluginInstall(bundledPluginDir, pluginPath, options);
+  }
 
   try {
     // 1. 解析版本

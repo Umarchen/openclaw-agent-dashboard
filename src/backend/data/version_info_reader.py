@@ -23,8 +23,8 @@ class VersionInfoReader:
         Args:
             package_json_path: package.json 文件路径，默认为项目根目录下的 package.json
         """
-        # 默认路径：src/backend/data -> src/backend -> src -> package.json
-        self.package_json_path = package_json_path or Path(__file__).parent.parent.parent / "package.json"
+        # 默认路径：src/backend/data -> src/backend -> src -> 项目根目录 -> package.json
+        self.package_json_path = package_json_path or Path(__file__).resolve().parent.parent.parent.parent / "package.json"
         self._cached_info: Optional[dict] = None
     
     def read_version_info(self) -> dict:

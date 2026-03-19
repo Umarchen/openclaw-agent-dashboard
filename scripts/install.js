@@ -272,6 +272,21 @@ function resolveVersion(requested) {
 // 远程模式：下载安装
 // ============================================
 
+/**
+ * 获取 tgz 缓存目录
+ * @returns {string}
+ */
+function getCacheDir() {
+  if (process.platform === 'win32') {
+    // Windows: %LOCALAPPDATA%\openclaw-agent-dashboard\cache
+    const localAppData = process.env.LOCALAPPDATA || process.env.USERPROFILE || require('os').homedir();
+    return path.join(localAppData, 'openclaw-agent-dashboard', 'cache');
+  }
+  // Linux/macOS: ~/.cache/openclaw-agent-dashboard
+  const home = process.env.HOME || require('os').homedir();
+  return path.join(home, '.cache', 'openclaw-agent-dashboard');
+}
+
 async function remoteInstall(pluginPath, options) {
   const tmpDir = path.join(require('os').tmpdir(), `oc-dashboard-install-${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -282,25 +297,45 @@ async function remoteInstall(pluginPath, options) {
     logInfo(`版本: ${version}`);
 
     const downloadUrl = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v${version}/${PLUGIN_ID}-v${version}.tgz`;
+    const tgzFileName = `${PLUGIN_ID}-v${version}.tgz`;
+    const cacheDir = getCacheDir();
+    const cachedTgz = path.join(cacheDir, tgzFileName);
     const tgzFile = path.join(tmpDir, `${PLUGIN_ID}.tgz`);
 
-    // 2. 下载
-    logStep('下载预构建包...');
-    if (!await downloadFile(downloadUrl, tgzFile, { verbose: options.verbose })) {
-      logError('下载失败');
-      logInfo('');
-      logInfo('可能原因:');
-      logInfo('  1. 网络连接问题');
-      logInfo('  2. 版本不存在: v' + version);
-      logInfo('  3. GitHub 访问受限');
-      logInfo('');
-      logInfo('替代方案:');
-      logInfo('  git clone https://github.com/' + REPO_OWNER + '/' + REPO_NAME + '.git');
-      logInfo('  cd ' + REPO_NAME);
-      logInfo('  npm install && npm run deploy');
-      return false;
+    // 2. 检查缓存
+    if (fs.existsSync(cachedTgz)) {
+      logStep('使用本地缓存...');
+      logInfo(`  缓存: ${cachedTgz}`);
+      fs.copyFileSync(cachedTgz, tgzFile);
+      logOk('缓存命中，跳过下载');
+    } else {
+      // 下载
+      logStep('下载预构建包...');
+      if (!await downloadFile(downloadUrl, tgzFile, { verbose: options.verbose })) {
+        logError('下载失败');
+        logInfo('');
+        logInfo('可能原因:');
+        logInfo('  1. 网络连接问题');
+        logInfo('  2. 版本不存在: v' + version);
+        logInfo('  3. GitHub 访问受限');
+        logInfo('');
+        logInfo('替代方案:');
+        logInfo('  git clone https://github.com/' + REPO_OWNER + '/' + REPO_NAME + '.git');
+        logInfo('  cd ' + REPO_NAME);
+        logInfo('  npm install && npm run deploy');
+        return false;
+      }
+      // 保存到缓存
+      try {
+        fs.mkdirSync(cacheDir, { recursive: true });
+        fs.copyFileSync(tgzFile, cachedTgz);
+        logInfo(`  已缓存到: ${cachedTgz}`);
+      } catch (e) {
+        // 缓存写入失败不影响安装
+        if (options.verbose) logWarn(`缓存写入失败: ${e.message}`);
+      }
+      logOk('下载完成');
     }
-    logOk('下载完成');
 
     // 3. 解压 tgz（纯 Node.js 实现，不依赖系统 tar）
     logStep('解压安装包...');

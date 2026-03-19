@@ -2,22 +2,10 @@
 子代理运行读取器 - 读取 subagents/runs.json
 """
 import json
-import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-
-def _openclaw_home() -> Path:
-    """OpenClaw 根目录，优先使用 OPENCLAW_HOME 环境变量"""
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / ".openclaw"
-
-
-SUBAGENTS_RUNS_PATH = _openclaw_home() / "subagents" / "runs.json"
+from data.config_reader import get_openclaw_root
 
 
 def load_subagent_runs() -> List[Dict[str, Any]]:
@@ -25,10 +13,11 @@ def load_subagent_runs() -> List[Dict[str, Any]]:
     
     OpenClaw runs.json 格式: {"version": 2, "runs": { runId: record }}
     """
-    if not SUBAGENTS_RUNS_PATH.exists():
+    runs_path = get_openclaw_root() / "subagents" / "runs.json"
+    if not runs_path.exists():
         return []
     
-    with open(SUBAGENTS_RUNS_PATH, 'r', encoding='utf-8') as f:
+    with open(runs_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
     runs = data.get('runs', {})
@@ -120,7 +109,7 @@ def get_agent_output_for_run(child_session_key: str, max_chars: int = 10000) -> 
         return None
     agent_id = parts[1]
     
-    openclaw_path = _openclaw_home()
+    openclaw_path = get_openclaw_root()
     sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
     if not sessions_index.exists():
         return None
@@ -188,7 +177,7 @@ def get_agent_files_for_run(child_session_key: str) -> List[str]:
         return []
     agent_id = parts[1]
     
-    openclaw_path = _openclaw_home()
+    openclaw_path = get_openclaw_root()
     sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
     if not sessions_index.exists():
         return []

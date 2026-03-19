@@ -70,7 +70,8 @@ def _get_recent_model_calls(minutes: int = 30) -> List[Dict]:
     from api.performance import parse_session_file_with_details
 
     records = []
-    openclaw_path = Path.home() / '.openclaw'
+    from data.config_reader import get_openclaw_root
+    openclaw_path = get_openclaw_root()
     agents_path = openclaw_path / 'agents'
     if not agents_path.exists():
         return []

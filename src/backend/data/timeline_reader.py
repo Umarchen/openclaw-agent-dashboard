@@ -82,17 +82,7 @@ class TimelineStep:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
 
-def _openclaw_home() -> Path:
-    """OpenClaw 根目录"""
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / ".openclaw"
-
-
-OPENCLAW_DIR = _openclaw_home()
+from data.config_reader import get_openclaw_root
 
 
 # 子 Agent 回传消息的特征
@@ -203,7 +193,7 @@ def _parse_timestamp(ts) -> int:
 
 def get_subagent_runs() -> Dict[str, List[Dict]]:
     """获取子代理运行记录，按 agent_id 分组"""
-    runs_file = OPENCLAW_DIR / "subagents" / "runs.json"
+    runs_file = get_openclaw_root() / "subagents" / "runs.json"
     if not runs_file.exists():
         return {}
     try:
@@ -238,7 +228,7 @@ def get_subagent_runs() -> Dict[str, List[Dict]]:
 def _get_requester_info_for_session(agent_id: str, session_key: Optional[str]) -> Dict[str, Optional[str]]:
     """获取子 Agent 会话的消息来源（requester）信息"""
     # 方法1：从 sessions.json 的 spawnedBy 字段获取
-    sessions_index = OPENCLAW_DIR / f"agents/{agent_id}/sessions/sessions.json"
+    sessions_index = get_openclaw_root() / f"agents/{agent_id}/sessions/sessions.json"
     if sessions_index.exists():
         try:
             with open(sessions_index, 'r', encoding='utf-8') as f:
@@ -268,7 +258,7 @@ def _get_requester_info_for_session(agent_id: str, session_key: Optional[str]) -
             session_key = runs[0].get('childSessionKey')
     if not session_key:
         return {}
-    runs_file = OPENCLAW_DIR / "subagents" / "runs.json"
+    runs_file = get_openclaw_root() / "subagents" / "runs.json"
     if not runs_file.exists():
         return {}
     try:
@@ -419,7 +409,7 @@ def get_timeline_steps(
     round_mode: bool = True
 ) -> Dict[str, Any]:
     """获取 Agent 会话的时序步骤"""
-    sessions_path = OPENCLAW_DIR / f"agents/{agent_id}/sessions"
+    sessions_path = get_openclaw_root() / f"agents/{agent_id}/sessions"
     if not sessions_path.exists() or not list(sessions_path.glob("*.jsonl")):
         return _get_subagent_timeline(agent_id, limit)
     session_file: Optional[Path] = None
@@ -469,7 +459,7 @@ def _get_subagent_timeline(agent_id: str, limit: int) -> Dict[str, Any]:
 
     # 2. 尝试从主 Agent session 获取详细步骤
     main_agent_id = _get_main_agent_id()
-    main_session_dir = OPENCLAW_DIR / f"agents/{main_agent_id}/sessions"
+    main_session_dir = get_openclaw_root() / f"agents/{main_agent_id}/sessions"
     jsonl_files = list(main_session_dir.glob("*.jsonl")) if main_session_dir.exists() else []
 
     if not jsonl_files:

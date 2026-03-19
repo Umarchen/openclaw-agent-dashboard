@@ -261,8 +261,8 @@ def _get_session_message_count(child_session_key: str) -> int:
     agent_id = parts[1]
 
     try:
-        from data.subagent_reader import _openclaw_home
-        openclaw_path = _openclaw_home()
+        from data.config_reader import get_openclaw_root
+        openclaw_path = get_openclaw_root()
         sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
         if not sessions_index.exists():
             return 0
@@ -357,8 +357,8 @@ def _extract_subtasks_from_session(child_session_key: str) -> List[Dict[str, Any
     agent_id = parts[1]
 
     try:
-        from data.subagent_reader import _openclaw_home
-        openclaw_path = _openclaw_home()
+        from data.config_reader import get_openclaw_root
+        openclaw_path = get_openclaw_root()
         sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
         if not sessions_index.exists():
             return []
@@ -523,8 +523,8 @@ def _extract_timeline_from_session(child_session_key: str) -> List[Dict[str, Any
     agent_id = parts[1]
 
     try:
-        from data.subagent_reader import _openclaw_home
-        openclaw_path = _openclaw_home()
+        from data.config_reader import get_openclaw_root
+        openclaw_path = get_openclaw_root()
         sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
         if not sessions_index.exists():
             return []

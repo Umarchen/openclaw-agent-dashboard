@@ -2,21 +2,11 @@
 机制追踪读取器 - 从 sessions.json 提取 Memory/Skill/Channel/Heartbeat/Cron 使用情况
 """
 import json
-import os
 from pathlib import Path
 from typing import Dict, Any, List
 
 
-def _openclaw_home() -> Path:
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / ".openclaw"
-
-
-OPENCLAW_DIR = _openclaw_home()
+from data.config_reader import get_openclaw_root
 
 
 def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
@@ -24,7 +14,7 @@ def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
     获取 Agent 使用的机制：Memory、Skill、Channel、Heartbeat、Cron
     数据来源：sessions.json 的 systemPromptReport、origin、deliveryContext
     """
-    sessions_index = OPENCLAW_DIR / f"agents/{agent_id}/sessions/sessions.json"
+    sessions_index = get_openclaw_root() / "agents" / agent_id / "sessions" / "sessions.json"
     result = {
         "agentId": agent_id,
         "memory": [],
@@ -107,7 +97,7 @@ def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
                 break
         
         # Heartbeat/Cron: 从 openclaw.json 读取配置
-        config_path = OPENCLAW_DIR / "openclaw.json"
+        config_path = get_openclaw_root() / "openclaw.json"
         if config_path.exists():
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
@@ -119,7 +109,7 @@ def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
                     "enabled": hb.get('every') is not None,
                 }
         
-        cron_path = OPENCLAW_DIR / "cron" / "jobs.json"
+        cron_path = get_openclaw_root() / "cron" / "jobs.json"
         if cron_path.exists():
             with open(cron_path, 'r', encoding='utf-8') as f:
                 cron_data = json.load(f)

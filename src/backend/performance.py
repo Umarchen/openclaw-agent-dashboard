@@ -250,7 +250,8 @@ async def get_real_stats(range_minutes: int = 20) -> Dict:
     }
     
     # 读取所有 session 文件
-    openclaw_path = Path.home() / '.openclaw'
+    from data.config_reader import get_openclaw_root
+    openclaw_path = get_openclaw_root()
     agents_path = openclaw_path / 'agents'
     
     if not agents_path.exists():
@@ -346,7 +347,8 @@ async def get_minute_details(timestamp_ms: int) -> Dict[str, Any]:
         minute_start = ts.replace(second=0, microsecond=0)
         minute_end = minute_start + timedelta(minutes=1)
         
-        openclaw_path = Path.home() / '.openclaw'
+        from data.config_reader import get_openclaw_root
+        openclaw_path = get_openclaw_root()
         agents_path = openclaw_path / 'agents'
         if not agents_path.exists():
             return {'minute': minute_key, 'calls': [], 'totalTokens': 0}
@@ -408,13 +410,8 @@ async def get_performance_details(timestamp: int):
 
 
 def _openclaw_path() -> Path:
-    import os
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / '.openclaw'
+    from data.config_reader import get_openclaw_root
+    return get_openclaw_root()
 
 
 @router.get("/tokens/analysis")

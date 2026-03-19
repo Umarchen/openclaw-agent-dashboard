@@ -20,7 +20,8 @@ def _get_failure_log_paths() -> List[Path]:
             return paths
     except Exception:
         pass
-    fallback = Path.home() / ".openclaw" / "workspace-main" / "memory" / "model-failures.log"
+    from data.config_reader import get_openclaw_root
+    fallback = get_openclaw_root() / "workspace-main" / "memory" / "model-failures.log"
     return [fallback] if fallback.exists() else []
 
 

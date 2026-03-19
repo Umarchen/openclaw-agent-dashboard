@@ -2,42 +2,32 @@
 Agent 配置管理器 - 读取和修改 openclaw.json 中的 Agent 配置
 """
 import json
-import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import shutil
 from datetime import datetime
 
-
-def _openclaw_home() -> Path:
-    """OpenClaw 根目录"""
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / ".openclaw"
-
-
-OPENCLAW_DIR = _openclaw_home()
-OPENCLAW_CONFIG_PATH = OPENCLAW_DIR / "openclaw.json"
+from data.config_reader import get_openclaw_root
 
 
 def _backup_config() -> Optional[Path]:
     """备份配置文件"""
-    if not OPENCLAW_CONFIG_PATH.exists():
+    root = get_openclaw_root()
+    config_path = root / "openclaw.json"
+    if not config_path.exists():
         return None
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup_path = OPENCLAW_DIR / f"openclaw.json.backup-{timestamp}"
-    shutil.copy2(OPENCLAW_CONFIG_PATH, backup_path)
+    backup_path = root / f"openclaw.json.backup-{timestamp}"
+    shutil.copy2(config_path, backup_path)
     return backup_path
 
 
 def load_full_config() -> Dict[str, Any]:
     """加载完整的 openclaw.json"""
-    if not OPENCLAW_CONFIG_PATH.exists():
+    config_path = get_openclaw_root() / "openclaw.json"
+    if not config_path.exists():
         return {}
-    with open(OPENCLAW_CONFIG_PATH, 'r', encoding='utf-8') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
@@ -45,7 +35,8 @@ def save_full_config(config: Dict[str, Any]) -> bool:
     """保存完整配置"""
     try:
         _backup_config()
-        with open(OPENCLAW_CONFIG_PATH, 'w', encoding='utf-8') as f:
+        config_path = get_openclaw_root() / "openclaw.json"
+        with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
@@ -231,7 +222,7 @@ def get_agent_full_info(agent_id: str) -> Dict[str, Any]:
     model_config = get_agent_model_config(agent_id)
 
     # 检查运行状态
-    session_file = OPENCLAW_DIR / f"agents/{agent_id}/sessions/sessions.json"
+    session_file = get_openclaw_root() / "agents" / agent_id / "sessions" / "sessions.json"
     status = 'idle'
     last_active = None
 

@@ -1,30 +1,44 @@
 """
 配置读取器 - 读取 openclaw.json
-支持 OPENCLAW_HOME 环境变量（插件启动时注入）
+支持 OPENCLAW_STATE_DIR、OPENCLAW_HOME 环境变量（跨平台，含 Windows）
 """
 import json
 import os
 from pathlib import Path
 from typing import List, Dict, Any
 
-def _openclaw_home() -> Path:
-    """OpenClaw 根目录，优先使用 OPENCLAW_HOME 环境变量"""
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / ".openclaw"
 
-OPENCLAW_CONFIG_PATH = _openclaw_home() / "openclaw.json"
+def get_openclaw_root() -> Path:
+    """OpenClaw 根目录，统一解析优先级（兼容 Windows）：
+    1. OPENCLAW_STATE_DIR（最高优先级）
+    2. OPENCLAW_HOME（兼容两种写法：直接指向 .openclaw，或指向用户 Home 需拼接 .openclaw）
+    3. ~/.openclaw（兜底）
+    """
+    # 1. OPENCLAW_STATE_DIR
+    env_state = os.environ.get("OPENCLAW_STATE_DIR")
+    if env_state:
+        return Path(env_state).expanduser().resolve()
+
+    # 2. OPENCLAW_HOME
+    env_home = os.environ.get("OPENCLAW_HOME")
+    if env_home:
+        p = Path(env_home).expanduser().resolve()
+        # 兼容两种写法：直接指向 .openclaw 目录，或指向用户 Home
+        if p.name in (".openclaw", "openclaw"):
+            return p
+        return p / ".openclaw"
+
+    # 3. 兜底
+    return Path.home() / ".openclaw"
 
 
 def load_config() -> Dict[str, Any]:
     """加载 openclaw.json"""
-    if not OPENCLAW_CONFIG_PATH.exists():
+    config_path = get_openclaw_root() / "openclaw.json"
+    if not config_path.exists():
         return {}
     
-    with open(OPENCLAW_CONFIG_PATH, 'r', encoding='utf-8') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
@@ -59,7 +73,7 @@ def get_workspace_paths() -> List[Path]:
                 paths.append(p)
                 seen.add(ws)
     if not paths:
-        paths.append(OPENCLAW_CONFIG_PATH.parent / "workspace-main")
+        paths.append(get_openclaw_root() / "workspace-main")
     return paths
 
 

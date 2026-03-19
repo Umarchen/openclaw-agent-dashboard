@@ -31,17 +31,7 @@ class ErrorSeverity(Enum):
     LOW = "low"            # 轻微错误，可忽略
 
 
-def _openclaw_home() -> Path:
-    """OpenClaw 根目录"""
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / ".openclaw"
-
-
-OPENCLAW_DIR = _openclaw_home()
+from data.config_reader import get_openclaw_root
 
 
 # 错误模式匹配规则
@@ -323,7 +313,7 @@ def get_tool_call_chain(session_path: Path, before_turn: int, limit: int = 10) -
 
 def analyze_agent_errors(agent_id: str, session_limit: int = 5) -> Dict[str, Any]:
     """分析 Agent 的错误情况"""
-    sessions_dir = OPENCLAW_DIR / f"agents/{agent_id}/sessions"
+    sessions_dir = get_openclaw_root() / "agents" / agent_id / "sessions"
     if not sessions_dir.exists():
         return {'agentId': agent_id, 'error': 'Sessions directory not found', 'errors': []}
 
@@ -386,7 +376,7 @@ def analyze_agent_errors(agent_id: str, session_limit: int = 5) -> Dict[str, Any
 
 def analyze_all_agents_errors() -> Dict[str, Any]:
     """分析所有 Agent 的错误"""
-    agents_dir = OPENCLAW_DIR / "agents"
+    agents_dir = get_openclaw_root() / "agents"
     if not agents_dir.exists():
         return {'agents': [], 'globalSummary': {}}
 
@@ -425,7 +415,7 @@ def analyze_all_agents_errors() -> Dict[str, Any]:
 
 def get_error_detail(agent_id: str, session_file: str, turn_index: int) -> Optional[Dict[str, Any]]:
     """获取单个错误的详细信息"""
-    session_path = OPENCLAW_DIR / f"agents/{agent_id}/sessions/{session_file}"
+    session_path = get_openclaw_root() / "agents" / agent_id / "sessions" / session_file
     if not session_path.exists():
         return None
 

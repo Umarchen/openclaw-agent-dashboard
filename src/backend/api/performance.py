@@ -518,13 +518,8 @@ async def get_performance_details(
 
 
 def _openclaw_path() -> Path:
-    import os
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / '.openclaw'
+    from data.config_reader import get_openclaw_root
+    return get_openclaw_root()
 
 
 @router.get("/tokens/analysis")

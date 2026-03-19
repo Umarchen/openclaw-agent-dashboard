@@ -23,22 +23,12 @@ class ChainStatus(str, Enum):
     ERROR = "error"
 
 
-def _openclaw_home() -> Path:
-    """OpenClaw 根目录"""
-    env = os.environ.get("OPENCLAW_HOME")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    return Path.home() / ".openclaw"
-
-
-OPENCLAW_DIR = _openclaw_home()
+from data.config_reader import get_openclaw_root
 
 
 def _get_agents_config() -> Dict[str, Any]:
     """获取 agents 配置"""
-    config_file = OPENCLAW_DIR / "openclaw.json"
+    config_file = get_openclaw_root() / "openclaw.json"
     if not config_file.exists():
         return {}
 
@@ -77,7 +67,7 @@ def _parse_session_key(session_key: str) -> Dict[str, str]:
 
 def _load_runs() -> Dict[str, Any]:
     """加载 runs.json"""
-    runs_file = OPENCLAW_DIR / "subagents" / "runs.json"
+    runs_file = get_openclaw_root() / "subagents" / "runs.json"
     if not runs_file.exists():
         return {"version": 2, "runs": {}}
 
@@ -92,7 +82,7 @@ def _get_workflow_state(project_id: str) -> Dict[str, Any]:
     """获取项目的 workflow 状态"""
     # 尝试多个可能的项目路径
     possible_paths = [
-        OPENCLAW_DIR / f"workspace-{project_id}" / ".staging" / "workflow_state.json",
+        get_openclaw_root() / f"workspace-{project_id}" / ".staging" / "workflow_state.json",
         Path.home() / "vrt-projects" / "projects" / project_id / ".staging" / "workflow_state.json",
     ]
 

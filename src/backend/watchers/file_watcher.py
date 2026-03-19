@@ -7,14 +7,18 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-OPENCLAW_DIR = Path.home() / ".openclaw"
+
+def _get_openclaw_dir() -> Path:
+    from data.config_reader import get_openclaw_root
+    return get_openclaw_root()
 DEBOUNCE_SECONDS = 0.3  # 同一文件短时间多次变更只触发一次
 
 
 def _get_watch_dirs() -> list[tuple[Path, bool]]:
     """获取需要监听的目录列表 (path, recursive)"""
     dirs: list[tuple[Path, bool]] = []
-    subagents = OPENCLAW_DIR / "subagents"
+    openclaw_dir = _get_openclaw_dir()
+    subagents = openclaw_dir / "subagents"
     if subagents.exists():
         dirs.append((subagents, False))
     try:
@@ -32,10 +36,10 @@ def _get_watch_dirs() -> list[tuple[Path, bool]]:
             if memory.exists():
                 dirs.append((memory, False))
     except Exception:
-        memory = OPENCLAW_DIR / "workspace-main" / "memory"
+        memory = openclaw_dir / "workspace-main" / "memory"
         if memory.exists():
             dirs.append((memory, False))
-    agents_dir = OPENCLAW_DIR / "agents"
+    agents_dir = openclaw_dir / "agents"
     if agents_dir.exists():
         for agent_dir in agents_dir.iterdir():
             if agent_dir.is_dir():

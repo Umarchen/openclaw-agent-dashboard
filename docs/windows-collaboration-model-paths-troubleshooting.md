@@ -116,14 +116,14 @@ $env:OPENCLAW_HOME
 
 ---
 
-## 建议（后续）
+## 诊断接口
 
-建议增加一个诊断接口（如 `/api/debug/paths`），直接返回后端当前解析出的：
+已实现 **GET** `/api/debug/paths`，直接返回后端当前解析出的：
 
-- OpenClaw 根目录
-- `openclaw.json` 是否存在
-- `agents/` 是否存在
-- `subagents/runs.json` 是否存在
+- `openclawRoot`：OpenClaw 根目录路径
+- `openclawJsonExists`：`openclaw.json` 是否存在
+- `agentsDirExists`：`agents/` 是否存在
+- `subagentsRunsExists`：`subagents/runs.json` 是否存在
 
-可显著降低后续跨机器环境排查成本。
+可显著降低后续跨机器环境排查成本。同事机器上可访问 `http://localhost:38271/api/debug/paths` 验证路径解析是否正确。
 

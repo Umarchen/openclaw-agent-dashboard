@@ -48,3 +48,4 @@ docs/requirements/
 frontend/design/
 *.tar.gz
 *.tgz
+*.sha256

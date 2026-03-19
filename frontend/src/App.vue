@@ -51,6 +51,9 @@
       :agent="selectedAgent"
       @close="selectedAgent = null"
     />
+    
+    <!-- 版本号显示 -->
+    <VersionDisplay />
   </div>
 </template>
 
@@ -64,6 +67,9 @@ import CollaborationFlowWrapper from './components/collaboration/CollaborationFl
 import TaskStatusSection from './components/tasks/TaskStatusSection.vue'
 import PerformancePanel from './components/performance/PerformancePanel.vue'
 import ErrorCenterPanel from './components/ErrorCenterPanel.vue'
+
+// 版本显示组件
+import VersionDisplay from './components/common/VersionDisplay.vue'
 
 // 数据管理
 import { getRealtimeManager, getStateManager, getEventDispatcher } from './managers'

@@ -47,7 +47,7 @@ app.add_middleware(
 import sys
 sys.path.append(str(Path(__file__).parent))
 
-from api import agents, subagents, websocket, performance, collaboration, agents_config, errors, timeline, chains, agent_config_api, error_analysis, debug_paths
+from api import agents, subagents, websocket, performance, collaboration, agents_config, errors, timeline, chains, agent_config_api, error_analysis, debug_paths, version
 
 # 注册 API 路由
 app.include_router(agents.router, prefix="/api", tags=["agents"])
@@ -62,6 +62,7 @@ app.include_router(chains.router, prefix="/api", tags=["chains"])
 app.include_router(agent_config_api.router, prefix="/api", tags=["agent-config"])
 app.include_router(error_analysis.router, prefix="/api", tags=["error-analysis"])
 app.include_router(debug_paths.router, prefix="/api", tags=["debug"])
+app.include_router(version.router, prefix="/api", tags=["version"])
 
 
 @app.get("/health")

@@ -115,15 +115,44 @@ function getVenvPython(venvDir) {
 // Pip 镜像
 // ============================================
 
+// ============================================
+// PyPI 连通性检测
+// ============================================
+
+/**
+ * 检测 pypi.org 是否可达（超时 3 秒）
+ * @returns {boolean}
+ */
+function checkPypiReachable() {
+  try {
+    const https = require('https');
+    return new Promise((resolve) => {
+      const req = https.get('https://pypi.org/simple/', { timeout: 3000 }, (res) => {
+        resolve(res.statusCode === 200);
+        req.destroy();
+      });
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+      req.on('error', () => { resolve(false); });
+    });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 获取 pip 镜像参数
- * 支持环境变量 PIP_INDEX_URL 或 PIP_MIRROR
- * @returns {string[]}
+ * 优先级: 环境变量 > 自动检测（pypi 不通则用清华镜像）> 无镜像
+ * @returns {Promise<string[]>}
  */
-function getPipMirrorArgs() {
-  const mirror = process.env.PIP_INDEX_URL || process.env.PIP_MIRROR || '';
-  if (mirror) {
-    return ['-i', mirror, '--trusted-host', new URL(mirror).hostname];
+async function getPipMirrorArgs() {
+  const envMirror = process.env.PIP_INDEX_URL || process.env.PIP_MIRROR || '';
+  if (envMirror) {
+    return ['-i', envMirror, '--trusted-host', new URL(envMirror).hostname];
+  }
+  const reachable = await checkPypiReachable();
+  if (!reachable) {
+    logInfo('  pypi.org 不可达，使用清华镜像');
+    return ['-i', 'https://pypi.tuna.tsinghua.edu.cn/simple', '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'];
   }
   return [];
 }
@@ -168,7 +197,7 @@ function installWithVenv(reqFile, venvDir, silent) {
 
   // 升级 pip（静默，失败不影响）
   // 如果设了镜像，升级 pip 也用镜像
-  const pipMirrorArgs = getPipMirrorArgs();
+  const pipMirrorArgs = await getPipMirrorArgs();
   runCommand(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '-q', ...pipMirrorArgs], { silent: true });
 
   // 安装依赖
@@ -211,7 +240,7 @@ function installWithVenv(reqFile, venvDir, silent) {
 function installWithPipUser(reqFile, silent) {
   logInfo('  尝试: pip --user（PEP 668 兜底）');
 
-  const pipMirrorArgs = getPipMirrorArgs();
+  const pipMirrorArgs = await getPipMirrorArgs();
   const tsinghuaArgs = ['-i', 'https://pypi.tuna.tsinghua.edu.cn/simple', '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'];
 
   const pipCommands = [

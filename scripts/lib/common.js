@@ -191,10 +191,24 @@ function shellEscape(arg) {
  */
 function runCommand(cmd, args = [], options = {}) {
   const { cwd, silent = true, timeout = 120000 } = options;
+  const isWin = process.platform === 'win32';
 
   try {
-    // 构建命令字符串，对参数进行转义
-    const cmdStr = [cmd, ...args.map(shellEscape)].join(' ');
+    // Windows 用双引号，Unix 用单引号
+    const esc = (arg) => {
+      if (!arg) return '""';
+      if (isWin) {
+        // Windows: 用双引号包裹含空格/特殊字符的路径
+        if (/[^a-zA-Z0-9_\-./:=@]/.test(arg)) {
+          return '"' + arg.replace(/"/g, '""') + '"';
+        }
+        return arg;
+      } else {
+        return shellEscape(arg);
+      }
+    };
+
+    const cmdStr = [cmd, ...args.map(esc)].join(' ');
 
     const result = execSync(
       cmdStr,
@@ -203,7 +217,7 @@ function runCommand(cmd, args = [], options = {}) {
         encoding: 'utf8',
         timeout,
         stdio: silent ? ['ignore', 'pipe', 'pipe'] : 'inherit',
-        shell: process.platform === 'win32',
+        shell: true,
       }
     );
     return { success: true, code: 0, output: result || '' };

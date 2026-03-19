@@ -1,6 +1,6 @@
 {
   "name": "openclaw-agent-dashboard",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "多 Agent 可视化看板 - 状态、任务、API、工作流、协作流程",
   "bin": {
     "openclaw-agent-dashboard": "scripts/install.js"

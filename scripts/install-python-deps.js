@@ -57,11 +57,23 @@ function parseArgs() {
 // ============================================
 
 /**
+ * 获取 Python 命令（跨平台）
+ * Windows 通常是 python，Linux/macOS 通常是 python3
+ * @returns {string}
+ */
+function getPythonCmd() {
+  if (runCommand('python3', ['--version'], { silent: true }).success) return 'python3';
+  if (runCommand('python', ['--version'], { silent: true }).success) return 'python';
+  return 'python3'; // 默认
+}
+
+/**
  * 检查 venv 模块是否可用
  * @returns {boolean}
  */
 function checkVenvModule() {
-  const result = runCommand('python3', ['-c', 'import venv'], { silent: true });
+  const pythonCmd = getPythonCmd();
+  const result = runCommand(pythonCmd, ['-c', 'import venv'], { silent: true });
   return result.success;
 }
 
@@ -70,14 +82,13 @@ function checkVenvModule() {
  * @returns {boolean}
  */
 function checkPipModule() {
-  // 尝试 python3 -m pip
-  let result = runCommand('python3', ['-m', 'pip', '--version'], { silent: true });
+  const pythonCmd = getPythonCmd();
+  // 尝试 python -m pip
+  let result = runCommand(pythonCmd, ['-m', 'pip', '--version'], { silent: true });
   if (result.success) return true;
 
-  // 尝试 pip3
+  // 尝试 pip3 / pip
   if (commandExists('pip3')) return true;
-
-  // 尝试 pip
   if (commandExists('pip')) return true;
 
   return false;
@@ -121,7 +132,8 @@ function installWithVenv(reqFile, venvDir, silent) {
 
   // 创建 venv
   logInfo('  创建虚拟环境...');
-  const createResult = runCommand('python3', ['-m', 'venv', venvDir], { silent });
+  const pythonCmd = getPythonCmd();
+  const createResult = runCommand(pythonCmd, ['-m', 'venv', venvDir], { silent });
   if (!createResult.success) {
     logWarn('  venv 创建失败');
     if (!silent) {
@@ -169,8 +181,8 @@ function installWithPipUser(reqFile, silent) {
   logInfo('  尝试: pip --user（PEP 668 兜底）');
 
   const pipCommands = [
-    { cmd: 'python3', args: ['-m', 'pip', 'install', '-r', reqFile, '-q', '--user'], name: 'python3 -m pip --user' },
-    { cmd: 'python3', args: ['-m', 'pip', 'install', '-r', reqFile, '-q'], name: 'python3 -m pip' },
+    { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', '--user'], name: 'pip --user' },
+    { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q'], name: 'pip' },
     { cmd: 'pip', args: ['install', '-r', reqFile, '-q', '--user'], name: 'pip --user' },
     { cmd: 'pip3', args: ['install', '-r', reqFile, '-q', '--user'], name: 'pip3 --user' },
   ];

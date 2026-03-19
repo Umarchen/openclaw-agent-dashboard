@@ -32,11 +32,12 @@ const {
   runCommandAsync,
   rmrf,
   copyDir,
-  downloadFile,
   backupDir,
   restoreBackup,
   cleanupBackup,
   cleanupOldBackups,
+  downloadFile,
+  formatBytes,
 } = require('./lib/common');
 
 // ============================================
@@ -126,6 +127,108 @@ function checkPrerequisites(remoteMode) {
 }
 
 // ============================================
+// 远程模式：tgz 解压（纯 Node.js，跨平台）
+// ============================================
+
+/**
+ * 解析 tar 文件路径和大小
+ * @param {Buffer} buffer - tar 数据
+ * @returns {{name: string, size: number, type: string, offset: number}[]}
+ */
+function parseTarEntries(buffer) {
+  const entries = [];
+  let offset = 0;
+
+  while (offset < buffer.length - 512) {
+    // 读取文件名（0-99）
+    let name = buffer.toString('utf8', offset, offset + 100).replace(/\0.*$/, '');
+
+    // 跳过空块
+    if (name === '') {
+      offset += 512;
+      continue;
+    }
+
+    // 文件大小（124-135，八进制）
+    const sizeStr = buffer.toString('utf8', offset + 124, offset + 135).replace(/\0.*$/, '').trim();
+    const size = parseInt(sizeStr, 8) || 0;
+
+    // 文件类型（156）
+    const type = buffer.toString('utf8', offset + 156, offset + 157);
+
+    entries.push({ name, size, type, offset });
+
+    // 跳到下一个条目（512 字节头 + 数据，数据按 512 对齐）
+    const dataBlocks = Math.ceil(size / 512);
+    offset += 512 + dataBlocks * 512;
+  }
+
+  return entries;
+}
+
+/**
+ * 解压 tgz 文件到指定目录
+ * @param {string} tgzFile - tgz 文件路径
+ * @param {string} destDir - 目标目录
+ * @param {boolean} verbose - 显示详细信息
+ * @returns {Promise<boolean>}
+ */
+async function extractTgz(tgzFile, destDir, verbose) {
+  const zlib = require('zlib');
+  const fsPromises = require('fs').promises;
+
+  return new Promise((resolve) => {
+    const fileStream = fs.createReadStream(tgzFile);
+    const gunzip = zlib.createGunzip();
+    const chunks = [];
+
+    gunzip.on('data', (chunk) => chunks.push(chunk));
+    gunzip.on('end', () => {
+      try {
+        const tarData = Buffer.concat(chunks);
+        const entries = parseTarEntries(tarData);
+
+        for (const entry of entries) {
+          // 跳过目录类型
+          if (entry.type === '5') continue;
+          // 跳过空文件名或 pax header
+          if (!entry.name || entry.name.startsWith('PaxHeader')) continue;
+
+          const fullPath = path.join(destDir, entry.name);
+          fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+
+          // 写入文件数据
+          const dataOffset = entry.offset + 512;
+          const fileData = tarData.slice(dataOffset, dataOffset + entry.size);
+          fs.writeFileSync(fullPath, fileData);
+
+          if (verbose) {
+            logInfo(`  ${entry.name} (${formatBytes(entry.size)})`);
+          }
+        }
+
+        resolve(true);
+      } catch (err) {
+        logError(`解压处理失败: ${err.message}`);
+        resolve(false);
+      }
+    });
+
+    gunzip.on('error', (err) => {
+      logError(`gzip 解压失败: ${err.message}`);
+      resolve(false);
+    });
+
+    fileStream.on('error', (err) => {
+      logError(`读取文件失败: ${err.message}`);
+      resolve(false);
+    });
+
+    fileStream.pipe(gunzip);
+  });
+}
+
+// ============================================
 // 远程模式：版本解析
 // ============================================
 
@@ -199,37 +302,20 @@ async function remoteInstall(pluginPath, options) {
     }
     logOk('下载完成');
 
-    // 3. 解压 tgz
+    // 3. 解压 tgz（纯 Node.js 实现，不依赖系统 tar）
     logStep('解压安装包...');
     const extractDir = path.join(tmpDir, 'extract');
     fs.mkdirSync(extractDir, { recursive: true });
 
-    const tar = require('child_process');
-    const isWin = process.platform === 'win32';
-    // tar 命令在 Windows 10+ / Node 18+ 可用，否则用 node tar 库
     let extractOk = false;
-
-    // 尝试系统 tar
     try {
-      tar.execSync(`tar xzf "${tgzFile}" -C "${extractDir}"`, {
-        stdio: options.verbose ? 'inherit' : 'pipe',
-        shell: true,
-      });
-      extractOk = true;
-    } catch {
-      // tar 不可用，尝试 node 内置解压
-      try {
-        const zlib = require('zlib');
-        const { Readable } = require('stream');
-
-        // 简单的 tgz 解压：用 gunzip + tar（通过 node-tar 或系统命令）
-        // 如果都失败，报错提示
-      } catch {}
+      extractOk = await extractTgz(tgzFile, extractDir, options.verbose);
+    } catch (err) {
+      logError(`解压失败: ${err.message}`);
     }
 
     if (!extractOk) {
       logError('解压失败');
-      logInfo('请确保系统支持 tar 命令');
       return false;
     }
     logOk('解压完成');

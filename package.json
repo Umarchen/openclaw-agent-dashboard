@@ -1,6 +1,6 @@
 {
   "name": "openclaw-agent-dashboard",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "多 Agent 可视化看板 - 状态、任务、API、工作流、协作流程",
   "bin": {
     "openclaw-agent-dashboard": "scripts/install.js"
@@ -13,7 +13,12 @@
     "bundle": "bash scripts/bundle.sh",
     "start": "node scripts/start.js"
   },
-  "keywords": ["openclaw", "agent", "dashboard", "visualization"],
+  "keywords": [
+    "openclaw",
+    "agent",
+    "dashboard",
+    "visualization"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

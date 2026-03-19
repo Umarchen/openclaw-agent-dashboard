@@ -47,3 +47,4 @@ docs/reports/
 docs/requirements/
 frontend/design/
 *.tar.gz
+*.tgz

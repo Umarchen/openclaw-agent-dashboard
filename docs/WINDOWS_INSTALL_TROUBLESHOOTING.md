@@ -11,9 +11,10 @@
 | 问题 | 严重程度 | 影响 |
 |------|----------|------|
 | Python 依赖安装失败 | 高 | Dashboard 后端无法启动 |
-| 插件注册失败 | 中 | 需手动配置或重新安装 |
 | Node.js DEP0190 警告 | 低 | 仅提示，不影响功能 |
 | 安全模式警告 | 低 | 需配置 `plugins.allow` |
+
+> **v1.0.9+** 已移除 `plugins install` 步骤，openclaw 会自动发现 extensions 下的插件，不再出现「插件注册失败」。
 
 ---
 
@@ -95,48 +96,10 @@ python -m pip install -r C:\Users\h00427263\.openclaw\extensions\openclaw-agent-
 
 ---
 
-## 三、插件注册失败
+## 三、插件注册（已修复）
 
-### 3.1 错误现象
-
-```
-plugin already exists: C:\Users\h00427263\.openclaw\extensions\openclaw-agent-dashboard (delete it first)
-⚠ 插件注册失败（Dashboard 可能需要在 openclaw 配置中手动添加）
-```
-
-### 3.2 原因说明
-
-安装脚本会先执行 `openclaw plugins uninstall`，再复制文件，最后执行 `openclaw plugins install`。  
-`uninstall` 可能只从配置中移除插件，**不会删除扩展目录**。当 `install` 发现目标目录已存在时，会报 "plugin already exists"。
-
-### 3.3 解决方案
-
-#### 方案 A：安装前手动删除旧目录
-
-```powershell
-# 删除旧插件目录
-Remove-Item -Recurse -Force "C:\Users\h00427263\.openclaw\extensions\openclaw-agent-dashboard" -ErrorAction SilentlyContinue
-
-# 重新安装
-npx openclaw-agent-dashboard@1.0.8 --verbose
-```
-
-#### 方案 B：手动配置 openclaw
-
-若插件文件已正确安装，可在 openclaw 配置中手动添加插件。配置文件通常位于：
-
-- `C:\Users\h00427263\.openclaw\config.json` 或
-- 环境变量 `OPENCLAW_STATE_DIR` 指向的目录
-
-在 `plugins.allow` 中添加 `openclaw-agent-dashboard`，例如：
-
-```json
-{
-  "plugins": {
-    "allow": ["openclaw-agent-dashboard"]
-  }
-}
-```
+**v1.0.9+** 安装流程已优化：仅将文件复制到 `extensions` 目录，不再调用 `openclaw plugins install`。  
+openclaw 会自动发现并加载 `extensions` 下的插件，无需手动注册。若仍看到 "plugin already exists" 等提示，请升级到最新版本。
 
 ---
 
@@ -203,7 +166,6 @@ plugins.allow is empty; discovered non-bundled plugins may auto-load
 
 ## 六、后续改进建议（项目维护者）
 
-1. **安装脚本**：在 `openclaw plugins install` 前先 `rmrf(pluginPath)`，或改为传入 `extractedPluginDir` 让 openclaw 自行复制，避免 "plugin already exists"。
-2. **Python 安装**：支持通过环境变量或参数指定 pip 镜像（如 `PIP_INDEX_URL`）。
-3. **帮助信息**：在 Windows 下增加代理、镜像、离线安装的说明。
-4. **runCommand**：考虑使用 `execSync(cmd, args, { shell: false })` 或 `spawn` 传参，消除 DEP0190 警告。
+1. **Python 安装**：支持通过环境变量或参数指定 pip 镜像（如 `PIP_INDEX_URL`）。
+2. **帮助信息**：在 Windows 下增加代理、镜像、离线安装的说明。
+3. **runCommand**：考虑使用 `execSync(cmd, args, { shell: false })` 或 `spawn` 传参，消除 DEP0190 警告。

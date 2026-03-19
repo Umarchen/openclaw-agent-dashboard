@@ -353,33 +353,13 @@ async function remoteInstall(pluginPath, options) {
     // 6. 安装
     logStep('安装插件...');
 
-    // 检查 openclaw 是否可用
-    const hasOpenClaw = commandExists('openclaw');
-
-    if (hasOpenClaw) {
-      // 先注册插件（如果之前有注册的话先卸载）
-      await runCommandAsync('openclaw', ['plugins', 'uninstall', PLUGIN_ID, '--force'])
-        .catch(() => {});
-    }
-
-    // 复制文件到插件目录
+    // 复制到 extensions 目录，openclaw 会自动发现并加载，无需 plugins install
     copyDir(extractedPluginDir, pluginPath);
+    logOk('插件已安装');
 
-    if (hasOpenClaw) {
-      // 尝试用 openclaw plugins install 注册
-      const registerResult = await runCommandAsync('openclaw', ['plugins', 'install', pluginPath])
-        .catch(() => ({ success: false }));
-      if (registerResult.success) {
-        logOk('插件已注册');
-      } else {
-        logWarn('插件注册失败（Dashboard 可能需要在 openclaw 配置中手动添加）');
-      }
-    } else {
-      logWarn('未找到 openclaw 命令');
-      logInfo('请先安装: npm install -g openclaw');
+    if (!commandExists('openclaw')) {
+      logWarn('未找到 openclaw 命令，请先安装: npm install -g openclaw');
     }
-
-    logOk('插件文件已安装');
 
     // 7. 安装 Python 依赖
     if (!options.skipPython && fs.existsSync(path.join(pluginPath, 'dashboard', 'requirements.txt'))) {

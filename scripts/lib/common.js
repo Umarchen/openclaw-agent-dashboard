@@ -292,6 +292,163 @@ function copyDir(src, dest, exclude = []) {
 }
 
 // ============================================
+// 网络下载
+// ============================================
+
+const https = require('https');
+const http = require('http');
+
+/**
+ * 下载文件
+ * @param {string} url - 下载地址
+ * @param {string} dest - 保存路径
+ * @param {object} [options]
+ * @param {boolean} [options.verbose] - 显示进度
+ * @returns {Promise<boolean>}
+ */
+function downloadFile(url, dest, options = {}) {
+  return new Promise((resolve) => {
+    logInfo(`  下载: ${url}`);
+
+    const client = url.startsWith('https') ? https : http;
+    const file = fs.createWriteStream(dest);
+
+    client.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        file.close();
+        fs.unlinkSync(dest);
+        return downloadFile(res.headers.location, dest, options).then(resolve);
+      }
+
+      if (res.statusCode !== 200) {
+        file.close();
+        fs.unlinkSync(dest);
+        logError(`  下载失败: HTTP ${res.statusCode}`);
+        resolve(false);
+        return;
+      }
+
+      const total = parseInt(res.headers['content-length'], 10);
+      let downloaded = 0;
+
+      res.on('data', (chunk) => {
+        downloaded += chunk.length;
+        if (options.verbose && total) {
+          const pct = Math.round((downloaded / total) * 100);
+          process.stdout.write(`  进度: ${pct}% (${formatBytes(downloaded)}/${formatBytes(total)})\r`);
+        }
+      });
+
+      res.pipe(file);
+
+      file.on('finish', () => {
+        file.close();
+        if (options.verbose) console.log('');
+        resolve(true);
+      });
+    }).on('error', (err) => {
+      file.close();
+      if (fs.existsSync(dest)) fs.unlinkSync(dest);
+      logError(`  下载失败: ${err.message}`);
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * 格式化字节数
+ * @param {number} bytes
+ * @returns {string}
+ */
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+// ============================================
+// 备份与恢复
+// ============================================
+
+/**
+ * 备份目录（移动到 .backup-{timestamp}）
+ * @param {string} dir - 要备份的目录
+ * @returns {string | null} 备份目录路径，失败返回 null
+ */
+function backupDir(dir) {
+  if (!fs.existsSync(dir)) return null;
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const backupPath = dir + `.backup-${timestamp}`;
+
+  try {
+    fs.renameSync(dir, backupPath);
+    logInfo(`  备份: ${path.basename(backupPath)}`);
+    return backupPath;
+  } catch (err) {
+    logWarn(`  备份失败: ${err.message}`);
+    // 尝试复制后删除
+    try {
+      copyDir(dir, backupPath);
+      rmrf(dir);
+      return backupPath;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * 恢复备份
+ * @param {string} backupPath - 备份目录路径
+ * @param {string} targetPath - 目标路径
+ * @returns {boolean}
+ */
+function restoreBackup(backupPath, targetPath) {
+  if (!fs.existsSync(backupPath)) return false;
+
+  try {
+    rmrf(targetPath);
+    fs.renameSync(backupPath, targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 清理备份目录
+ * @param {string} backupPath
+ */
+function cleanupBackup(backupPath) {
+  if (backupPath && fs.existsSync(backupPath)) {
+    rmrf(backupPath);
+    logInfo('  已清理备份');
+  }
+}
+
+/**
+ * 清理旧备份目录（只保留最新的 N 个）
+ * @param {string} parentDir - 父目录
+ * @param {string} prefix - 备份目录前缀
+ * @param {number} [keep=2] - 保留数量
+ */
+function cleanupOldBackups(parentDir, prefix, keep = 2) {
+  if (!fs.existsSync(parentDir)) return;
+
+  const dirs = fs.readdirSync(parentDir)
+    .filter(f => f.startsWith(prefix) && fs.statSync(path.join(parentDir, f)).isDirectory())
+    .sort()
+    .reverse();
+
+  // 保留最新的 keep 个，删除其余
+  for (let i = keep; i < dirs.length; i++) {
+    rmrf(path.join(parentDir, dirs[i]));
+    logInfo(`  清理旧备份: ${dirs[i]}`);
+  }
+}
+
+// ============================================
 // 导出
 // ============================================
 
@@ -322,4 +479,12 @@ module.exports = {
   // 文件操作
   rmrf,
   copyDir,
+  backupDir,
+  restoreBackup,
+  cleanupBackup,
+  cleanupOldBackups,
+
+  // 网络下载
+  downloadFile,
+  formatBytes,
 };

@@ -72,6 +72,8 @@ export class RealtimeDataManager {
           status: 'error',
           errorMessage: 'WebSocket connection failed'
         })
+        // 连接失败时触发重连或 HTTP 轮询回退
+        this.handleDisconnect()
       }
 
       this.ws.onmessage = (event) => {

@@ -56,11 +56,20 @@ async def websocket_endpoint(websocket: WebSocket):
         
         # 保持连接
         while True:
-            # 心跳检测
+            # 心跳检测（同时支持纯文本 ping 和 JSON 格式）
             data = await websocket.receive_text()
-            
-            if data == 'ping':
-                await websocket.send_text('pong')
+
+            is_ping = False
+            try:
+                msg = json.loads(data)
+                if isinstance(msg, dict) and msg.get('type') == 'ping':
+                    is_ping = True
+            except json.JSONDecodeError:
+                if data == 'ping':
+                    is_ping = True
+
+            if is_ping:
+                await websocket.send_json({'type': 'pong', 'timestamp': int(asyncio.get_event_loop().time() * 1000)})
     except WebSocketDisconnect:
         active_connections.discard(websocket)
         _cancel_broadcast_task()

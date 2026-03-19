@@ -112,6 +112,23 @@ function getVenvPython(venvDir) {
 }
 
 // ============================================
+// Pip 镜像
+// ============================================
+
+/**
+ * 获取 pip 镜像参数
+ * 支持环境变量 PIP_INDEX_URL 或 PIP_MIRROR
+ * @returns {string[]}
+ */
+function getPipMirrorArgs() {
+  const mirror = process.env.PIP_INDEX_URL || process.env.PIP_MIRROR || '';
+  if (mirror) {
+    return ['-i', mirror, '--trusted-host', new URL(mirror).hostname];
+  }
+  return [];
+}
+
+// ============================================
 // Python 依赖安装
 // ============================================
 
@@ -150,17 +167,31 @@ function installWithVenv(reqFile, venvDir, silent) {
   }
 
   // 升级 pip（静默，失败不影响）
-  runCommand(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '-q'], { silent: true });
+  // 如果设了镜像，升级 pip 也用镜像
+  const pipMirrorArgs = getPipMirrorArgs();
+  runCommand(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '-q', ...pipMirrorArgs], { silent: true });
 
   // 安装依赖
   logInfo('  安装依赖...');
   const installResult = runCommand(
     venvPython,
-    ['-m', 'pip', 'install', '-r', reqFile, '-q'],
+    ['-m', 'pip', 'install', '-r', reqFile, '-q', ...pipMirrorArgs],
     { silent, timeout: 180000 }
   );
 
   if (!installResult.success) {
+    // 默认源失败，尝试清华镜像
+    if (!pipMirrorArgs.length) {
+      logWarn('  默认源失败，尝试清华镜像...');
+      const tsinghuaArgs = ['-i', 'https://pypi.tuna.tsinghua.edu.cn/simple', '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'];
+      runCommand(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '-q', ...tsinghuaArgs], { silent: true, timeout: 60000 });
+      const retryResult = runCommand(
+        venvPython,
+        ['-m', 'pip', 'install', '-r', reqFile, '-q', ...tsinghuaArgs],
+        { silent, timeout: 180000 }
+      );
+      if (retryResult.success) return true;
+    }
     logWarn('  venv 安装依赖失败');
     if (!silent) {
       console.log('    错误:', installResult.output);
@@ -180,11 +211,12 @@ function installWithVenv(reqFile, venvDir, silent) {
 function installWithPipUser(reqFile, silent) {
   logInfo('  尝试: pip --user（PEP 668 兜底）');
 
+  const pipMirrorArgs = getPipMirrorArgs();
+  const tsinghuaArgs = ['-i', 'https://pypi.tuna.tsinghua.edu.cn/simple', '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'];
+
   const pipCommands = [
-    { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', '--user'], name: 'pip --user' },
-    { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q'], name: 'pip' },
-    { cmd: 'pip', args: ['install', '-r', reqFile, '-q', '--user'], name: 'pip --user' },
-    { cmd: 'pip3', args: ['install', '-r', reqFile, '-q', '--user'], name: 'pip3 --user' },
+    { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', '--user', ...pipMirrorArgs], name: 'pip --user' },
+    { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', ...pipMirrorArgs], name: 'pip' },
   ];
 
   for (const { cmd, args, name } of pipCommands) {
@@ -193,6 +225,20 @@ function installWithPipUser(reqFile, silent) {
     const result = runCommand(cmd, args, { silent, timeout: 180000 });
     if (result.success) {
       return { success: true, method: name };
+    }
+  }
+
+  // 默认源失败，尝试清华镜像
+  if (!pipMirrorArgs.length) {
+    logWarn('  默认源失败，尝试清华镜像...');
+    const retryCommands = [
+      { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', '--user', ...tsinghuaArgs], name: 'pip --user (tsinghua)' },
+      { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', ...tsinghuaArgs], name: 'pip (tsinghua)' },
+    ];
+    for (const { cmd, args, name } of retryCommands) {
+      if (!commandExists(cmd)) continue;
+      const result = runCommand(cmd, args, { silent, timeout: 180000 });
+      if (result.success) return { success: true, method: name };
     }
   }
 

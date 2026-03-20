@@ -13,6 +13,25 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def _resolve_default_package_json() -> Path:
+    """
+    定位 npm 包里的 package.json（插件：…/extensions/openclaw-agent-dashboard/package.json）
+    与开发仓库（…/openclaw-agent-dashboard/package.json）。
+
+    插件布局: dashboard/data/version_info_reader.py -> 向上 3 级到插件根。
+    开发布局: src/backend/data/... -> 向上 4 级到仓库根。
+    """
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent.parent.parent / "package.json",
+        here.parent.parent.parent.parent / "package.json",
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p
+    return candidates[0]
+
+
 class VersionInfoReader:
     """版本信息读取器，支持缓存"""
     
@@ -23,8 +42,7 @@ class VersionInfoReader:
         Args:
             package_json_path: package.json 文件路径，默认为项目根目录下的 package.json
         """
-        # 默认路径：src/backend/data -> src/backend -> src -> 项目根目录 -> package.json
-        self.package_json_path = package_json_path or Path(__file__).resolve().parent.parent.parent.parent / "package.json"
+        self.package_json_path = package_json_path or _resolve_default_package_json()
         self._cached_info: Optional[dict] = None
     
     def read_version_info(self) -> dict:

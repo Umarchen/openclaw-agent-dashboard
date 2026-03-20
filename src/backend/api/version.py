@@ -3,12 +3,15 @@
 
 提供 GET /api/version 端点，返回插件版本信息。
 """
+import logging
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
 
 # 导入版本信息读取器
 from data.version_info_reader import get_version_reader
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -30,6 +33,14 @@ async def get_version_info() -> VersionInfo:
     Returns:
         VersionInfo: 包含版本号、名称、描述等信息的对象
     """
-    reader = get_version_reader()
-    version_data = reader.read_version_info()
-    return VersionInfo(**version_data)
+    try:
+        reader = get_version_reader()
+        version_data = reader.read_version_info()
+        return VersionInfo(**version_data)
+    except Exception as e:
+        logger.exception("get_version_info 异常，返回降级数据: %s", e)
+        return VersionInfo(
+            version="unknown",
+            name="openclaw-agent-dashboard",
+            description="",
+        )

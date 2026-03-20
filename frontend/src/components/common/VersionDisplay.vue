@@ -96,12 +96,18 @@ const fetchVersionInfo = async () => {
   try {
     loading.value = true
     error.value = false
-    
-    const response = await fetch('/api/version')
+
+    // 与页面同源显式拼接，避免子路径 / 代理环境下相对 URL 解析异常
+    const url = `${window.location.origin}/api/version`
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    })
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+      const hint = await response.text().catch(() => '')
+      throw new Error(`HTTP ${response.status}${hint ? `: ${hint.slice(0, 120)}` : ''}`)
     }
-    
+
     versionInfo.value = await response.json()
   } catch (err) {
     console.error('获取版本信息失败:', err)

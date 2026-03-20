@@ -1,6 +1,6 @@
 {
   "name": "openclaw-agent-dashboard",
-  "version": "1.0.20",
+  "version": "1.0.22",
   "description": "多 Agent 可视化看板 - 开发仓库（发布请使用 npm run publish:npm）",
   "scripts": {
     "pack": "node scripts/build-plugin.js",
@@ -21,5 +21,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Umarchen/openclaw-agent-dashboard.git"
+  },
+  "bin": {
+    "openclaw-agent-dashboard": "scripts/install.js"
   }
 }

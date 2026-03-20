@@ -1,12 +1,19 @@
 {
   "name": "openclaw-agent-dashboard",
-  "version": "1.0.20",
+  "version": "1.0.23",
   "description": "多 Agent 可视化看板 - OpenClaw 插件",
   "main": "index.js",
   "openclaw": {
-    "extensions": ["./index.js"]
+    "extensions": [
+      "./index.js"
+    ]
   },
-  "keywords": ["openclaw", "dashboard", "agent", "monitoring"],
+  "keywords": [
+    "openclaw",
+    "dashboard",
+    "agent",
+    "monitoring"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

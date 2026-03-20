@@ -331,7 +331,9 @@ async function localPluginInstall(bundledPluginDir, pluginPath, options) {
 
 // ============================================
 // 远程模式：下载安装
-// ============================================/**
+// ============================================
+
+/**
  * 获取 tgz 缓存目录
  * @returns {string}
  */
@@ -353,8 +355,10 @@ async function remoteInstall(pluginPath, options) {
   // 优先使用 npm 包自带的 plugin 目录（npx 模式下 plugin 就在包里）
   const bundledPluginDir = path.join(__dirname, '..', 'plugin');
   const bundledPluginJson = path.join(bundledPluginDir, 'openclaw.plugin.json');
+  const bundledDashboardMain = path.join(bundledPluginDir, 'dashboard', 'main.py');
 
-  if (fs.existsSync(bundledPluginJson)) {
+  // 仅当 npm 包内带完整 plugin（含 dashboard）时才直接拷贝；否则走 GitHub Release tgz，避免残缺 plugin 覆盖用户目录
+  if (fs.existsSync(bundledPluginJson) && fs.existsSync(bundledDashboardMain)) {
     return await localPluginInstall(bundledPluginDir, pluginPath, options);
   }
 

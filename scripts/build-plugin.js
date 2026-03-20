@@ -64,4 +64,18 @@ if (fs.existsSync(frontendDist)) {
   console.warn('[pack] frontend/dist 不存在，跳过');
 }
 
+console.log('[pack] 4. 复制 Python 依赖安装脚本 -> plugin/scripts（供 npm 包与 openclaw plugins install 使用）');
+const SCRIPTS_SRC = path.join(ROOT, 'scripts');
+const SCRIPTS_DEST = path.join(PLUGIN_DIR, 'scripts');
+rmrf(SCRIPTS_DEST);
+fs.mkdirSync(path.join(SCRIPTS_DEST, 'lib'), { recursive: true });
+fs.copyFileSync(
+  path.join(SCRIPTS_SRC, 'install-python-deps.js'),
+  path.join(SCRIPTS_DEST, 'install-python-deps.js'),
+);
+fs.copyFileSync(
+  path.join(SCRIPTS_SRC, 'lib', 'common.js'),
+  path.join(SCRIPTS_DEST, 'lib', 'common.js'),
+);
+
 console.log('[pack] 完成');

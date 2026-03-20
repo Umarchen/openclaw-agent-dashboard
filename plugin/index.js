@@ -18,6 +18,22 @@ const { spawn, execFileSync } = require('child_process');
 
 let dashboardProcess = null;
 
+/** 解析系统 Python（Linux/macOS 多为 python3，Windows 多为 python） */
+function resolveSystemPython() {
+  if (process.env.PYTHON_CMD) {
+    return process.env.PYTHON_CMD;
+  }
+  for (const cmd of ['python3', 'python']) {
+    try {
+      execFileSync(cmd, ['-c', 'import sys'], { stdio: 'ignore', timeout: 3000 });
+      return cmd;
+    } catch (_) {
+      /* try next */
+    }
+  }
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
 function getOpenClawHome() {
   return process.env.OPENCLAW_HOME || path.join(os.homedir(), '.openclaw');
 }
@@ -188,10 +204,10 @@ function startDashboard(config = {}) {
           execFileSync(venvPython, ['-c', 'import uvicorn'], { stdio: 'ignore', timeout: 3000 });
           pythonCmd = venvPython;
         } catch (_) {
-          pythonCmd = 'python3'; // venv 不完整，回退到系统 python3
+          pythonCmd = resolveSystemPython(); // venv 不完整，回退到系统 Python
         }
       } else {
-        pythonCmd = 'python3';
+        pythonCmd = resolveSystemPython();
       }
     }
     const args = ['-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', String(port)];

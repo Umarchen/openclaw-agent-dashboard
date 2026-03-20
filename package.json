@@ -1,17 +1,15 @@
 {
   "name": "openclaw-agent-dashboard",
-  "version": "1.0.15",
-  "description": "多 Agent 可视化看板 - 状态、任务、API、工作流、协作流程",
-  "bin": {
-    "openclaw-agent-dashboard": "scripts/install.js"
-  },
+  "version": "1.0.17",
+  "description": "多 Agent 可视化看板 - 开发仓库（发布请使用 npm run publish:npm）",
   "scripts": {
     "pack": "node scripts/build-plugin.js",
     "install-plugin": "node scripts/install.js",
     "deploy": "npm run pack && npm run install-plugin",
     "upgrade": "git pull && npm run deploy",
     "bundle": "bash scripts/bundle.sh",
-    "start": "node scripts/start.js"
+    "start": "node scripts/start.js",
+    "publish:npm": "npm run pack && cd plugin && npm publish --access public"
   },
   "keywords": [
     "openclaw",

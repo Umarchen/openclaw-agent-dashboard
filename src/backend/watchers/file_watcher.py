@@ -1,11 +1,46 @@
 """
 文件变更监听 - 关键文件变更时触发 WebSocket 推送
 使用 watchdog 监听 runs.json、sessions/*.jsonl、task_history.json、model-failures.log
+集成缓存失效机制，确保状态一致性
 """
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
+
+
+def _extract_agent_id_from_path(filepath: str) -> Optional[str]:
+    """从文件路径中提取 Agent ID（跨平台兼容）
+    
+    Args:
+        filepath: 文件路径（Unix 或 Windows 风格）
+        
+    Returns:
+        Agent ID，无法解析时返回 None
+        
+    Examples:
+        /path/to/.openclaw/agents/main/sessions/xxx.jsonl -> main
+        C:\\path\\to\\.openclaw\\agents\\main\\sessions\\xxx.jsonl -> main
+    """
+    try:
+        path = Path(filepath)
+        parts = path.parts
+        
+        # 查找 'agents' 目录的位置
+        try:
+            agents_idx = parts.index('agents')
+        except ValueError:
+            return None
+        
+        # 检查结构: .../agents/{agent_id}/sessions/...
+        # agents_idx + 1 = agent_id
+        # agents_idx + 2 = 'sessions'
+        if agents_idx + 2 < len(parts) and parts[agents_idx + 2] == 'sessions':
+            return parts[agents_idx + 1]
+        
+        return None
+    except Exception:
+        return None
 
 
 def _get_openclaw_dir() -> Path:
@@ -52,26 +87,33 @@ def _get_watch_dirs() -> list[tuple[Path, bool]]:
 class DebouncedHandler:
     """防抖：短时间多次变更只触发一次回调"""
 
-    def __init__(self, callback: Callable[[], None], debounce_sec: float = DEBOUNCE_SECONDS):
+    def __init__(self, callback: Callable[[Optional[str]], None], debounce_sec: float = DEBOUNCE_SECONDS):
         self.callback = callback
         self.debounce_sec = debounce_sec
         self._last_trigger: float = 0
         self._lock = threading.Lock()
         self._timer: Optional[threading.Timer] = None
+        self._pending_path: Optional[str] = None
 
-    def trigger(self) -> None:
+    def trigger(self, filepath: Optional[str] = None) -> None:
         with self._lock:
             now = time.monotonic()
             if self._timer:
                 self._timer.cancel()
                 self._timer = None
+            
+            # 保存文件路径
+            if filepath:
+                self._pending_path = filepath
 
             def do_callback() -> None:
                 with self._lock:
                     self._last_trigger = time.monotonic()
                     self._timer = None
+                    path = self._pending_path
+                    self._pending_path = None
                 try:
-                    self.callback()
+                    self.callback(path)
                 except Exception as e:
                     print(f"[FileWatcher] 回调异常: {e}")
 
@@ -87,12 +129,36 @@ _observer = None
 _handler = None
 
 
-def _on_file_changed() -> None:
-    """文件变更时触发 WebSocket 推送"""
+def _on_file_changed(filepath: Optional[str] = None) -> None:
+    """文件变更时触发 WebSocket 推送 + 缓存失效
+    
+    Args:
+        filepath: 变更的文件路径（可选）
+    """
     try:
         from api.websocket import broadcast_full_state
+        from status.status_cache import get_cache
         import asyncio
-
+        
+        # 失效缓存
+        cache = get_cache()
+        if filepath:
+            # 解析受影响的 Agent ID（跨平台兼容）
+            # 例如：/path/to/.openclaw/agents/main/sessions/xxx.jsonl -> main
+            # 或 Windows: C:\path\to\.openclaw\agents\main\sessions\xxx.jsonl -> main
+            agent_id = _extract_agent_id_from_path(filepath)
+            if agent_id:
+                cache.invalidate(agent_id)
+                print(f"[FileWatcher] 失效缓存: {agent_id}")
+            else:
+                # 无法解析，清空所有缓存
+                cache.invalidate()
+                print(f"[FileWatcher] 失效所有缓存（无法解析Agent）")
+        else:
+            # 无文件路径，清空所有缓存
+            cache.invalidate()
+        
+        # 触发推送
         loop = _event_loop
         if loop and broadcast_full_state:
             future = asyncio.run_coroutine_threadsafe(broadcast_full_state(), loop)
@@ -126,13 +192,13 @@ def start_file_watcher(loop) -> None:
             if event.is_directory:
                 return
             if self._should_trigger(event.src_path):
-                _handler.trigger()
+                _handler.trigger(event.src_path)
 
         def on_created(self, event):
             if event.is_directory:
                 return
             if self._should_trigger(event.src_path):
-                _handler.trigger()
+                _handler.trigger(event.src_path)
 
     watch_dirs = _get_watch_dirs()
     if not watch_dirs:

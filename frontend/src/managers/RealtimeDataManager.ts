@@ -184,6 +184,15 @@ export class RealtimeDataManager {
       return
     }
 
+    // 新增：增量状态更新
+    if (message.type === 'state_update' && message.data) {
+      const data = message.data as Record<string, unknown>
+      if (data.agents) {
+        this.emit('agents_update', data.agents)  // 新增事件
+      }
+      return
+    }
+
     if (message.channel && message.data) {
       this.emit(message.channel, message.data)
     }

@@ -1,5 +1,6 @@
 """
 状态计算器 - 计算 Agent 状态
+集成缓存机制，提升状态计算性能
 """
 import sys
 from pathlib import Path
@@ -7,7 +8,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import logging
 import time
-from typing import Literal, Dict, Any
+from typing import Literal, Dict, Any, List, Optional
 from data.config_reader import get_agents_list, get_agent_config
 from data.subagent_reader import is_agent_working, get_agent_runs
 from data.session_reader import (
@@ -18,13 +19,17 @@ from data.session_reader import (
     get_pending_tool_call_with_timestamp,
 )
 
+# 导入缓存和变化跟踪
+from .status_cache import get_cache
+from .change_tracker import get_tracker
+
 logger = logging.getLogger(__name__)
 
 
 AgentStatus = Literal['idle', 'working', 'down']
 
 
-def calculate_agent_status(agent_id: str) -> AgentStatus:
+def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus:
     """
     计算 Agent 状态（基于 runs.json + sessions.json）
     
@@ -32,19 +37,40 @@ def calculate_agent_status(agent_id: str) -> AgentStatus:
     1. 异常 (down) - 最近5分钟有 stopReason=error
     2. 工作中 (working) - 有活跃 subagent run 或 session 正在处理（最近5分钟有活动）
     3. 空闲 (idle) - 无活跃 run 且最近5分钟无 session 活动
+    
+    Args:
+        agent_id: Agent ID
+        use_cache: 是否使用缓存（默认 True）
+    
+    Returns:
+        Agent 状态
     """
+    # 先查缓存
+    if use_cache:
+        cache = get_cache()
+        cached = cache.get(agent_id)
+        if cached and 'status' in cached:
+            return cached['status']
+    
+    # 重新计算
     # 检查异常
     if has_recent_errors(agent_id, minutes=5):
-        return 'down'
-    
+        status = 'down'
     # 检查工作中：subagent run 未结束，或 session 最近有活动
-    if is_agent_working(agent_id):
-        return 'working'
-    if has_recent_session_activity(agent_id, minutes=2):
-        return 'working'
+    elif is_agent_working(agent_id):
+        status = 'working'
+    elif has_recent_session_activity(agent_id, minutes=2):
+        status = 'working'
+    else:
+        # 默认空闲
+        status = 'idle'
     
-    # 默认空闲
-    return 'idle'
+    # 更新缓存（只缓存状态）
+    if use_cache:
+        cache = get_cache()
+        cache.set(agent_id, {'status': status})
+    
+    return status
 
 
 def get_agents_with_status() -> list:
@@ -299,3 +325,45 @@ def get_display_status(agent_id: str) -> Dict[str, Any]:
 
     # 快速执行中
     return {'status': 'working', 'display': '处理中...', 'duration': 0, 'alert': False}
+
+
+async def get_changed_agents() -> List[Dict[str, Any]]:
+    """
+    获取状态发生变化的 Agent 列表
+    
+    用于增量推送，只返回状态发生变化的 Agent
+    
+    Returns:
+        变化的 Agent 状态列表（包含 id, status, currentTask, lastActiveAt, error 等）
+    """
+    tracker = get_tracker()
+    
+    agents = get_agents_list()
+    changed_agents = []
+    
+    for agent in agents:
+        agent_id = agent.get('id')
+        
+        # 计算状态（会使用缓存）
+        status = calculate_agent_status(agent_id)
+        current_task = get_current_task(agent_id)
+        last_active = get_last_active_time(agent_id)
+        last_error = get_last_error(agent_id) if status == 'down' else None
+        
+        state_data = {
+            'id': agent_id,
+            'name': agent.get('name'),
+            'status': status,
+            'currentTask': current_task,
+            'lastActiveAt': last_active,
+            'error': last_error
+        }
+        
+        # 更新跟踪器并检查是否变化
+        if tracker.update(agent_id, state_data):
+            changed_agents.append(state_data)
+    
+    # 清除变化标记
+    tracker.clear_changes()
+    
+    return changed_agents

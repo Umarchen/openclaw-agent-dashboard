@@ -171,6 +171,7 @@ function handleConnectionStateChange(state: ConnectionState) {
 
 let unsubState: (() => void) | null = null
 let unsubAgents: (() => void) | null = null
+let unsubAgentsUpdate: (() => void) | null = null
 
 onMounted(() => {
   refreshData()
@@ -184,11 +185,30 @@ onMounted(() => {
       subAgents.value = (data as Agent[]).filter(a => a.id !== mainAgentId.value)
     }
   })
+  
+  // 新增：订阅增量状态更新
+  unsubAgentsUpdate = realtimeManager.subscribe('agents_update', (data: unknown) => {
+    if (Array.isArray(data)) {
+      // 增量更新
+      (data as Agent[]).forEach((updatedAgent: Agent) => {
+        const index = agents.value.findIndex(a => a.id === updatedAgent.id)
+        if (index >= 0) {
+          // 合并更新（保留未变化的字段）
+          agents.value[index] = { ...agents.value[index], ...updatedAgent }
+        }
+      })
+      // 更新主 Agent 和子 Agents
+      const main = agents.value.find(a => a.id === mainAgentId.value)
+      if (main) mainAgent.value = main
+      subAgents.value = agents.value.filter(a => a.id !== mainAgentId.value)
+    }
+  })
 })
 
 onUnmounted(() => {
   unsubState?.()
   unsubAgents?.()
+  unsubAgentsUpdate?.()
   realtimeManager.disconnect()
 })
 </script>

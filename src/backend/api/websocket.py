@@ -1,8 +1,9 @@
 """
 WebSocket 路由
+支持增量状态推送，优化实时性能
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from typing import Set
+from typing import Set, List, Dict, Any
 import json
 import asyncio
 import sys
@@ -15,17 +16,24 @@ router = APIRouter()
 # 活跃的 WebSocket 连接
 active_connections: Set[WebSocket] = set()
 
-# 周期性推送间隔（秒）
-BROADCAST_INTERVAL_SEC = 3
+# 周期性推送间隔（秒）- 优化：从 3 秒缩短到 1 秒
+BROADCAST_INTERVAL_SEC = 1
 _broadcast_task: asyncio.Task | None = None
 
 
 async def _periodic_broadcast_loop():
-    """周期性广播完整状态，确保无文件变更时也有更新"""
+    """周期性广播状态更新（增量），确保无文件变更时也有更新"""
     while True:
         await asyncio.sleep(BROADCAST_INTERVAL_SEC)
         if active_connections:
-            await broadcast_full_state()
+            # 只推送状态变化的 Agent
+            try:
+                from status.status_calculator import get_changed_agents
+                changed_agents = await get_changed_agents()
+                if changed_agents:
+                    await broadcast_state_update(changed_agents)
+            except Exception as e:
+                print(f"[WebSocket] 周期性推送失败: {e}")
 
 
 def _ensure_broadcast_task():
@@ -195,21 +203,26 @@ async def broadcast_message(message: dict):
 
 
 async def broadcast_full_state():
-    """文件变更时广播完整状态（agents、subagents、apiStatus、collaboration、tasks、performance）"""
+    """文件变更时广播完整状态（使用动态接口优化）
+    
+    优化点：
+    1. 使用 get_collaboration_dynamic() 代替 get_collaboration()
+    2. 只推送动态数据，减少数据量
+    """
     if not active_connections:
         return
     try:
         from .agents import get_agents as get_agents_list
         from .subagents import get_subagents
         from .api_status import get_api_status_list
-        from .collaboration import get_collaboration
+        from .collaboration import get_collaboration_dynamic  # 使用动态接口
         from .performance import get_real_stats
         from .workflow import list_workflows
 
         agents = await get_agents_list()
         subagents = await get_subagents()
         api_status = await get_api_status_list()
-        collaboration = await get_collaboration()
+        collaboration_dynamic = await get_collaboration_dynamic()  # 动态数据
         performance = await get_real_stats()
         workflows = await list_workflows()
 
@@ -230,7 +243,7 @@ async def broadcast_full_state():
                 "agents": agents,
                 "subagents": subagents,
                 "apiStatus": api_status,
-                "collaboration": collaboration.model_dump() if hasattr(collaboration, "model_dump") else collaboration,
+                "collaboration": collaboration_dynamic.model_dump() if hasattr(collaboration_dynamic, "model_dump") else collaboration_dynamic,
                 "tasks": tasks,
                 "performance": performance,
                 "workflows": workflows,
@@ -238,6 +251,29 @@ async def broadcast_full_state():
         })
     except Exception as e:
         print(f"[WebSocket] broadcast_full_state 失败: {e}")
+
+
+async def broadcast_state_update(changed_agents: List[Dict[str, Any]]) -> None:
+    """
+    广播增量状态更新
+    
+    只推送状态发生变化的 Agent，减少数据传输量
+    
+    Args:
+        changed_agents: 变化的 Agent 状态列表
+    """
+    if not active_connections or not changed_agents:
+        return
+    
+    message = {
+        'type': 'state_update',
+        'data': {
+            'agents': changed_agents,
+            'timestamp': int(asyncio.get_event_loop().time() * 1000)
+        }
+    }
+    
+    await broadcast_message(message)
 
 
 def get_active_connections_count() -> int:

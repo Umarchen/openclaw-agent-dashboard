@@ -32,7 +32,7 @@ npm run deploy
 | `npm run deploy` | 打包 + 安装到 OpenClaw（首次安装或升级） |
 | `npm run upgrade` | 拉取最新代码 + 部署（推荐用于升级） |
 | `npm run pack` | 仅打包插件，不安装（开发调试用） |
-| `npm run bundle` | 生成可分发的压缩包（给同事用） |
+| `npm run bundle` | 生成可分发的压缩包（离线分发） |
 
 ### 升级插件
 

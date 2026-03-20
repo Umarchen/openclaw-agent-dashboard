@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from data.session_reader import normalize_sessions_index
+
 # 详情展示使用 Asia/Shanghai 时区
 TZ_DISPLAY = ZoneInfo('Asia/Shanghai')
 
@@ -710,7 +712,8 @@ async def get_tokens_analysis(range: str = "all"):
                     continue
 
                 agent_total = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
-                for session_key, entry in data.items():
+                index_map = normalize_sessions_index(data)
+                for session_key, entry in index_map.items():
                     if not isinstance(entry, dict):
                         continue
                     inp = entry.get('inputTokens', 0) or 0

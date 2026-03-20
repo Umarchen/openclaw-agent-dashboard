@@ -17,6 +17,7 @@ from data.subagent_reader import (
     get_agent_files_for_run
 )
 from data.task_history import merge_with_history
+from data.session_reader import normalize_sessions_index, resolve_session_jsonl_path
 import time
 
 router = APIRouter()
@@ -269,19 +270,13 @@ def _get_session_message_count(child_session_key: str) -> int:
 
         with open(sessions_index, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
-        entry = index_data.get(child_session_key)
+        index_map = normalize_sessions_index(index_data)
+        entry = index_map.get(child_session_key)
         if not entry:
             return 0
-        session_file = entry.get('sessionFile')
-        session_id = entry.get('sessionId')
-        if not session_file and not session_id:
-            return 0
-        if not session_file:
-            sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
-            session_file = str(sessions_dir / f"{session_id}.jsonl")
-
-        session_path = Path(session_file)
-        if not session_path.exists():
+        sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+        session_path = resolve_session_jsonl_path(sessions_dir, entry)
+        if not session_path:
             return 0
 
         count = 0
@@ -365,19 +360,13 @@ def _extract_subtasks_from_session(child_session_key: str) -> List[Dict[str, Any
 
         with open(sessions_index, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
-        entry = index_data.get(child_session_key)
+        index_map = normalize_sessions_index(index_data)
+        entry = index_map.get(child_session_key)
         if not entry:
             return []
-        session_file = entry.get('sessionFile')
-        session_id = entry.get('sessionId')
-        if not session_file and not session_id:
-            return []
-        if not session_file:
-            sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
-            session_file = str(sessions_dir / f"{session_id}.jsonl")
-
-        session_path = Path(session_file)
-        if not session_path.exists():
+        sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+        session_path = resolve_session_jsonl_path(sessions_dir, entry)
+        if not session_path:
             return []
 
         subtasks: List[Dict[str, Any]] = []
@@ -531,19 +520,13 @@ def _extract_timeline_from_session(child_session_key: str) -> List[Dict[str, Any
 
         with open(sessions_index, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
-        entry = index_data.get(child_session_key)
+        index_map = normalize_sessions_index(index_data)
+        entry = index_map.get(child_session_key)
         if not entry:
             return []
-        session_file = entry.get('sessionFile')
-        session_id = entry.get('sessionId')
-        if not session_file and not session_id:
-            return []
-        if not session_file:
-            sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
-            session_file = str(sessions_dir / f"{session_id}.jsonl")
-
-        session_path = Path(session_file)
-        if not session_path.exists():
+        sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+        session_path = resolve_session_jsonl_path(sessions_dir, entry)
+        if not session_path:
             return []
 
         timeline: List[Dict[str, Any]] = []

@@ -3,6 +3,7 @@
     <header>
       <h1>OpenClaw Agent Dashboard</h1>
       <div class="controls">
+        <VersionDisplay />
         <button @click="refreshData">刷新</button>
         <button @click="showSettings = true">⚙️ 设置</button>
         <span class="connection-status" :class="connectionState.status">
@@ -51,9 +52,6 @@
       :agent="selectedAgent"
       @close="selectedAgent = null"
     />
-    
-    <!-- 版本号显示 -->
-    <VersionDisplay />
   </div>
 </template>
 

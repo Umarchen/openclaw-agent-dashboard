@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from data.config_reader import get_openclaw_root
+from data.session_reader import normalize_sessions_index, resolve_session_jsonl_path
 
 
 def load_subagent_runs() -> List[Dict[str, Any]]:
@@ -117,19 +118,13 @@ def get_agent_output_for_run(child_session_key: str, max_chars: int = 10000) -> 
     try:
         with open(sessions_index, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
-        entry = index_data.get(child_session_key)
+        index_map = normalize_sessions_index(index_data)
+        entry = index_map.get(child_session_key)
         if not entry:
             return None
-        session_file = entry.get('sessionFile')
-        session_id = entry.get('sessionId')
-        if not session_file and not session_id:
-            return None
-        if not session_file:
-            sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
-            session_file = str(sessions_dir / f"{session_id}.jsonl")
-        
-        session_path = Path(session_file)
-        if not session_path.exists():
+        sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+        session_path = resolve_session_jsonl_path(sessions_dir, entry)
+        if not session_path:
             return None
         
         last_text = None
@@ -185,19 +180,13 @@ def get_agent_files_for_run(child_session_key: str) -> List[str]:
     try:
         with open(sessions_index, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
-        entry = index_data.get(child_session_key)
+        index_map = normalize_sessions_index(index_data)
+        entry = index_map.get(child_session_key)
         if not entry:
             return []
-        session_file = entry.get('sessionFile')
-        session_id = entry.get('sessionId')
-        if not session_file and not session_id:
-            return []
-        if not session_file:
-            sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
-            session_file = str(sessions_dir / f"{session_id}.jsonl")
-        
-        session_path = Path(session_file)
-        if not session_path.exists():
+        sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+        session_path = resolve_session_jsonl_path(sessions_dir, entry)
+        if not session_path:
             return []
         
         file_paths: List[str] = []

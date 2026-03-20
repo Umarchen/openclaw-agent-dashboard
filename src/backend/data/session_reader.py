@@ -9,6 +9,64 @@ from typing import List, Dict, Any, Optional
 
 from data.config_reader import get_openclaw_root
 
+_META_SESSION_INDEX_KEYS = frozenset({"entries", "version", "schema"})
+
+
+def normalize_sessions_index(raw: Any) -> Dict[str, Dict[str, Any]]:
+    """
+    统一 sessions.json 结构（跨平台兼容 OpenClaw 不同版本）：
+    - 常见嵌套：{"entries": {"agent:...": {...}}}
+    - 扁平：{"agent:...": {...}}
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    inner = raw.get("entries")
+    if isinstance(inner, dict):
+        for k, v in inner.items():
+            if isinstance(v, dict):
+                out[str(k)] = v
+    for k, v in raw.items():
+        if k in _META_SESSION_INDEX_KEYS or not isinstance(v, dict):
+            continue
+        out.setdefault(str(k), v)
+    return out
+
+
+def resolve_session_jsonl_path(sessions_dir: Path, entry: Dict[str, Any]) -> Optional[Path]:
+    """
+    由 sessions.json 单条记录解析真实 .jsonl 路径。
+    兼容：绝对路径、相对 sessions 目录、仅文件名（避免 Windows 下 cwd 非 sessions 导致找不到文件）。
+    """
+    sf = entry.get("sessionFile")
+    sid = entry.get("sessionId")
+    try:
+        sessions_dir = sessions_dir.resolve()
+    except OSError:
+        sessions_dir = sessions_dir
+
+    if sf:
+        p = Path(str(sf))
+        try:
+            if p.is_file():
+                return p.resolve()
+        except OSError:
+            pass
+        for cand in (sessions_dir / sf, sessions_dir / p.name):
+            try:
+                if cand.is_file():
+                    return cand.resolve()
+            except OSError:
+                continue
+    if sid:
+        cand = sessions_dir / f"{sid}.jsonl"
+        try:
+            if cand.is_file():
+                return cand.resolve()
+        except OSError:
+            pass
+    return None
+
 
 def get_agent_sessions_path(agent_id: str) -> Optional[Path]:
     """获取 Agent 的 sessions 目录"""
@@ -139,12 +197,12 @@ def get_session_updated_at(agent_id: str) -> int:
             data = json.load(f)
         if not isinstance(data, dict):
             return 0
+        index_map = normalize_sessions_index(data)
         max_ts = 0
-        for entry in data.values():
-            if isinstance(entry, dict):
-                ts = entry.get('updatedAt', 0)
-                if isinstance(ts, (int, float)) and ts > max_ts:
-                    max_ts = int(ts)
+        for entry in index_map.values():
+            ts = entry.get('updatedAt') or entry.get('lastMessageAt') or 0
+            if isinstance(ts, (int, float)) and ts > max_ts:
+                max_ts = int(ts)
         return max_ts
     except (json.JSONDecodeError, IOError):
         return 0
@@ -170,18 +228,15 @@ def get_session_turns(agent_id: str, session_key: Optional[str] = None, limit: i
         return []
     
     session_file: Optional[Path] = None
+    sessions_path = get_openclaw_root() / "agents" / agent_id / "sessions"
     if session_key:
         try:
             with open(sessions_index, 'r', encoding='utf-8') as f:
                 index_data = json.load(f)
-            entry = index_data.get(session_key) if isinstance(index_data, dict) else None
-            if entry and isinstance(entry, dict):
-                sf = entry.get('sessionFile')
-                sid = entry.get('sessionId')
-                if sf:
-                    session_file = Path(sf)
-                elif sid:
-                    session_file = get_openclaw_root() / "agents" / agent_id / "sessions" / f"{sid}.jsonl"
+            index_map = normalize_sessions_index(index_data)
+            entry = index_map.get(session_key)
+            if entry:
+                session_file = resolve_session_jsonl_path(sessions_path, entry)
         except (json.JSONDecodeError, IOError):
             pass
     

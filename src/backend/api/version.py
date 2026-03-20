@@ -10,7 +10,7 @@ from typing import Optional
 # 导入版本信息读取器
 from data.version_info_reader import get_version_reader
 
-router = APIRouter(prefix="/api", tags=["version"])
+router = APIRouter()
 
 
 class VersionInfo(BaseModel):

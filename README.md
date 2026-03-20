@@ -44,19 +44,39 @@ brew install python3
 1. 安装 [Node.js](https://nodejs.org/)（LTS 版本）
 2. 安装 [Python 3](https://www.python.org/downloads/)
    - ⚠️ 安装时务必勾选 **"Add Python to PATH"**
-3. 安装 [Git for Windows](https://git-scm.com/download/win)（可选，用于 `curl | bash` 安装方式）
+3. 全局安装 OpenClaw：`npm install -g openclaw`
+4. [Git for Windows](https://git-scm.com/download/win)（可选；仅 **方式一从 npm 安装** 时不需要 Git）
 
 ## 快速安装
 
+### Windows 用户（仅安装，复制顺序执行）
+
+在 **PowerShell** 中依次执行：
+
+```powershell
+openclaw plugins install openclaw-agent-dashboard@latest
+
+$plugin = "$env:USERPROFILE\.openclaw\extensions\openclaw-agent-dashboard"
+node "$plugin\scripts\install-python-deps.js" $plugin --verbose
+
+openclaw gateway restart
+```
+
+浏览器访问：`http://localhost:38271`。若出现 `plugin already exists`，见下文「从 path / 旧版安装迁移到 npm」一节。
+
+安装成功时，终端会出现 **`Installed plugin: openclaw-agent-dashboard`**。过程中的 **`WARNING: ... dangerous code patterns ... child_process`** 为安全扫描提示，**可忽略**；**`plugins.allow is empty`** 为建议项，不阻止使用（可选在 `openclaw.json` 中配置 `plugins.allow` 消除提示）。
+
+---
+
 ### 方式一：OpenClaw 官方命令（推荐，全平台）
 
-与 OpenClaw 其它 npm 插件一致，由 CLI 下载并安装到 `extensions` 目录：
+与 OpenClaw 其它 npm 插件一致，由 CLI 从 **npm** 下载并安装到 `extensions` 目录：
 
 ```bash
 openclaw plugins install openclaw-agent-dashboard@latest
 ```
 
-指定版本：
+指定版本（版本号以 npm 为准，可用 `npm view openclaw-agent-dashboard version` 查看）：
 
 ```bash
 openclaw plugins install openclaw-agent-dashboard@1.0.17
@@ -83,7 +103,9 @@ node "$plugin\scripts\install-python-deps.js" $plugin --verbose
 
 脚本会在 `dashboard/.venv` 下创建虚拟环境并安装 `requirements.txt`，避免 Debian/Ubuntu 上 PEP 668 限制。
 
-> 安装完成后，在 **Gateway 进程**中加载插件时会自动启动 Dashboard。访问地址默认: http://localhost:38271
+**安装完成后请执行** `openclaw gateway restart` **重启网关**，再访问 Dashboard。
+
+> 在 **Gateway 进程**中加载插件时会自动启动 Dashboard。访问地址默认: http://localhost:38271
 
 ---
 
@@ -127,7 +149,7 @@ curl -fsSL https://raw.githubusercontent.com/Umarchen/openclaw-agent-dashboard/m
 
 ---
 
-### 从 path / 旧版安装迁移到 npm（同事必读）
+### 从 path / 旧版安装迁移到 npm（迁移说明）
 
 若此前使用 **`openclaw plugins install /某路径/plugin`**、手动拷贝到 `extensions`，或旧版安装方式，改用 **方式一** 时可能出现：
 
@@ -176,33 +198,17 @@ openclaw plugins update openclaw-agent-dashboard
 | `openclaw plugins install openclaw-agent-dashboard@latest` | **用户推荐**：从 npm 安装插件到 OpenClaw |
 | `npm run deploy` | 开发：打包 + `openclaw plugins install` 本地 `plugin/` |
 | `npm run publish:npm` | 维护者：打包后 `npm publish --prefix plugin` 发布到 npm |
+| 维护者全流程 | 见 [docs/MAINTAINER_RELEASE_WORKFLOW.md](docs/MAINTAINER_RELEASE_WORKFLOW.md)（npm + Git + Release + 本机更新） |
 | `npm run upgrade` | 开发：拉取最新代码 + `deploy` |
 | `npm run pack` | 仅打包 `plugin/`（不安装） |
-| `npm run bundle` | 生成可分发的压缩包（给同事用） |
+| `npm run bundle` | 生成可分发的压缩包（离线分发） |
 | `npm run start` | 独立启动 Dashboard（插件未自动启动时使用） |
 
-## 离线分发（给同事）
+## 离线分发
 
-如果 git clone 失败，可以打包分发：
+如果 git clone 失败，维护者可在开发机执行 `npm run bundle` 生成压缩包（文件名以终端输出为准）。
 
-```bash
-# 生成压缩包
-npm run bundle
-# 输出: openclaw-agent-dashboard-v1.0.0.tar.gz
-```
-
-同事收到后：
-
-```bash
-# 解压
-tar -xzf openclaw-agent-dashboard-v1.0.0.tar.gz
-
-# 进入目录
-cd openclaw-agent-dashboard
-
-# 安装
-npm run deploy
-```
+接收方解压并进入目录，执行 `npm run deploy`（需已安装 Node、openclaw、Python 等）。**更推荐直接使用 [方式一](#方式一openclaw-官方命令推荐全平台) 从 npm 安装**，无需 bundle。
 
 ## Python 依赖安装策略
 
@@ -268,7 +274,7 @@ openclaw-agent-dashboard/
 
 ## 数据源
 
-- `~/.openclaw/openclaw.json` - Agent 配置
+- `~/.openclaw/openclaw.json` - Agent 配置（Windows：`%USERPROFILE%\.openclaw\openclaw.json`）
 - `~/.openclaw/subagents/runs.json` - 子代理运行记录
 - `~/.openclaw/agents/*/sessions/*.jsonl` - 会话消息
 

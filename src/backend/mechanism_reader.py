@@ -7,6 +7,7 @@ from typing import Dict, Any, List
 
 
 from data.config_reader import get_openclaw_root
+from data.session_reader import normalize_sessions_index
 
 
 def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
@@ -33,8 +34,9 @@ def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
         if not isinstance(data, dict):
             return result
         
-        # 取最新 session 的机制信息
-        for session_key, entry in data.items():
+        # 取最新 session 的机制信息（兼容 sessions.json 顶层或 entries 嵌套）
+        index_map = normalize_sessions_index(data)
+        for session_key, entry in index_map.items():
             if not isinstance(entry, dict):
                 continue
             report = entry.get('systemPromptReport', {})

@@ -83,6 +83,7 @@ class TimelineStep:
 
 
 from data.config_reader import get_openclaw_root
+from data.session_reader import normalize_sessions_index, resolve_session_jsonl_path
 
 
 # 子 Agent 回传消息的特征
@@ -233,13 +234,17 @@ def _get_requester_info_for_session(agent_id: str, session_key: Optional[str]) -
         try:
             with open(sessions_index, 'r', encoding='utf-8') as f:
                 index_data = json.load(f)
+            index_map = normalize_sessions_index(index_data)
             if not session_key:
-                entries = [(k, v) for k, v in index_data.items() if isinstance(v, dict)]
+                entries = list(index_map.items())
                 if entries:
-                    entries.sort(key=lambda x: x[1].get('updatedAt', 0), reverse=True)
+                    entries.sort(
+                        key=lambda x: (x[1].get('updatedAt') or x[1].get('lastMessageAt') or 0),
+                        reverse=True,
+                    )
                     session_key = entries[0][0]
             if session_key:
-                entry = index_data.get(session_key)
+                entry = index_map.get(session_key)
                 if isinstance(entry, dict):
                     spawned_by = entry.get('spawnedBy', '')
                     if spawned_by and ':' in spawned_by:
@@ -420,15 +425,11 @@ def get_timeline_steps(
             try:
                 with open(sessions_index, 'r', encoding='utf-8') as f:
                     index_data = json.load(f)
-                entry = index_data.get(session_key) if isinstance(index_data, dict) else None
-                if entry and isinstance(entry, dict):
-                    sf = entry.get('sessionFile')
-                    sid = entry.get('sessionId')
-                    if sf:
-                        session_file = Path(sf)
-                    elif sid:
-                        session_file = sessions_path / f"{sid}.jsonl"
-                    session_id = sid or session_key
+                index_map = normalize_sessions_index(index_data)
+                entry = index_map.get(session_key)
+                if entry:
+                    session_file = resolve_session_jsonl_path(sessions_path, entry)
+                    session_id = entry.get('sessionId') or session_key
             except (json.JSONDecodeError, IOError):
                 pass
     else:

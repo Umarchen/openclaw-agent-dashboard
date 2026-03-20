@@ -43,8 +43,8 @@
  * 
  * 功能：
  * 1. 从 /api/version 接口获取版本信息
- * 2. 在界面右下角显示版本号
- * 3. hover 时显示完整的版本信息（名称、描述、构建时间等）
+ * 2. 由父级布局放置（通常顶栏 controls 内）
+ * 3. hover 时显示完整的版本信息（名称、描述、构建时间等）；置于顶栏时使用向下展开的提示框
  * 4. 支持加载中、错误等状态显示
  */
 import { ref, onMounted, computed } from 'vue'
@@ -119,19 +119,17 @@ onMounted(() => {
 
 <style scoped>
 .version-display {
-  position: fixed;
-  bottom: 16px;
-  right: 16px;
-  font-size: 12px;
-  color: #999;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.65);
   display: inline-block;
   position: relative;
   z-index: 1000;
+  flex-shrink: 0;
 }
 
 .loading-text,
 .error-text {
-  color: #aaa;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .version-text {
@@ -141,12 +139,12 @@ onMounted(() => {
 }
 
 .version-text:hover {
-  color: #666;
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .tooltip {
   position: absolute;
-  bottom: calc(100% + 8px);
+  top: calc(100% + 8px);
   right: 0;
   background: #fff;
   border: 1px solid #ddd;
@@ -172,11 +170,9 @@ onMounted(() => {
 /* 响应式调整 */
 @media (max-width: 640px) {
   .version-display {
-    bottom: 8px;
-    right: 8px;
-    font-size: 11px;
+    font-size: 0.7rem;
   }
-  
+
   .tooltip {
     min-width: 160px;
     font-size: 11px;

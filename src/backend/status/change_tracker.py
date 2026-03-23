@@ -4,7 +4,7 @@
 """
 import threading
 import time
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List, Set, Optional
 
 
 class ChangeTracker:

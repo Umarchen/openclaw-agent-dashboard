@@ -31,6 +31,11 @@ npm run pack
 
 ## Git 与 Release
 
+> ⚠️ 每次新 session 推 git 前需要先启动 ssh-agent 并加载 key：
+> ```bash
+> eval $(ssh-agent -s) && ssh-add ~/.ssh/id_ed25519
+> ```
+
 ```bash
 git add -A
 git commit -m "feat: 说明（vX.Y.Z）"

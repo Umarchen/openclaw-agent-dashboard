@@ -46,7 +46,23 @@ plugin/scripts/
 docs/analysis/
 docs/reports/
 docs/requirements/
+docs/design/
+docs/specs/
+docs/reviews/
+
+# PM/VR workflow artifacts (local only)
+legacy_code_anatomy.md
+design_manifest.md
+session_registry.json
+VERSION_DISPLAY_*.md
+skills/
+
+# Test reports
+tests/qa_*.md
+
 frontend/design/
 *.tar.gz
 *.tgz
 *.sha256
+workflow_state.json.lock
+.gitkeep

@@ -280,9 +280,9 @@ async function installWithPipUser(reqFile, silent) {
  * @param {object} options
  * @param {boolean} [options.verbose]
  * @param {boolean} [options.venvOnly]
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function installPythonDeps(pluginDir, options = {}) {
+async function installPythonDeps(pluginDir, options = {}) {
   const { verbose = false, venvOnly = false } = options;
   const reqFile = path.join(pluginDir, 'dashboard', 'requirements.txt');
   const venvDir = path.join(pluginDir, 'dashboard', '.venv');
@@ -309,7 +309,7 @@ function installPythonDeps(pluginDir, options = {}) {
 
   // 策略 2: pip --user 兜底
   if (!success && !venvOnly) {
-    const result = installWithPipUser(reqFile, silent);
+    const result = await installWithPipUser(reqFile, silent);
     if (result.success) {
       success = true;
       method = result.method;
@@ -403,7 +403,7 @@ function printPythonDepsHelp(reqFile) {
 // 主函数
 // ============================================
 
-function main() {
+async function main() {
   const { pluginDir, verbose, venvOnly } = parseArgs();
 
   // 检查参数
@@ -426,8 +426,11 @@ function main() {
   }
 
   // 执行安装
-  const success = installPythonDeps(pluginDir, { verbose, venvOnly });
+  const success = await installPythonDeps(pluginDir, { verbose, venvOnly });
   process.exit(success ? 0 : 1);
 }
 
-main();
+main().catch((err) => {
+  logError(err && err.message ? err.message : String(err));
+  process.exit(1);
+});

@@ -9,11 +9,14 @@
  * 2. ~/.openclaw-agent-dashboard/config.json（或 OPENCLAW_AGENT_DASHBOARD_DATA/config.json）
  * 3. openclaw.json 中 plugins.entries.openclaw-agent-dashboard.config.port
  * 4. 默认 38271
+ *
+ * 启动前：若首选端口被占用且响应为本插件的 /api/version，则在 Unix 上 SIGTERM 释放端口（避免重启后落到 38272）。
  */
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const net = require('net');
+const http = require('http');
 const { spawn, execFileSync } = require('child_process');
 
 let dashboardProcess = null;
@@ -145,6 +148,112 @@ async function findAvailablePort(basePort, maxAttempts = 10) {
   return basePort;
 }
 
+/** 与 Python 端 VersionInfo.name 一致（来自 openclaw.plugin.json / package.json） */
+function getExpectedDashboardApiName() {
+  try {
+    const manifestPath = path.join(__dirname, 'openclaw.plugin.json');
+    if (fs.existsSync(manifestPath)) {
+      const j = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (j && typeof j.name === 'string' && j.name.trim()) return j.name.trim();
+      if (j && typeof j.id === 'string' && j.id.trim()) return j.id.trim();
+    }
+  } catch (_) {}
+  return 'openclaw-agent-dashboard';
+}
+
+/**
+ * 探测本机 port 上是否为当前插件的 Dashboard（FastAPI /api/version）
+ * @returns {Promise<boolean>}
+ */
+function probeOurDashboardListening(port) {
+  const expected = getExpectedDashboardApiName();
+  return new Promise((resolve) => {
+    const req = http.get(
+      `http://127.0.0.1:${port}/api/version`,
+      { timeout: 2500 },
+      (res) => {
+        let raw = '';
+        res.on('data', (c) => { raw += c; });
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(raw);
+            resolve(typeof data.name === 'string' && data.name.trim() === expected);
+          } catch (_) {
+            resolve(false);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * 获取在 port 上 LISTEN 的进程 PID（Unix）。Windows 暂不支持，返回空数组。
+ * @returns {number[]}
+ */
+function getListenPidsOnPort(port) {
+  if (process.platform === 'win32') {
+    return [];
+  }
+  const tryLsof = (args) => {
+    try {
+      const out = execFileSync('lsof', args, { encoding: 'utf8', timeout: 5000 });
+      return out
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((s) => parseInt(s, 10))
+        .filter((n) => !Number.isNaN(n) && n > 0);
+    } catch (_) {
+      return [];
+    }
+  };
+  let pids = tryLsof(['-iTCP:' + port, '-sTCP:LISTEN', '-t']);
+  if (pids.length === 0) {
+    pids = tryLsof(['-ti', ':' + port]);
+  }
+  return [...new Set(pids)];
+}
+
+function sleepMs(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Gateway 重启后旧 Dashboard 子进程常仍占用首选端口，导致新实例落到 38272。
+ * 若占用者为本插件的 Dashboard，则 SIGTERM 释放端口后再启动（仅 Unix；Windows 行为不变）。
+ */
+async function reclaimStaleOurDashboardPort(port) {
+  if (await isPortAvailable(port)) return;
+  const ours = await probeOurDashboardListening(port);
+  if (!ours) {
+    return;
+  }
+  const pids = getListenPidsOnPort(port);
+  if (pids.length === 0) {
+    console.log(
+      `[OpenClaw-Dashboard] 端口 ${port} 上检测到本插件 Dashboard，但无法解析占用进程（可安装 lsof），仍尝试后续端口`
+    );
+    return;
+  }
+  console.log(
+    `[OpenClaw-Dashboard] 端口 ${port} 被上一实例 Dashboard 占用 (PID: ${pids.join(', ')})，正在结束以便固定端口`
+  );
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (e) {
+      console.warn(`[OpenClaw-Dashboard] 无法向 PID ${pid} 发送 SIGTERM:`, e.message || e);
+    }
+  }
+  await sleepMs(900);
+}
+
 function startDashboard(config = {}) {
   // 仅在 Gateway 进程内自动启动（OPENCLAW_GATEWAY_PORT 由 Gateway 设置）
   // CLI 命令（status、health 等）加载插件时不会设置此变量，故不启动
@@ -173,9 +282,10 @@ function startDashboard(config = {}) {
     return;
   }
 
-  const portPromise = isExplicitPort
-    ? Promise.resolve(basePort)
-    : findAvailablePort(basePort);
+  const portPromise = (async () => {
+    await reclaimStaleOurDashboardPort(basePort);
+    return isExplicitPort ? basePort : await findAvailablePort(basePort);
+  })();
 
   portPromise.then(async (port) => {
     if (dashboardProcess) return;

@@ -180,7 +180,8 @@ import { useRealtime } from '../../composables'
 import AgentCard from '../AgentCard.vue'
 import type { CollaborationNode, CollaborationEdge, CollaborationFlow, CollaborationDynamic, ModelCall, AgentDisplayStatus, ActiveTask } from '../../types'
 
-const DYNAMIC_POLL_INTERVAL_MS = 3000
+/** 与后端 WS 周期（约 1s）同量级，状态与 activePath 更快对齐 */
+const DYNAMIC_POLL_INTERVAL_MS = 1500
 
 interface AgentForCard {
   name: string

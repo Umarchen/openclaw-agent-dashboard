@@ -25,6 +25,9 @@ from .change_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
 
+# 主 Agent 无 subagent run 时，用语义上「主会话仍在进行」判断 working 的窗口（分钟）。
+# 子 Agent 不使用会话判断，与 activePath / runs 一致，避免任务已结束仍长时间显示工作中。
+MAIN_AGENT_SESSION_ACTIVITY_MINUTES = 1
 
 AgentStatus = Literal['idle', 'working', 'down']
 
@@ -35,8 +38,8 @@ def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus
     
     优先级:
     1. 异常 (down) - 最近5分钟有 stopReason=error
-    2. 工作中 (working) - 有活跃 subagent run 或 session 正在处理（最近5分钟有活动）
-    3. 空闲 (idle) - 无活跃 run 且最近5分钟无 session 活动
+    2. 工作中 (working) - 有活跃 subagent run；或仅主 Agent 且无 run 时主会话在窗口内有更新
+    3. 空闲 (idle) - 其余情况（子 Agent 无 run 即空闲，与协作图 activePath 一致）
     
     Args:
         agent_id: Agent ID
@@ -56,10 +59,12 @@ def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus
     # 检查异常
     if has_recent_errors(agent_id, minutes=5):
         status = 'down'
-    # 检查工作中：subagent run 未结束，或 session 最近有活动
+    # 检查工作中：subagent run 未结束（与连线 activePath 同源）
     elif is_agent_working(agent_id):
         status = 'working'
-    elif has_recent_session_activity(agent_id, minutes=2):
+    elif agent_id == get_main_agent_id() and has_recent_session_activity(
+        agent_id, minutes=MAIN_AGENT_SESSION_ACTIVITY_MINUTES
+    ):
         status = 'working'
     else:
         # 默认空闲
@@ -121,7 +126,9 @@ def get_current_task(agent_id: str) -> str:
     if agent_id != get_main_agent_id():
         return ''
 
-    if not is_agent_working(agent_id) and not has_recent_session_activity(agent_id, minutes=2):
+    if not is_agent_working(agent_id) and not has_recent_session_activity(
+        agent_id, minutes=MAIN_AGENT_SESSION_ACTIVITY_MINUTES
+    ):
         return ''
 
     from data.session_reader import get_latest_user_message_text
@@ -274,8 +281,12 @@ def get_display_status(agent_id: str) -> Dict[str, Any]:
     """
     from data.subagent_reader import get_waiting_child_agent
 
-    # 无任务
+    # 无活跃 run：子 Agent 与协作图连线一致，直接空闲；主 Agent 可看主会话兜底
     if not is_agent_working(agent_id):
+        if agent_id == get_main_agent_id() and has_recent_session_activity(
+            agent_id, minutes=MAIN_AGENT_SESSION_ACTIVITY_MINUTES
+        ):
+            return {'status': 'working', 'display': '处理中...', 'duration': 0, 'alert': False}
         return {'status': 'idle', 'display': '空闲', 'duration': 0, 'alert': False}
 
     # 计算空闲时间（使用 sessions.json 的 updatedAt）

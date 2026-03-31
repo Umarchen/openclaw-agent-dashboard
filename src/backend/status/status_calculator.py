@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 import logging
 import time
 from typing import Literal, Dict, Any, List, Optional
-from data.config_reader import get_agents_list, get_agent_config
+from data.config_reader import get_agents_list, get_agent_config, get_main_agent_id
 from data.subagent_reader import is_agent_working, get_agent_runs
 from data.session_reader import (
     has_recent_errors,
@@ -105,19 +105,34 @@ def get_agents_with_status() -> list:
 
 
 def get_current_task(agent_id: str) -> str:
-    """获取 Agent 当前任务"""
+    """
+    获取 Agent 当前任务描述。
+    优先 subagents/runs.json 中该 Agent 作为执行者的记录。
+    子 Agent 任务仅来自 runs（业务上不存在「仅有会话、无 run」的工作态）。
+    主 Agent 无 run 时，仅在仍活跃时用主会话最近一条 user 消息作摘要，避免空闲时显示陈旧文案。
+    """
     runs = get_agent_runs(agent_id, limit=1)
-    if not runs:
+    if runs:
+        task = runs[0].get('task', '') or ''
+        if len(task) > 60:
+            task = task[:57] + '...'
+        return task
+
+    if agent_id != get_main_agent_id():
         return ''
 
-    run = runs[0]
-    task = run.get('task', '')
+    if not is_agent_working(agent_id) and not has_recent_session_activity(agent_id, minutes=2):
+        return ''
 
-    # 截取前60个字符（统一长度）
-    if len(task) > 60:
-        task = task[:57] + '...'
+    from data.session_reader import get_latest_user_message_text
 
-    return task
+    text = get_latest_user_message_text(agent_id)
+    if not text:
+        return ''
+    text = ' '.join(text.split())
+    if len(text) > 60:
+        text = text[:57] + '...'
+    return text
 
 
 def get_last_active_time(agent_id: str) -> int:

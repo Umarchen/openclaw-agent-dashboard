@@ -136,6 +136,29 @@ def get_recent_messages(agent_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     return messages[-limit:] if len(messages) > limit else messages
 
 
+def get_latest_user_message_text(agent_id: str, scan_limit: int = 80) -> str:
+    """
+    从最新会话中取最近一条 user 消息的文本（不做截断）。
+    用于无 subagent run 时展示当前任务摘要（独立 PM / 仅主会话）。
+    """
+    messages = get_recent_messages(agent_id, limit=scan_limit)
+    for msg in reversed(messages):
+        if msg.get('role') != 'user':
+            continue
+        content = msg.get('content', [])
+        if isinstance(content, str):
+            t = content.strip()
+            if t:
+                return t
+        elif isinstance(content, list):
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'text':
+                    t = (c.get('text') or '').strip()
+                    if t:
+                        return t
+    return ''
+
+
 def has_recent_errors(agent_id: str, minutes: int = 5) -> bool:
     """检查最近是否有错误"""
     messages = get_recent_messages(agent_id, limit=50)

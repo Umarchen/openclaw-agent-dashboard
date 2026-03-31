@@ -14,7 +14,6 @@ from data.subagent_reader import is_agent_working, get_agent_runs
 from data.session_reader import (
     has_recent_errors,
     get_last_error,
-    has_recent_session_activity,
     get_session_updated_at,
     get_pending_tool_call_with_timestamp,
 )
@@ -25,11 +24,35 @@ from .change_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
 
-# 主 Agent 无 subagent run 时，用语义上「主会话仍在进行」判断 working 的窗口（分钟）。
-# 子 Agent 不使用会话判断，与 activePath / runs 一致，避免任务已结束仍长时间显示工作中。
-MAIN_AGENT_SESSION_ACTIVITY_MINUTES = 1
+# 主 Agent 无 run、且尚无 thinking/未完成 tool 时，用会话最近写入时间兜底 working（秒）。
+# 过短则首包前易显示空闲；过长则停跑后若仍有会话文件写入可能短暂误显 working。
+MAIN_AGENT_SOLO_STREAM_GRACE_SEC = 20
 
 AgentStatus = Literal['idle', 'working', 'down']
+
+
+def _main_agent_solo_processing(agent_id: str) -> bool:
+    """
+    主 Agent 未出现在「进行中 run」的 child/requester 里时，是否仍可视作在处理。
+    强信号：thinking 块、尚未收到 toolResult 的工具调用。
+    弱信号（短窗）：sessions 聚合 updatedAt 在 MAIN_AGENT_SOLO_STREAM_GRACE_SEC 内——覆盖纯等模型首包、
+    流式尚未落 thinking/tool 的阶段；不用于填充 currentTask，避免假任务文案。
+    """
+    if agent_id != get_main_agent_id():
+        return False
+    if is_agent_working(agent_id):
+        return False
+    from data.session_reader import (
+        get_pending_tool_call_with_timestamp,
+        has_thinking_block,
+        is_session_updated_within_seconds,
+    )
+    if has_thinking_block(agent_id):
+        return True
+    pending = get_pending_tool_call_with_timestamp(agent_id)
+    if pending and not pending.get('hasResult'):
+        return True
+    return is_session_updated_within_seconds(agent_id, MAIN_AGENT_SOLO_STREAM_GRACE_SEC)
 
 
 def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus:
@@ -38,7 +61,7 @@ def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus
     
     优先级:
     1. 异常 (down) - 最近5分钟有 stopReason=error
-    2. 工作中 (working) - 有活跃 subagent run；或仅主 Agent 且无 run 时主会话在窗口内有更新
+    2. 工作中 (working) - 有活跃 subagent run；或主 Agent 且无 run 时 thinking / 未完成工具 / 短窗内会话写入
     3. 空闲 (idle) - 其余情况（子 Agent 无 run 即空闲，与协作图 activePath 一致）
     
     Args:
@@ -62,9 +85,7 @@ def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus
     # 检查工作中：subagent run 未结束（与连线 activePath 同源）
     elif is_agent_working(agent_id):
         status = 'working'
-    elif agent_id == get_main_agent_id() and has_recent_session_activity(
-        agent_id, minutes=MAIN_AGENT_SESSION_ACTIVITY_MINUTES
-    ):
+    elif _main_agent_solo_processing(agent_id):
         status = 'working'
     else:
         # 默认空闲
@@ -114,7 +135,7 @@ def get_current_task(agent_id: str) -> str:
     获取 Agent 当前任务描述。
     优先 subagents/runs.json 中该 Agent 作为执行者的记录。
     子 Agent 任务仅来自 runs（业务上不存在「仅有会话、无 run」的工作态）。
-    主 Agent 无 run 时，仅在仍活跃时用主会话最近一条 user 消息作摘要，避免空闲时显示陈旧文案。
+    主 Agent 无 run 时不从会话摘 user 文案（user 提示常驻会话尾部，易被当成「当前任务」）。
     """
     runs = get_agent_runs(agent_id, limit=1)
     if runs:
@@ -123,23 +144,7 @@ def get_current_task(agent_id: str) -> str:
             task = task[:57] + '...'
         return task
 
-    if agent_id != get_main_agent_id():
-        return ''
-
-    if not is_agent_working(agent_id) and not has_recent_session_activity(
-        agent_id, minutes=MAIN_AGENT_SESSION_ACTIVITY_MINUTES
-    ):
-        return ''
-
-    from data.session_reader import get_latest_user_message_text
-
-    text = get_latest_user_message_text(agent_id)
-    if not text:
-        return ''
-    text = ' '.join(text.split())
-    if len(text) > 60:
-        text = text[:57] + '...'
-    return text
+    return ''
 
 
 def get_last_active_time(agent_id: str) -> int:
@@ -281,11 +286,9 @@ def get_display_status(agent_id: str) -> Dict[str, Any]:
     """
     from data.subagent_reader import get_waiting_child_agent
 
-    # 无活跃 run：子 Agent 与协作图连线一致，直接空闲；主 Agent 可看主会话兜底
+    # 无活跃 run：子 Agent 与协作图连线一致，直接空闲；主 Agent 仅在有 solo 处理信号时显示忙碌
     if not is_agent_working(agent_id):
-        if agent_id == get_main_agent_id() and has_recent_session_activity(
-            agent_id, minutes=MAIN_AGENT_SESSION_ACTIVITY_MINUTES
-        ):
+        if _main_agent_solo_processing(agent_id):
             return {'status': 'working', 'display': '处理中...', 'duration': 0, 'alert': False}
         return {'status': 'idle', 'display': '空闲', 'duration': 0, 'alert': False}
 

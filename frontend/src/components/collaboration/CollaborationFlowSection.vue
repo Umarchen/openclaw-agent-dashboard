@@ -318,6 +318,19 @@ function getAgentForNode(node: CollaborationNode): AgentForCard {
     ? props.mainAgent
     : props.subAgents?.find(a => a.id === node.id)
 
+  if (fromProps && node.type === 'agent') {
+    // 状态以协作 /dynamic 刷新的 node 为准（与 agentStatuses、连线同源），避免仅跟 WS agents 延迟不一致
+    const collabTasks = getAgentActiveTasks(node.id)
+    let taskLine: string | undefined
+    if (collabTasks?.length === 1) taskLine = collabTasks[0].name
+    else if (collabTasks && collabTasks.length > 1) taskLine = `${collabTasks.length} 个任务进行中`
+    return {
+      name: fromProps.name,
+      status: statusMap(node.status),
+      currentTask: taskLine ?? fromProps.currentTask,
+      lastActiveFormatted: fromProps.lastActiveFormatted
+    }
+  }
   if (fromProps) {
     return {
       name: fromProps.name,

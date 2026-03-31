@@ -241,6 +241,21 @@ def has_recent_session_activity(agent_id: str, minutes: int = 5) -> bool:
     return updated_at > cutoff
 
 
+def is_session_updated_within_seconds(agent_id: str, max_seconds: int) -> bool:
+    """
+    sessions.json 聚合的 updatedAt 是否在 max_seconds 秒内。
+    用于主 Agent 纯流式/首包前等「暂无 thinking、无 tool」时的短时 working 兜底。
+    """
+    import time
+    if max_seconds <= 0:
+        return False
+    updated_at = get_session_updated_at(agent_id)
+    if not updated_at:
+        return False
+    cutoff = int(time.time() * 1000) - max_seconds * 1000
+    return updated_at > cutoff
+
+
 def get_session_turns(agent_id: str, session_key: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
     """
     解析 jsonl 获取会话轮次，每轮包含 user/assistant/toolResult 及 usage

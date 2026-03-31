@@ -10,7 +10,7 @@
  * 3. openclaw.json 中 plugins.entries.openclaw-agent-dashboard.config.port
  * 4. 默认 38271
  *
- * 启动前：若首选端口被占用且响应为本插件的 /api/version，则在 Unix 上 SIGTERM 释放端口（避免重启后落到 38272）。
+ * 启动前：若首选端口被占用且 /api/version 确认为本插件 Dashboard，则在 Unix 上结束旧进程（SIGTERM → 必要时 SIGKILL；无 lsof 时 Linux 可试 fuser），尽量仍在 38271 起新实例。
  */
 const path = require('path');
 const os = require('os');
@@ -225,33 +225,68 @@ function sleepMs(ms) {
 }
 
 /**
- * Gateway 重启后旧 Dashboard 子进程常仍占用首选端口，导致新实例落到 38272。
- * 若占用者为本插件的 Dashboard，则 SIGTERM 释放端口后再启动（仅 Unix；Windows 行为不变）。
+ * Linux：无 lsof PID 时尝试 fuser 释放监听该 TCP 端口的进程（仅在已确认 /api/version 为本插件后调用）。
+ * @param {number} port
+ */
+function tryFuserKillTcpPort(port) {
+  if (process.platform !== 'linux') return;
+  try {
+    execFileSync('fuser', ['-k', `${port}/tcp`], { stdio: 'ignore', timeout: 8000 });
+  } catch (_) {
+    /* fuser 不可用或端口已释放 */
+  }
+}
+
+/**
+ * Gateway 重启/升级后旧 Dashboard 常仍占用首选端口，导致新实例落到 38272 或「跳过启动」仍连旧进程。
+ * 若占用者为本插件 Dashboard（/api/version 校验），则多轮结束旧进程后再启动（仅 Unix；Windows 不变）。
  */
 async function reclaimStaleOurDashboardPort(port) {
-  if (await isPortAvailable(port)) return;
-  const ours = await probeOurDashboardListening(port);
-  if (!ours) {
-    return;
-  }
-  const pids = getListenPidsOnPort(port);
-  if (pids.length === 0) {
-    console.log(
-      `[OpenClaw-Dashboard] 端口 ${port} 上检测到本插件 Dashboard，但无法解析占用进程（可安装 lsof），仍尝试后续端口`
-    );
-    return;
-  }
-  console.log(
-    `[OpenClaw-Dashboard] 端口 ${port} 被上一实例 Dashboard 占用 (PID: ${pids.join(', ')})，正在结束以便固定端口`
-  );
-  for (const pid of pids) {
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch (e) {
-      console.warn(`[OpenClaw-Dashboard] 无法向 PID ${pid} 发送 SIGTERM:`, e.message || e);
+  const maxPasses = 4;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    if (await isPortAvailable(port)) {
+      return;
     }
+
+    const ours = await probeOurDashboardListening(port);
+    if (!ours) {
+      return;
+    }
+
+    const pids = getListenPidsOnPort(port);
+    if (pids.length > 0) {
+      const sig = pass === 0 ? 'SIGTERM' : 'SIGKILL';
+      console.log(
+        `[OpenClaw-Dashboard] 端口 ${port} 被上一实例 Dashboard 占用 (PID: ${pids.join(', ')})，${sig} 以便在 ${port} 启动新实例`
+      );
+      for (const pid of pids) {
+        try {
+          process.kill(pid, sig);
+        } catch (e) {
+          console.warn(`[OpenClaw-Dashboard] 无法向 PID ${pid} 发送 ${sig}:`, e.message || e);
+        }
+      }
+      await sleepMs(pass === 0 ? 1200 : 800);
+      continue;
+    }
+
+    /* 已确认是本插件 HTTP 服务，但拿不到 PID（常见：未装 lsof） */
+    if (process.platform === 'linux' && pass >= maxPasses - 2) {
+      console.log(
+        `[OpenClaw-Dashboard] 端口 ${port} 上为本插件 Dashboard，尝试 fuser 释放（建议安装 lsof 以便精确杀进程）`
+      );
+      tryFuserKillTcpPort(port);
+      await sleepMs(700);
+      continue;
+    }
+
+    if (pass === 0) {
+      console.log(
+        `[OpenClaw-Dashboard] 端口 ${port} 上检测到本插件 Dashboard，但无法解析占用进程（可安装 lsof），稍后重试或换端口`
+      );
+    }
+    await sleepMs(500);
   }
-  await sleepMs(900);
 }
 
 function startDashboard(config = {}) {

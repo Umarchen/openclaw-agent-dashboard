@@ -8,7 +8,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import logging
 import time
-from typing import Literal, Dict, Any, List, Optional
+from typing import Literal, Dict, Any, List
 from data.config_reader import get_agents_list, get_agent_config, get_main_agent_id
 from data.subagent_reader import is_agent_working, get_agent_runs
 from data.session_reader import (
@@ -108,8 +108,10 @@ def get_agents_with_status() -> list:
         agent_id = agent.get('id')
         status = calculate_agent_status(agent_id)
         
-        # 获取当前任务
+        # 获取当前任务（仅工作中展示；空闲时不应残留已结束 run 的文案）
         current_task = get_current_task(agent_id)
+        if status == 'idle':
+            current_task = ''
         
         # 获取最后活跃时间
         last_active = get_last_active_time(agent_id)
@@ -133,13 +135,13 @@ def get_agents_with_status() -> list:
 def get_current_task(agent_id: str) -> str:
     """
     获取 Agent 当前任务描述。
-    优先 subagents/runs.json 中该 Agent 作为执行者的记录。
-    子 Agent 任务仅来自 runs（业务上不存在「仅有会话、无 run」的工作态）。
-    主 Agent 无 run 时不从会话摘 user 文案（user 提示常驻会话尾部，易被当成「当前任务」）。
+    仅从未结束的 run（endedAt 为空）读取；已结束的 run 只代表历史，不应在空闲时仍当「当前任务」展示。
     """
-    runs = get_agent_runs(agent_id, limit=1)
-    if runs:
-        task = runs[0].get('task', '') or ''
+    runs = get_agent_runs(agent_id, limit=40)
+    for run in runs:
+        if run.get('endedAt') is not None:
+            continue
+        task = run.get('task', '') or ''
         if len(task) > 60:
             task = task[:57] + '...'
         return task
@@ -376,6 +378,8 @@ async def get_changed_agents() -> List[Dict[str, Any]]:
         # 计算状态（会使用缓存）
         status = calculate_agent_status(agent_id)
         current_task = get_current_task(agent_id)
+        if status == 'idle':
+            current_task = ''
         last_active = get_last_active_time(agent_id)
         last_error = get_last_error(agent_id) if status == 'down' else None
         

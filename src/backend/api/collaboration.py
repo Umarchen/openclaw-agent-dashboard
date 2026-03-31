@@ -591,6 +591,10 @@ async def get_collaboration():
         main_error = _get_agent_error_info(main_agent_id)
         main_stuck = _check_agent_stuck(main_agent_id)
 
+        main_ct = main_current_task if main_current_task else None
+        if main_status == 'idle':
+            main_ct = None
+
         main_agent = CollaborationNode(
             id=main_agent_id,
             type="agent",
@@ -598,7 +602,7 @@ async def get_collaboration():
             status=main_status,
             timestamp=int(__import__('time').time() * 1000),
             metadata=agent_models.get(main_agent_id),
-            currentTask=main_current_task if main_current_task else None,
+            currentTask=main_ct,
             error=main_error,
             stuckWarning=main_stuck
         )
@@ -623,6 +627,9 @@ async def get_collaboration():
                 if f'agent:{agent_id}:' in child_key:
                     current_task = _clean_task_name(run.get('task', ''))
                     break
+
+            if status == 'idle':
+                current_task = ''
 
             # 获取错误和卡顿信息
             error_info = _get_agent_error_info(agent_id)

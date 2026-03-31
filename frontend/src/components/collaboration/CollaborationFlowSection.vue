@@ -322,12 +322,17 @@ function getAgentForNode(node: CollaborationNode): AgentForCard {
     // 状态以协作 /dynamic 刷新的 node 为准（与 agentStatuses、连线同源），避免仅跟 WS agents 延迟不一致
     const collabTasks = getAgentActiveTasks(node.id)
     let taskLine: string | undefined
-    if (collabTasks?.length === 1) taskLine = collabTasks[0].name
-    else if (collabTasks && collabTasks.length > 1) taskLine = `${collabTasks.length} 个任务进行中`
+    const liveIdle = node.status === 'idle' || node.status === 'error'
+    // 空闲/异常时不展示「当前任务」，也不回退 props（避免 agents 通道晚一拍仍带旧 currentTask）
+    if (!liveIdle) {
+      if (collabTasks?.length === 1) taskLine = collabTasks[0].name
+      else if (collabTasks && collabTasks.length > 1) taskLine = `${collabTasks.length} 个任务进行中`
+    }
+    const fallbackTask = liveIdle ? undefined : fromProps.currentTask
     return {
       name: fromProps.name,
       status: statusMap(node.status),
-      currentTask: taskLine ?? fromProps.currentTask,
+      currentTask: taskLine ?? fallbackTask,
       lastActiveFormatted: fromProps.lastActiveFormatted
     }
   }

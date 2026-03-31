@@ -10,6 +10,10 @@
  * 选项:
  *   --verbose, -v    显示详细输出
  *   --venv-only      仅使用 venv，不回退 pip
+ *
+ * 环境变量:
+ *   PIP_INDEX_URL / PIP_MIRROR  指定 pip 源（与 pip 一致）
+ *   OPENCLAW_PIP_MIRROR         强制镜像: tsinghua | tuna | https://完整索引 URL
  */
 
 const fs = require('fs');
@@ -112,8 +116,39 @@ function getVenvPython(venvDir) {
 }
 
 // ============================================
-// Pip 镜像
+// Pip 镜像与安装选项
 // ============================================
+
+/** 优先使用 wheel，避免在 Windows 上从源码编译 pydantic-core 等（需 Rust） */
+const PIP_PREFER_BINARY = ['--prefer-binary'];
+
+const TSINGHUA_PIP_ARGS = [
+  '-i',
+  'https://pypi.tuna.tsinghua.edu.cn/simple',
+  '--trusted-host',
+  'pypi.tuna.tsinghua.edu.cn',
+];
+
+/**
+ * 解析 OPENCLAW_PIP_MIRROR，返回与 getPipMirrorArgs 相同形状的额外参数；无法识别则 null
+ * @returns {string[] | null}
+ */
+function mirrorArgsFromOpenClawEnv() {
+  const raw = (process.env.OPENCLAW_PIP_MIRROR || '').trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower === 'tsinghua' || lower === 'tuna') {
+    return TSINGHUA_PIP_ARGS;
+  }
+  if (lower.startsWith('http://') || lower.startsWith('https://')) {
+    try {
+      return ['-i', raw, '--trusted-host', new URL(raw).hostname];
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 // ============================================
 // PyPI 连通性检测
@@ -145,6 +180,11 @@ function checkPypiReachable() {
  * @returns {Promise<string[]>}
  */
 async function getPipMirrorArgs() {
+  const forced = mirrorArgsFromOpenClawEnv();
+  if (forced) {
+    logInfo('  已设置 OPENCLAW_PIP_MIRROR，使用该镜像');
+    return forced;
+  }
   const envMirror = process.env.PIP_INDEX_URL || process.env.PIP_MIRROR || '';
   if (envMirror) {
     return ['-i', envMirror, '--trusted-host', new URL(envMirror).hostname];
@@ -152,7 +192,7 @@ async function getPipMirrorArgs() {
   const reachable = await checkPypiReachable();
   if (!reachable) {
     logInfo('  pypi.org 不可达，使用清华镜像');
-    return ['-i', 'https://pypi.tuna.tsinghua.edu.cn/simple', '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'];
+    return [...TSINGHUA_PIP_ARGS];
   }
   return [];
 }
@@ -198,13 +238,17 @@ async function installWithVenv(reqFile, venvDir, silent) {
   // 升级 pip（静默，失败不影响）
   // 如果设了镜像，升级 pip 也用镜像
   const pipMirrorArgs = await getPipMirrorArgs();
-  runCommand(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '-q', ...pipMirrorArgs], { silent: true });
+  runCommand(
+    venvPython,
+    ['-m', 'pip', 'install', '--upgrade', ...PIP_PREFER_BINARY, 'pip', '-q', ...pipMirrorArgs],
+    { silent: true }
+  );
 
   // 安装依赖
   logInfo('  安装依赖...');
   const installResult = runCommand(
     venvPython,
-    ['-m', 'pip', 'install', '-r', reqFile, '-q', ...pipMirrorArgs],
+    ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', ...pipMirrorArgs],
     { silent, timeout: 180000 }
   );
 
@@ -212,11 +256,15 @@ async function installWithVenv(reqFile, venvDir, silent) {
     // 默认源失败，尝试清华镜像
     if (!pipMirrorArgs.length) {
       logWarn('  默认源失败，尝试清华镜像...');
-      const tsinghuaArgs = ['-i', 'https://pypi.tuna.tsinghua.edu.cn/simple', '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'];
-      runCommand(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '-q', ...tsinghuaArgs], { silent: true, timeout: 60000 });
+      const tsinghuaArgs = [...TSINGHUA_PIP_ARGS];
+      runCommand(
+        venvPython,
+        ['-m', 'pip', 'install', '--upgrade', ...PIP_PREFER_BINARY, 'pip', '-q', ...tsinghuaArgs],
+        { silent: true, timeout: 60000 }
+      );
       const retryResult = runCommand(
         venvPython,
-        ['-m', 'pip', 'install', '-r', reqFile, '-q', ...tsinghuaArgs],
+        ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', ...tsinghuaArgs],
         { silent, timeout: 180000 }
       );
       if (retryResult.success) return true;
@@ -241,11 +289,19 @@ async function installWithPipUser(reqFile, silent) {
   logInfo('  尝试: pip --user（PEP 668 兜底）');
 
   const pipMirrorArgs = await getPipMirrorArgs();
-  const tsinghuaArgs = ['-i', 'https://pypi.tuna.tsinghua.edu.cn/simple', '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'];
+  const tsinghuaArgs = [...TSINGHUA_PIP_ARGS];
 
   const pipCommands = [
-    { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', '--user', ...pipMirrorArgs], name: 'pip --user' },
-    { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', ...pipMirrorArgs], name: 'pip' },
+    {
+      cmd: getPythonCmd(),
+      args: ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', '--user', ...pipMirrorArgs],
+      name: 'pip --user',
+    },
+    {
+      cmd: getPythonCmd(),
+      args: ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', ...pipMirrorArgs],
+      name: 'pip',
+    },
   ];
 
   for (const { cmd, args, name } of pipCommands) {
@@ -261,8 +317,16 @@ async function installWithPipUser(reqFile, silent) {
   if (!pipMirrorArgs.length) {
     logWarn('  默认源失败，尝试清华镜像...');
     const retryCommands = [
-      { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', '--user', ...tsinghuaArgs], name: 'pip --user (tsinghua)' },
-      { cmd: getPythonCmd(), args: ['-m', 'pip', 'install', '-r', reqFile, '-q', ...tsinghuaArgs], name: 'pip (tsinghua)' },
+      {
+        cmd: getPythonCmd(),
+        args: ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', '--user', ...tsinghuaArgs],
+        name: 'pip --user (tsinghua)',
+      },
+      {
+        cmd: getPythonCmd(),
+        args: ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', ...tsinghuaArgs],
+        name: 'pip (tsinghua)',
+      },
     ];
     for (const { cmd, args, name } of retryCommands) {
       if (!commandExists(cmd)) continue;
@@ -367,9 +431,19 @@ function printPythonDepsHelp(reqFile) {
     case 'windows':
       console.log('检测到 Windows 系统');
       console.log('');
-      console.log('1. 从 https://www.python.org 下载安装 Python 3');
+      console.log('1. 从 https://www.python.org 下载安装 Python 3（若遇依赖编译问题，可优先使用 3.11 / 3.12）');
       console.log('2. 安装时务必勾选 "Add Python to PATH"');
       console.log('3. 安装完成后重新打开终端');
+      console.log('');
+      console.log('若报错含 getaddrinfo failed / Errno 11001：多为 DNS 或公司网络无法访问 pypi.org');
+      console.log('  可在 PowerShell 中先设置镜像再安装，例如：');
+      console.log('    $env:OPENCLAW_PIP_MIRROR="tsinghua"');
+      console.log('  或（与 pip 一致）：');
+      console.log('    $env:PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"');
+      console.log('    $env:PIP_TRUSTED_HOST="pypi.tuna.tsinghua.edu.cn"');
+      console.log('');
+      console.log('若报错含 pydantic-core、Rust、Cargo：多为 pip 走了源码包。请拉取最新插件（安装脚本会加 --prefer-binary），');
+      console.log('  或手动：pip install --prefer-binary -r requirements.txt');
       console.log('');
       break;
 

@@ -1,0 +1,1028 @@
+[33mcommit daafaaace8e53fb25c0b9201961cb04b14a57a11[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 28 10:01:28 2026
+
+    chore: clean up PM artifacts and process docs from repo
+
+[33mcommit ce49e92c8f1cfa25cec013d26629ffc9353ac33f[m[33m ([m[1;33mtag: v1.0.24[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Mon Mar 23 17:32:48 2026
+
+    feat: update change_tracker (v1.0.24)
+
+[33mcommit 1c8c8cb8326654f99441649ebf06d34cd944ff5d[m[33m ([m[1;33mtag: v1.0.23[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 20 16:33:44 2026
+
+    release: v1.0.23 agent status sync + publish fix
+
+[33mcommit e003979cdedf954613c649a5e98680ce16aabfa0[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 20 16:21:41 2026
+
+    fix: add bin field to package.json for npx execution
+
+[33mcommit 968e3455d650382c561f79b7868a8883a0679e8c[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 20 16:15:27 2026
+
+    feat: agent status sync with dynamic chain response
+    
+    - Add StatusCache (TTL 1s, max 100 entries) for status calculation caching
+    - Add ChangeTracker (max 10 snapshots) for incremental state change detection
+    - WebSocket incremental push (broadcast_state_update) + dynamic API integration
+    - Reduce push interval from 3s to 1s
+    - File watcher uses pathlib for cross-platform agent ID extraction
+    - Frontend supports incremental agent state updates via agents_update event
+    
+    REQ_AGENT_STATUS_001~006 covered, SA_APPROVED.
+    [Auto-Promote]
+
+[33mcommit d0d2da676403a5277ea7b420c933dea92e4863c2[m[33m ([m[1;33mtag: v1.0.20[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 20 14:12:24 2026
+
+    fix: 插件目录版本元数据探测（package.json / openclaw.plugin.json）（v1.0.20）
+    
+    Made-with: Cursor
+
+[33mcommit 327b0b788c20b9c87eaadd1f88ffc1890d00e089[m[33m ([m[1;33mtag: v1.0.19[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 20 12:42:05 2026
+
+    release: v1.0.19 版本信息插件路径与接口降级、前端同源请求
+    
+    - version_info_reader: 兼容插件目录与开发仓库的 package.json 路径
+    - /api/version: 异常时返回降级 JSON，避免 500
+    - VersionDisplay: 使用 location.origin + no-store 请求版本接口
+    
+    Made-with: Cursor
+
+[33mcommit cbe1538c6febe43872e1cc246961dfd51916cd71[m[33m ([m[1;33mtag: v1.0.18[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 20 11:46:43 2026
+
+    release: v1.0.18 版本展示与 /api/version 修复、sessions.json 兼容与文档
+    
+    - 修复 version 路由双重 /api 前缀；版本组件移至顶栏
+    - sessions.json 支持 entries 嵌套与 sessionFile 相对路径（时序/子 Agent/性能汇总等）
+    - 维护者发布文档（中文版 + MAINTAINER_RELEASE_WORKFLOW）
+    
+    Made-with: Cursor
+
+[33mcommit 8992b1a999c8125511c4e9a04ea9ec03ef6bad44[m[33m ([m[1;33mtag: v1.0.17[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 20 10:44:20 2026
+
+    chore: npm 插件发布流、README 迁移说明、跨平台 Python 回退
+    
+    - 根 package.json private + publish:npm；plugin 为发布根
+    - build-plugin 复制 install-python-deps 到 plugin/scripts
+    - install.js 仅完整 plugin 才走本地拷贝
+    - plugin/index.js 系统 Python 探测 python3/python
+    - README: OpenClaw 安装、迁移、升级说明
+    - .gitignore: plugin/scripts（pack 生成）
+    
+    Made-with: Cursor
+
+[33mcommit 012160976320a838abfefbbc9d705aa489fb90d5[m[33m ([m[1;33mtag: v1.0.15[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 22:18:23 2026
+
+    chore: bump version to 1.0.15
+
+[33mcommit c7eeded8834b516670c564d97be572a7671237e8[m[33m ([m[1;33mtag: v1.0.14[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 22:16:12 2026
+
+    feat: v1.0.14 - version display feature + plugin install fix
+    
+    - 新增版本号显示功能（后端API + 前端组件）
+    - 修复 Windows 插件安装路径问题
+    - 版本号 1.0.13 → 1.0.14
+
+[33mcommit 07c16d85fc207d6c75852d31db23cc88d2456999[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 22:11:04 2026
+
+    feat(vrt): release(vrt): v20260319141104 including design, tests, reviews, VERSION_DISPLAY_implementation_summary.md, VERSION_DISPLAY_delivery.md, traceability_manifest.json, design_manifest.md [Auto-Promote]
+    
+    Synced at 2026-03-19 14:11 UTC by VRT Manager.
+
+[33mcommit 0b188f97f12652339c048a1c7249a9da693cb25a[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 22:07:31 2026
+
+    feat: use bundled plugin dir from npm package, skip GitHub download
+
+[33mcommit f17249e01168c057e357e94b17795e9960d0a600[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 21:51:04 2026
+
+    fix: async pipUser, resolve version from local package.json first
+
+[33mcommit d89e821d925b839bd7a68d889ae485d5380ad14a[m[33m ([m[1;33mtag: v1.0.13[m[33m, [m[1;33mtag: v1.0.12[m[33m, [m[1;33mtag: v1.0.11[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 21:40:19 2026
+
+    feat: auto-detect pypi.org reachability, fallback to Tsinghua mirror
+
+[33mcommit 5718ad5a2563dc6687a69c5942fd866e73f9328d[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 20:57:04 2026
+
+    feat: cache downloaded tgz locally to avoid repeated downloads
+
+[33mcommit 27f2f9974c71298c7214c53c5c8d30648f6a59cf[m[33m ([m[1;33mtag: v1.0.10[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 20:44:36 2026
+
+    feat(vrt): release(vrt): v20260319124436 including specs, reviews, legacy_code_anatomy.md, session_registry.json [Auto-Promote]
+    
+    Synced at 2026-03-19 12:44 UTC by VRT Manager.
+
+[33mcommit 9ec12c886adf854c37331a813b0c9f9bf2e50dc9[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 20:13:24 2026
+
+    chore: bump plugin version to 1.0.10
+
+[33mcommit 3f31e071df909c86553d6d65729e579ecf57a1f9[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 20:03:19 2026
+
+    v1.0.10
+
+[33mcommit cd1cd210831b87fa1adfa2ab32907eedd35f63bf[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 19:30:49 2026
+
+    fix: remove plugins install step, update Windows troubleshooting doc
+
+[33mcommit 6cf9a6bf83bda4027523d849b09533b1ff014778[m[33m ([m[1;33mtag: v1.0.9[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 19:26:29 2026
+
+    feat: auto fallback to Tsinghua pip mirror for Chinese users
+
+[33mcommit b882558e2a10706c7231f0a8ddf39a0f2ca65ea4[m[33m ([m[1;33mtag: v1.0.8[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 19:14:22 2026
+
+    fix: Windows path escaping in runCommand (use double quotes instead of single)
+
+[33mcommit 8c991f29f2eac7d55812302543d1e31ca6cc7d3e[m[33m ([m[1;33mtag: v1.0.7[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 19:07:57 2026
+
+    feat: pure Node.js tgz extraction (no system tar dependency, Windows compatible)
+
+[33mcommit 6ee4ec12300ebcefac044f9df6f6cec056ccb93d[m[33m ([m[1;33mtag: v1.0.6[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 17:45:50 2026
+
+    chore: bump version to 1.0.6, add tzdata to requirements
+
+[33mcommit 2b98281e96343ec9d4a8e618b2d3c1989739f77f[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 17:42:42 2026
+
+    fix: support python command on Windows (not just python3)
+
+[33mcommit 776e44abf0b92383d6410a8948ad3971e6abba4d[m[33m ([m[1;33mtag: v1.0.5[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 17:33:37 2026
+
+    chore: add *.tgz to .gitignore
+
+[33mcommit ad06193958af4d55773bbcbb42c3f9c9e94d93b4[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 17:31:31 2026
+
+    chore: bump version to 1.0.5
+
+[33mcommit 527d7eff6b4b8780fee8f7e2586d887b822fb8ae[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 17:28:46 2026
+
+    docs: update README with npx install method
+
+[33mcommit 3b92d2fb996b13833779e6f2219b2ab60e4fc327[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 17:06:36 2026
+
+    feat: add npm publish support and remote install mode
+    
+    - install.js: add remote mode (npx) - downloads from GitHub Release
+    - install.js: local mode (npm run deploy) unchanged
+    - common.js: add downloadFile, backupDir, restoreBackup, cleanupBackups
+    - package.json: add bin field, remove private, add metadata
+    - Smooth upgrade: backup old version, auto cleanup old backups
+
+[33mcommit aed9c111fb0c33067449ed5dff93e731bc679a1a[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 16:55:58 2026
+
+    chore: clean up process analysis docs (design/analysis/technical/refactor)
+
+[33mcommit 9231d4e2e15444ec1bee8a1b61fa96a2f49704b6[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 16:54:04 2026
+
+    fix(Windows): 统一 OpenClaw 路径解析，修复协作流程/模型配置问题
+    
+    - config_reader: 新增 get_openclaw_root()，优先级 OPENCLAW_STATE_DIR > OPENCLAW_HOME > ~/.openclaw
+    - OPENCLAW_HOME 兼容两种写法：直接指向 .openclaw 或指向用户 Home
+    - 所有模块统一使用 get_openclaw_root()，移除硬编码 Path.home()/.openclaw
+    - 新增 GET /api/debug/paths 诊断接口，便于跨机器环境排查
+    - 更新 windows-collaboration-model-paths-troubleshooting.md 文档
+    
+    Made-with: Cursor
+
+[33mcommit f6eb3585cb02039bc9423037cf2075180488163d[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 19 16:42:52 2026
+
+    fix: WebSocket 连接恢复、跨平台启动、心跳协议
+    
+    - RealtimeDataManager: onerror 时触发 handleDisconnect 进入重连/HTTP 轮询
+    - package.json: start 改为 node scripts/start.js，支持 Windows
+    - websocket: 心跳支持 JSON ping/pong，兼容纯文本 ping
+    - 新增 scripts/start.js 跨平台启动脚本
+    - 新增测试脚本与文档
+    
+    Made-with: Cursor
+
+[33mcommit 593eaa8ef54fde0c1656d653e217a4226a16bd64[m[33m ([m[1;33mtag: v1.0.4[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 11 12:18:05 2026
+
+    chore: bump version to 1.0.4
+
+[33mcommit 17d5a7f4ad3d8bd1442cf9cd00eab41355c0a5e3[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 11 12:16:54 2026
+
+    fix_协作流程_模型面板
+
+[33mcommit 08199f02f6d56f177a6f77ff5d979b520291bf21[m[33m ([m[1;33mtag: v1.0.3[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 11 11:21:04 2026
+
+    chore: bump version to 1.0.3
+
+[33mcommit 27315c3b0d258c456b6dc459e4c12a554beb1c62[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 11 11:15:25 2026
+
+    协作流程-高级-模型配置与openclaw保持一致
+
+[33mcommit 8427e64054e8c10f6e0d8bed476fac142ae4c62f[m[33m ([m[1;33mtag: v1.0.2[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Tue Mar 10 21:04:25 2026
+
+    chore: bump version to 1.0.2
+
+[33mcommit 7020a2f8114250bc0ad0a0a6b7bdc2e5ddf6218b[m
+Author: Umarchen <530638772@qq.com>
+Date:   Tue Mar 10 21:02:03 2026
+
+    模型配置
+
+[33mcommit 6bb7b9d9b31740be301dd92ad11faa4cc6c93bd0[m
+Author: Umarchen <530638772@qq.com>
+Date:   Tue Mar 10 20:55:15 2026
+
+    task_history.json路径调整_任务状态bug
+
+[33mcommit c86dc58a14627900e186ee9992755fa9862c219d[m
+Author: Umarchen <530638772@qq.com>
+Date:   Mon Mar 9 20:22:49 2026
+
+    fix: Windows 下打包时自动补全 frontend 依赖(.bin)，避免 vite 找不到
+
+[33mcommit f7db4d1413e90af1da65d8801dd4cdfac900e6ed[m[33m ([m[1;33mtag: v1.0.1[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Mon Mar 9 16:44:45 2026
+
+    debian系统安装
+
+[33mcommit 6b45602c09ea3d7b139d338ae20b18603191960e[m
+Author: Umarchen <530638772@qq.com>
+Date:   Mon Mar 9 16:23:49 2026
+
+    release ture
+
+[33mcommit ff7eba5880c67e81293afeccd13a363383dd8cb1[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 22:05:49 2026
+
+    fix: 优化多任务并行显示
+    
+    1. 主 Agent 卡片宽度从 260px 加宽到 320px
+    2. 子 Agent 不显示"并行任务"标题，直接显示任务内容
+    3. 移除流程图中的任务节点，任务信息由 Agent 卡片内 agentActiveTasks 提供
+       - 避免不相关任务被错误渲染成链状
+       - 流程图只显示 Agent 之间的委托关系
+
+[33mcommit f846ac38a73420b36750674559980dfc0b05c1ae[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 21:47:28 2026
+
+    fix: 修复单任务模式下不显示子 Agent 指示器的问题
+    
+    - 当有 agentTasks 时优先使用它显示任务信息
+    - 单任务也显示派发目标子 Agent（→ agent-name）
+
+[33mcommit fa3543866da1b348e801640a2ddebbbfa607c0e8[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 21:36:48 2026
+
+    feat: 协作流程支持多任务并行显示
+    
+    - 后端新增 ActiveTask 模型和 _build_agent_active_tasks 函数
+    - 扩展 CollaborationFlow 和 CollaborationDynamic 返回 agentActiveTasks
+    - 前端 AgentCard 支持可折叠的多任务列表展示
+    - 自适应不同组网拓扑（单Agent/主从/嵌套）
+
+[33mcommit 4662a92e82f64048313bc491d9a583665b83bd7d[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 17:34:38 2026
+
+    refactor: 移除 ErrorCenterPanel 中硬编码的 Agent 名称
+    
+    Agent 名称现在完全从 /api/agents 动态获取，找不到时直接显示 agentId
+
+[33mcommit 5662f674a75aea74d2243a9f626c42ad0074b97c[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 17:30:52 2026
+
+    feat: 增强错误中心模块
+    
+    新增功能：
+    - 统计卡片：总错误数、Session 错误、Model 错误、API 健康状态
+    - 24 小时错误趋势图
+    - 错误类型分布可视化
+    - API 状态卡片（整合原 api_status 模块）
+    - 按 Agent / 类型筛选
+    - 错误详情展开查看
+    
+    后端增强：
+    - 新增 /api/errors/summary 统一接口
+    - 新增 /api/errors/stats 统计数据
+    - 新增 /api/errors/api-status API 状态
+    - 更精细的错误分类（rate-limit/token-limit/timeout/auth/unknown）
+
+[33mcommit 3f6189135413f579174cd10092592735ad9d9c1d[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 17:26:39 2026
+
+    fix: 清理 RealtimeDataManager 中对已删除 API 的引用
+
+[33mcommit 04739f96d4fed3ad8d484da224becc5dcc1ca1f1[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 17:23:18 2026
+
+    refactor: 删除低价值模块 - 机制追踪/项目流水线/API状态
+    
+    分析结论：
+    - 机制追踪：开发者调试工具，非用户关注点
+    - 项目流水线：无数据来源的假功能
+    - API 状态：与错误中心重复，合并处理
+    
+    变更：
+    - 删除前端组件：ApiStatusCard, MechanismTrackingPanel, WorkflowView
+    - 删除后端 API：mechanisms, workflow, api_status
+    - 清理 App.vue 中的相关引用
+    - 新增需求分析文档
+
+[33mcommit 5b39a2ed65afc816542486930b3c7e59266d4134[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 17:11:04 2026
+
+    feat: 性能模块增强 - Token分析/TPM-RPM/详细面板
+
+[33mcommit 14869b7ca0aaba71c6031b3193d64b2df0ee298d[m[33m ([m[1;33mtag: v1.0.0[m[33m)[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 14:57:16 2026
+
+    fix: remove npm cache to avoid lock file requirement
+
+[33mcommit c6647e5414db23a6cdde0be792b7060364d4a921[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 14:52:25 2026
+
+    fix: use frontend lock file for CI cache
+
+[33mcommit f807583058caa2d0b5176f745251b26c9b7217ee[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 12:26:19 2026
+
+    feat: 任务状态模块增强 - 进度计算/子任务/快速筛选/时间线
+    
+    后端改进:
+    - 新增 _calculate_progress() 基于消息数动态计算进度
+    - 新增 _extract_subtasks_from_session() 提取嵌套子任务
+    - 新增 /api/tasks/{id}/timeline 时间线 API
+    - 修复 ISO 格式时间戳解析
+    
+    前端改进:
+    - 顶部统计栏可点击快速筛选
+    - 任务详情弹窗新增执行时间线视图
+    
+    插件改进:
+    - 移除 detached 模式，Dashboard 随 Gateway 一起退出
+    
+    文档:
+    - 新增任务状态模块分析和开发计划文档
+
+[33mcommit 81afd401bf0254be67ffee727b7e97137dad0a1b[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 00:05:24 2026
+
+    chore: 删除过程文档
+
+[33mcommit 7139840b9a511ac793d1378aa60aa1391097150a[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Mar 7 00:04:46 2026
+
+    feat: 添加 Node.js 跨平台安装脚本，支持 Windows
+    
+    - 新增 scripts/lib/common.js 公共函数库（跨平台）
+    - 新增 scripts/install.js 主安装脚本（跨平台）
+    - 新增 scripts/install-python-deps.js Python 依赖安装（跨平台）
+    - 修改 package.json 使用 Node.js 脚本进行部署
+    - 更新 README.md 添加 Windows PowerShell/CMD 安装说明
+    
+    安装方式：
+    - npm run deploy（跨平台，支持 Windows）
+    - curl | bash（兼容现有用户）
+
+[33mcommit 89d36a68ec7e4fd656315ff1d222b843d7b40fc7[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 6 23:43:58 2026
+
+    refactor: 重构安装系统，增强错误提示与文档
+    
+    ## 主要变更
+    
+    ### 新增文件
+    - scripts/lib/common.sh: 公共函数库（日志、配置目录解析、版本解析等）
+    - scripts/install.sh: curl | bash 一键安装入口
+    - scripts/install-python-deps.sh: 独立的 Python 依赖安装脚本
+    - scripts/release-pack.sh: 发布打包脚本
+    - .github/workflows/release.yml: CI/CD 自动发布流程
+    
+    ### 重构文件
+    - scripts/install-plugin.sh: 引入公共库，精简代码
+    - plugin/index.js: 运行时优先使用 venv Python
+    
+    ### 文档更新
+    - README.md: 添加系统要求、各系统依赖安装命令、故障排查
+    - docs/python-environment-compatibility.md: Python 环境兼容性说明
+    - docs/release-guide.md: 发布与使用指南
+    
+    ### 增强
+    - Python 依赖安装失败时给出针对性系统命令提示
+    - 支持 DRY_RUN/VERBOSE 调试模式
+    - 支持 venv 优先、pip --user 回退的安装策略
+    
+    ### 支持
+    - Linux (Debian/Ubuntu/Fedora/CentOS)
+    - macOS
+    - Windows (Git Bash)
+
+[33mcommit d2ccbd2b2244777bf7c769f1f432f91c6ebcdd56[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 6 16:04:18 2026
+
+    scripts: 升级时用 uninstall 清理，pip 增加 --user 兼容 PEP 668
+    
+    Made-with: Cursor
+
+[33mcommit 1d154363a5b0083bf06d1149bc5ac23ecaed1475[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 6 15:48:16 2026
+
+    fix: 移除 pip 的 2>/dev/null，失败时显示具体错误
+    
+    Made-with: Cursor
+
+[33mcommit 29d4498c5b2dea670ebb1ba758b1683b8165022c[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 6 15:46:48 2026
+
+    scripts: 改进 install-plugin 升级流程与 Python 依赖安装
+    
+    Made-with: Cursor
+
+[33mcommit dd9908b844b6cba4c7fcd5328d8464e4046e60f7[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 6 15:43:04 2026
+
+    fix: 修复安装流程 - 移除 rm 避免 plugins.allow 校验失败，优先 python3 -m pip
+    
+    - 不再先 rm 再 install，由 openclaw 直接覆盖，避免 plugin not found
+    - 优先使用 python3 -m pip 提高依赖安装成功率
+    - 添加安装报错故障排查说明到 README
+    
+    Made-with: Cursor
+
+[33mcommit fddd48be457cc278adef608486b33aecfa49d0c6[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 6 15:28:37 2026
+
+    fix: 安装脚本使用与 OpenClaw 一致的配置目录解析
+    
+    - 支持 OPENCLAW_STATE_DIR、OPENCLAW_HOME 环境变量
+    - 修复 Gateway 与安装路径不一致导致的 plugin not found 问题
+    - 更新 README 环境变量说明
+    
+    Made-with: Cursor
+
+[33mcommit a732cf84d0101775916e27785d9a80da1cc2f561[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 6 14:30:47 2026
+
+    chore: remove analysis docs and temporary files
+    
+    - Remove tr3-tr9 analysis documents
+    - Remove docs/tr timeline optimization docs
+    - Remove dashboard-analysis.md
+    - Keep design/, technical/, specs/, user guides
+    
+    Made-with: Cursor
+
+[33mcommit 0cddcdc5f6c20e32a42ee1ca4475272cb32b802b[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Mar 6 14:28:41 2026
+
+    feat: collaboration status improvements, timeline/status refactor, analysis docs
+    
+    - Backend: collaboration API, session/subagent/timeline readers, status calculator
+    - Frontend: AgentCard, CollaborationFlowSection, collaboration types
+    - Docs: tr3-tr9 analysis and development plan
+    
+    Made-with: Cursor
+
+[33mcommit c67f99d70f2357216e47b73e6f8f6b4208851476[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 5 23:56:41 2026
+
+    优化协作流程界面 UI：卡片比例 + 弹窗布局
+    
+    - 主 Agent 卡片宽度从 320px 调整为 260px
+    - 子 Agent 卡片最小宽度从 180px 调整为 200px
+    - 详情弹窗宽度从 600px 扩大到 800px
+    - Tab 视图从 5 个合并为 3 个（时序、链路、高级）
+    - 模型面板宽度从 120px 调整为 150px
+    - 添加响应式适配（1280px/1024px/768px 断点）
+    - 移除主 Agent 区域固定高度，优化空间利用
+
+[33mcommit 0e21e63fc616baac7139a915a5ebeb147d1c8796[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 5 21:01:48 2026
+
+    修复时序视图：工具执行状态 + 子代理视角显示
+    
+    ## 问题修复
+    
+    ### BUG-1: 工具执行失败误判
+    **原因**: 只检查 status 字段，忽略 exitCode 和 isError
+    **修复**: 综合判断三个字段，避免误判
+    
+    ### BUG-2: 子代理视角消息来源错误
+    **原因**: 子代理收到主代理消息时，显示"子代理回传"是错误的
+    **修复**: 根据 requester_info 判断视角，子代理视角显示发送者名称
+    
+    ### BUG-3: 主代理视角回传来源不明确
+    **原因**: 轮次触发器只显示"子代理回传"，没有具体名字
+    **修复**: 正确解析并显示子代理名称（如"分析师回传"）
+    
+    ## 测试报告
+    
+    新增测试报告: docs/tr3-timeline-fixes.md
+    - 记录3个需求（REQ-1/2/3）
+    - 3个测试用例（TC-1/2/3）
+    - 验收标准和实现步骤
+    
+    ## 影响范围
+    
+    - src/backend/data/timeline_reader.py (+43 -11)
+    - frontend/src/components/timeline/TimelineRound.vue (+1 -1)
+    - docs/tr3-timeline-fixes.md (new file)
+    
+    测试验证通过，问题已修复。
+
+[33mcommit c25aad4668701104a01839659d8348f53bd923d3[m
+Author: Umarchen <530638772@qq.com>
+Date:   Thu Mar 5 20:27:48 2026
+
+    优化 Dashboard：端口更新 + LLM轮次分组 + 时序视图增强
+    
+    ## 主要修改
+    
+    ### 🔧 配置更新
+    - 端口更新：8000 → 38271（README.md、plugin配置）
+    - 新增 npm run start 命令，支持手动启动 Dashboard
+    - 添加无法访问时的排查说明文档
+    
+    ### 🎯 后端增强 (src/backend/api/)
+    - **collaboration.py**：新增 LLM 轮次分组、层级结构、深度信息
+    - **timeline.py**：新增 LLMRound 数据模型，支持轮次分组展示
+    - **data/session_reader.py**：优化 session 数据读取
+    - **data/timeline_reader.py**：增强时序数据解析
+    
+    ### 🎨 前端优化 (frontend/src/components/)
+    - **TimelineView**：新增 LLM 轮次分组视图（TimelineRound.vue）
+    - **TimelineStep**：添加工具执行时间、Token统计、错误建议
+    - **TimelineToolLink**：新增工具链接组件，快速跳转
+    - **AgentCard**：优化任务显示和错误状态
+    - **协作流程**：层级结构展示、实时任务更新
+    
+    ### 📝 文档更新
+    - 新增设计文档：
+      - multi-feature-file-management.md
+      - openclaw-multi-agent-step-by-step-analysis.md
+      - timeline-view-optimization.md
+    - 新增测试报告：
+      - tr-timeline-optimization-00-summary.md
+      - tr-timeline-optimization-01-requirement-analysis.md
+      - tr-timeline-optimization-02-llm-round-grouping-design.md
+      - tr-timeline-optimization-03-tool-chain-visualization.md
+    - 删除过时的规格文档：
+      - dashboard_interaction_visualization_spec.md
+      - dashboard_spec.md
+    - 更新 README：端口、命令、排查说明
+    
+    ## 功能亮点
+    
+    ✨ LLM 轮次分组：按用户输入、子代理回传、工具结果分组展示
+    ✨ 工具链接可视化：快速定位工具调用与结果的关系
+    ✨ 错误建议提示：工具执行失败时提供修复建议
+    ✨ Token 统计展示：实时显示输入/输出 Token 数量
+    ✨ 卡顿检测提醒：长时间无响应时显示警告
+    
+    ## 技术改进
+    
+    - 任务名称清理：过滤技术信息，提取有效描述
+    - Agent 错误信息：实时获取并展示异常状态
+    - 层级结构计算：自动计算 Agent 层级深度
+    - 时间戳格式化：统一时间展示格式
+    
+    测试验证通过，功能正常运行。
+
+[33mcommit 837ba52c5f083c5195f43245aed12ed067ac56c4[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 4 11:10:32 2026
+
+    fix: build-plugin 自动安装前端依赖
+    
+    检查 node_modules 是否存在，不存在则先执行 npm install
+
+[33mcommit 1f3dc45abd53b17b6c81abe5c453056d161c0c0d[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 4 11:06:47 2026
+
+    chore: 移除已追踪的压缩包
+
+[33mcommit ac109c4c1bfe6f4f0aae1cd1d4e8a3e055a2269c[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 4 11:06:31 2026
+
+    chore: 忽略 tar.gz 压缩包
+
+[33mcommit 38a081a9fb6853c85941f2275a108d9ae713a081[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 4 11:06:12 2026
+
+    feat: 新增 bundle 命令，支持离线分发
+    
+    - npm run bundle 生成可分发的压缩包
+    - 自动排除 node_modules、dist、__pycache__ 等
+    - 输出文件名带版本号：openclaw-agent-dashboard-v1.0.0.tar.gz
+
+[33mcommit 44c97dc861975029faefaf73d15e24ad17d717a9[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 4 10:56:57 2026
+
+    fix: 避免重复构建，优化日志前缀
+    
+    - install-plugin.sh 检测已构建则跳过前端构建和打包
+    - build-plugin.js 日志前缀改为 [pack]
+
+[33mcommit 26b14b489e462e930752c1e5cb497a6ffed8ac34[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 4 10:51:27 2026
+
+    feat: 优化插件升级体验，新增 upgrade 命令
+    
+    - 新增 npm run upgrade 命令：自动拉取代码 + 部署
+    - 区分安装/升级场景，显示版本变化（1.0.0 → 1.1.0）
+    - 升级时 Python 依赖显示"检查"而非"安装"
+    - 优化步骤提示：移除旧版本 → 安装新版本
+
+[33mcommit 9379bcfff6d7968c89bb25ff4241ab717f0e265e[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 4 10:43:55 2026
+
+    refactor: 优化插件安装命令和用户体验
+    
+    - 重命名命令：install-plugin/build-plugin -> deploy/pack，语义更清晰
+    - 简化启动日志，去掉 uvicorn 技术细节
+    - 优化 Python 依赖安装：去掉静默模式，添加成功/失败明确提示
+    - 更新 README 文档，统一命令说明
+
+[33mcommit b95408d252b93b726f4f77d1af50951278483fe6[m
+Author: Umarchen <530638772@qq.com>
+Date:   Wed Mar 4 09:38:47 2026
+
+    chore: 清理项目目录，准备发布
+    
+    - 删除开发过程文档（分析报告、需求文档、总结等）
+    - 删除一次性脚本（setup-github.sh, setup.sh）
+    - 删除无关文档（Claude_Code_tmux使用说明）
+    - 更新 .gitignore 补充忽略规则
+    - 简化 README 为安装使用说明
+    
+    Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+[33mcommit 42650a26639dd5a4527c23c419f84ccbe17480e3[m
+Author: Umarchen <530638772@qq.com>
+Date:   Tue Mar 3 23:55:45 2026
+
+    feat: 发布检查功能增加
+
+[33mcommit 040fc1cc312bbbb979dc28138004d5e1a9bead31[m
+Author: Umarchen <530638772@qq.com>
+Date:   Tue Mar 3 23:33:46 2026
+
+    feat: agent错误详细定位功能增加
+
+[33mcommit ec609b77bff31937bce6abf86e1a812d981c98bd[m
+Author: Umarchen <530638772@qq.com>
+Date:   Tue Mar 3 20:34:35 2026
+
+    feat: 任务执行链路图功能增加
+
+[33mcommit 745bee4bca6a0a2b6b038102095b87ed2137796a[m
+Author: Umarchen <530638772@qq.com>
+Date:   Tue Mar 3 18:22:50 2026
+
+    feat: 实时执行时序图功能增加
+
+[33mcommit 7da4c3a249b2633679726abcd373dcc19678d844[m
+Author: Umarchen <530638772@qq.com>
+Date:   Tue Mar 3 14:35:31 2026
+
+    feat: 新增错误中心、机制追踪和Token分析功能
+    
+    - 新增 ErrorCenterPanel.vue - 错误中心面板
+    - 新增 MechanismTrackingPanel.vue - 机制追踪面板
+    - 新增 TokenAnalysisPanel.vue - Token分析面板
+    - 后端新增错误、机制、性能相关API和数据读取器
+    - 增强AgentDetailPanel显示详细信息
+    - 总计新增504行代码
+
+[33mcommit 48499dbf18fb6967487d577f244e26c8c8ae88fe[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Feb 28 17:10:44 2026
+
+    feat: 阶段3 - Agent自适配系统
+    
+    🎯 核心功能：
+    - Agent配置自动检测和适配
+    - 动态识别主Agent和子Agent
+    - 智能模型分配和降级
+    
+    📦 新增文件：
+    - docs/development-workflow.md：开发工作流程文档
+    - frontend/src/components/collaboration/CollaborationFlowWrapper.vue：协作流程包装组件
+    - src/backend/api/agents_config.py：Agent配置API
+    
+    🔧 主要改进：
+    - 优化协作流程组件，支持动态Agent配置
+    - 改进WebSocket实时数据推送
+    - 增强Agent状态监控和展示
+    - 完善配置读取和错误处理
+    - 优化前端实时数据管理器
+    - 改进文件监听和防抖机制
+    - 完善插件安装脚本和文档
+    
+    📊 技术亮点：
+    - 完全动态的Agent识别
+    - 智能配置优先级处理
+    - 实时状态同步和推送
+    - 健壮的错误处理机制
+
+[33mcommit 29c949c6b3d63bc480a4e4d1618bf17796f3e4ad[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Feb 28 12:56:15 2026
+
+    fix: 修复collaboration.py模块导入问题
+
+[33mcommit c7db56fd606f52774be2154b1faa1d19c48c3467[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Feb 28 12:55:50 2026
+
+    fix: 修复文件监听和配置读取问题
+    
+    - 修复 collaboration.py 模块导入问题
+    - 修复 config_reader.py 配置解析逻辑
+    - 修复 error_detector.py 错误检测算法
+    - 优化 file_watcher.py 文件监听防抖机制
+
+[33mcommit 855b06367867fcead2425284778ab5bb1b50440f[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Feb 28 12:51:21 2026
+
+    feat: 插件化架构完整实现 - 二阶段修改
+    
+    🔧 插件结构（新建）：
+    - plugin/openclaw.plugin.json：插件清单，声明 id、name、configSchema
+    - plugin/package.json：npm 包信息，含 openclaw.extensions
+    - plugin/index.js：插件入口，负责启动 FastAPI
+    
+    📦 打包与构建：
+    - scripts/build-plugin.js：构建前端 → 复制 backend → 复制 frontend-dist
+    - src/backend/main.py：支持插件形态下的 frontend-dist 路径
+    
+    ⚙️ 配置与端口优化：
+    - plugin/index.js：使用 api.pluginConfig（不再用 api.config）
+    - plugin/index.js：配置优先级：env > ~/.openclaw/dashboard/config.json > openclaw.json > 默认
+    - plugin/index.js：端口占用时自动尝试 8001、8002...
+    - plugin/config.json.example：端口配置示例
+    - ~/.openclaw/openclaw.json：端口配置改为 config.port 结构
+    
+    🚀 一键安装：
+    - scripts/install-plugin.sh：一键安装脚本（构建 + 安装 + pip 依赖）
+    - package.json：根目录，提供 npm run install-plugin
+    
+    📚 完善文档：
+    - plugin/README.md：安装说明、依赖说明、配置说明
+    - README.md：插件安装说明、同事使用说明
+    - .gitignore：忽略 plugin/dashboard/、plugin/frontend-dist/
+    
+    ✨ 实现完整的OpenClaw插件化部署方案
+
+[33mcommit 3da6baea26641be01350b5aaee8acd485f38fa24[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Feb 28 11:27:09 2026
+
+    feat: 实时性能优化与WebSocket推送系统
+    
+    🚀 核心改进：
+    1. 缩短轮询间隔 RealtimeDataManager 中 pollingInterval：30 秒 → 10 秒 WebSocket 断开时的 HTTP 回退轮询间隔缩短
+    
+    2. WebSocket 配置优化
+    前端连接地址：/ws/dashboard → /ws（与后端一致）
+    vite.config.ts 增加 /ws 代理，开发模式下可正常连接
+    
+    3. 文件监听系统（watchdog）
+    新增 watchers/file_watcher.py，监听：
+    - ~/.openclaw/subagents/runs.json
+    - ~/.openclaw/dashboard/task_history.json
+    - ~/.openclaw/workspace-main/memory/model-failures.log
+    - ~/.openclaw/agents/*/sessions/（递归监听 *.jsonl）
+    0.5 秒防抖，避免短时间多次变更重复推送
+    
+    4. WebSocket 推送增强
+    在 websocket.py 中新增 broadcast_full_state()
+    文件变更时向所有已连接客户端推送完整状态：
+    agents、subagents、apiStatus、collaboration、tasks、performance
+    
+    5. 应用生命周期管理
+    在 main.py 中通过 lifespan 在启动时启动文件监听，关闭时停止
+    
+    6. 前端消息处理优化
+    RealtimeDataManager 支持 type: 'full_state', 并分发到各订阅 channel
+
+[33mcommit 9789f374c2f3405e00fe7bf44e5a7b0e7d97939f[m
+Merge: 423b344 b54af0c
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Feb 28 11:21:30 2026
+
+    解决README.md合并冲突，保留详细版本
+
+[33mcommit b54af0cb8eb61b5fa1bcbf9c95ac5c08f416739f[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Feb 28 10:52:23 2026
+
+    Initial commit
+
+[33mcommit 423b3445344032a968885dd8c0f65006163847f3[m
+Author: Umarchen <530638772@qq.com>
+Date:   Sat Feb 28 10:49:07 2026
+
+    feat: 添加技术文档和分析报告
+    - 新增技术架构分析文档
+    - 新增分析报告v2和评审文档
+    - 新增OpenClaw Agent循环流程文档
+    - 完善协作流程、性能监控、任务状态组件
+    - 更新后端API性能和子代理数据读取
+    - 添加GitHub设置脚本
+
+[33mcommit 963bfc94bd24d8e24604dca09c9bff6613ff44b4[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 21:03:18 2026
+
+    fix: TaskStatusSection 组件更新
+    
+    Made-with: Cursor
+
+[33mcommit c625ded88198b6e4b6749556977ba125f1928834[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 21:03:10 2026
+
+    chore: 完善 Git 配置，添加 .gitignore，移除 node_modules/dist/__pycache__
+    
+    Made-with: Cursor
+
+[33mcommit d9e52b096d50d73d466c88035ebaf6bf7baa56a1[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 10:51:26 2026
+
+    feat: 在 TPM 和 RPM 趋势图表右上角添加实时日期时间显示
+    
+    - 添加 currentDateTime 响应式变量和 updateDateTime 函数
+    - 每秒自动更新时间显示
+    - 时间格式：中文格式（例如：2026年2月27日 10:50）
+    - TPM 和 RPM 图表均显示时间
+    - 更新样式：chart-header 使用 flex 布局，时间文字灰色
+
+[33mcommit 9ce185d551568b5aacb982e384ec6915fc7b42aa[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 10:33:50 2026
+
+    简化 PerformanceMonitor 数字标签显示 - 所有柱子都显示数字和时间标签
+    
+    - 移除复杂的智能标签定位逻辑
+    - 数字标签始终显示在柱子上方
+    - 时间标签每个都显示
+    - 增加图表高度（280px）给数字标签更多空间
+    - 统一数字标签样式，确保清晰可见
+
+[33mcommit 849b7976a465d8d671978b33041a47d0134807d4[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 10:26:10 2026
+
+    feat: 重新实现 PerformanceMonitor 组件
+    
+    - 优化图表布局（高度 240px，柱子宽度 35-60px，间距 12px）
+    - 实现智能数字标签定位（高度≥40%时内部显示，否则外部显示）
+    - 时间标签每5分钟显示一次，减少视觉拥挤
+    - TPM 图表使用蓝色渐变，RPM 图表使用绿色渐变
+    - 添加 v-memo 性能优化，减少不必要的重渲染
+    - 使用计算属性缓存柱子数据
+    - 添加悬停效果和零值柱子样式
+    - 改进响应式设计，移动端支持横向滚动
+    
+    按照 PerformanceMonitor-design.md 设计文档实现
+
+[33mcommit f3f4734ec0388ff0e5475efd9992834312291569[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 10:16:01 2026
+
+    refactor: 重构 PerformanceMonitor UI 布局
+    
+    - TPM 和 RPM 图表改为上下排列（不再并排）
+    - 删除时间选择器，固定为 20 分钟数据
+    - 增加柱子最小宽度（30px），确保数字标签有足够空间
+    - 所有柱子都显示数字和时间标签
+    - 优化图表容器布局，每个图表占满宽度
+    - 提升可读性：增加图表高度和底部 padding
+
+[33mcommit e6c2b10b5b495d824ffecea61078cb125343be29[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 10:10:52 2026
+
+    fix: 优化柱状图数字显示逻辑 - 20分钟全显示，1小时间隔显示
+
+[33mcommit 24bca8ca0c7f672fb5299c5af66d8b3c6ba6fd1f[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 09:47:46 2026
+
+    fix: 修复 TPM/RPM 柱状图数字标签显示问题
+    
+    - 修复容器裁剪问题：为 .chart-placeholder 和 .chart-bars 添加 overflow: visible
+    - 优化数字标签显示：调整 top 从 -25px 到 -30px，添加 z-index: 10 确保在最上层
+    - 添加数字标签样式：padding: 2px 6px，半透明白色背景，圆角边框
+    - 确保所有柱子的数字标签都能完整显示，包括值为 0 的情况
+
+[33mcommit 6e70fd716b2dace25f6d7f3002c6f12aae49fa86[m
+Author: Umarchen <530638772@qq.com>
+Date:   Fri Feb 27 09:24:36 2026
+
+    fix: 修复 TPM/RPM 趋势图和时间选择器问题
+    
+    问题1修复 - 柱状图数据标签:
+    - 移除 hover 才显示数字的限制，数据标签始终可见
+    - RPM 图表也使用 formatNumber 格式化数字
+    - 增强标签颜色和字体权重提高可读性
+    
+    问题2修复 - 时间选择器:
+    - 添加时间范围选择器（20分钟/1小时选项）
+    - 使用 Asia/Shanghai 时区显示时间
+    - 使用 toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) 格式化
+    - 图表标题动态显示选中的时间范围
+    - API 请求携带 range 参数

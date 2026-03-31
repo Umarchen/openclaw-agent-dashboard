@@ -13,7 +13,8 @@
  *
  * 环境变量:
  *   PIP_INDEX_URL / PIP_MIRROR  指定 pip 源（与 pip 一致）
- *   OPENCLAW_PIP_MIRROR         强制镜像: tsinghua | tuna | https://完整索引 URL
+ *   OPENCLAW_PIP_MIRROR         强制镜像: tsinghua | tuna | aliyun | https://完整索引 URL
+ *   OPENCLAW_PIP_ALLOW_SOURCE=1 Windows 上默认要求 pydantic-core 仅用 wheel；调试时可关闭
  */
 
 const fs = require('fs');
@@ -129,6 +130,48 @@ const TSINGHUA_PIP_ARGS = [
   'pypi.tuna.tsinghua.edu.cn',
 ];
 
+const ALIYUN_PIP_ARGS = [
+  '-i',
+  'https://mirrors.aliyun.com/pypi/simple/',
+  '--trusted-host',
+  'mirrors.aliyun.com',
+];
+
+/**
+ * pip 安装时的二进制策略：Windows 默认强制 pydantic-core 只用 wheel（避免拉 sdist 触发 Rust + rust-lang.org）
+ * @returns {string[]}
+ */
+function getPipWheelArgs() {
+  if (process.env.OPENCLAW_PIP_ALLOW_SOURCE === '1') {
+    return [...PIP_PREFER_BINARY];
+  }
+  if (process.platform === 'win32') {
+    return [...PIP_PREFER_BINARY, '--only-binary', 'pydantic-core'];
+  }
+  return [...PIP_PREFER_BINARY];
+}
+
+/**
+ * 主源 + 清华 + 阿里云，去重（用于失败自动换源）
+ * @param {string[]} primary
+ * @returns {string[][]}
+ */
+function buildMirrorFallbackSequence(primary) {
+  const seen = new Set();
+  const seq = [];
+  /** @param {string[]} m */
+  function push(m) {
+    const k = m.length === 0 ? '__default__' : m.join('\0');
+    if (seen.has(k)) return;
+    seen.add(k);
+    seq.push(m);
+  }
+  push(primary);
+  push([...TSINGHUA_PIP_ARGS]);
+  push([...ALIYUN_PIP_ARGS]);
+  return seq;
+}
+
 /**
  * 解析 OPENCLAW_PIP_MIRROR，返回与 getPipMirrorArgs 相同形状的额外参数；无法识别则 null
  * @returns {string[] | null}
@@ -139,6 +182,9 @@ function mirrorArgsFromOpenClawEnv() {
   const lower = raw.toLowerCase();
   if (lower === 'tsinghua' || lower === 'tuna') {
     return TSINGHUA_PIP_ARGS;
+  }
+  if (lower === 'aliyun') {
+    return ALIYUN_PIP_ARGS;
   }
   if (lower.startsWith('http://') || lower.startsWith('https://')) {
     try {
@@ -235,48 +281,41 @@ async function installWithVenv(reqFile, venvDir, silent) {
     return false;
   }
 
-  // 升级 pip（静默，失败不影响）
-  // 如果设了镜像，升级 pip 也用镜像
-  const pipMirrorArgs = await getPipMirrorArgs();
-  runCommand(
-    venvPython,
-    ['-m', 'pip', 'install', '--upgrade', ...PIP_PREFER_BINARY, 'pip', '-q', ...pipMirrorArgs],
-    { silent: true }
-  );
+  const wheelArgs = getPipWheelArgs();
+  const mirrorSequence = buildMirrorFallbackSequence(await getPipMirrorArgs());
 
-  // 安装依赖
+  let lastFailOutput = '';
   logInfo('  安装依赖...');
-  const installResult = runCommand(
-    venvPython,
-    ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', ...pipMirrorArgs],
-    { silent, timeout: 180000 }
-  );
-
-  if (!installResult.success) {
-    // 默认源失败，尝试清华镜像
-    if (!pipMirrorArgs.length) {
-      logWarn('  默认源失败，尝试清华镜像...');
-      const tsinghuaArgs = [...TSINGHUA_PIP_ARGS];
-      runCommand(
-        venvPython,
-        ['-m', 'pip', 'install', '--upgrade', ...PIP_PREFER_BINARY, 'pip', '-q', ...tsinghuaArgs],
-        { silent: true, timeout: 60000 }
-      );
-      const retryResult = runCommand(
-        venvPython,
-        ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', ...tsinghuaArgs],
-        { silent, timeout: 180000 }
-      );
-      if (retryResult.success) return true;
+  for (let i = 0; i < mirrorSequence.length; i++) {
+    const mirrorArgs = mirrorSequence[i];
+    if (i > 0) {
+      const joined = mirrorArgs.join(' ');
+      const label = joined.includes('aliyun.com')
+        ? '阿里云 PyPI 镜像'
+        : joined.includes('tuna.tsinghua.edu.cn')
+          ? '清华镜像'
+          : '备用索引';
+      logWarn(`  换源重试: ${label}...`);
     }
-    logWarn('  venv 安装依赖失败');
-    if (!silent) {
-      console.log('    错误:', installResult.output);
-    }
-    return false;
+    runCommand(
+      venvPython,
+      ['-m', 'pip', 'install', '--upgrade', ...wheelArgs, 'pip', '-q', ...mirrorArgs],
+      { silent: true, timeout: 120000 }
+    );
+    const r = runCommand(
+      venvPython,
+      ['-m', 'pip', 'install', ...wheelArgs, '-r', reqFile, '-q', ...mirrorArgs],
+      { silent, timeout: 180000 }
+    );
+    if (r.success) return true;
+    lastFailOutput = r.output;
   }
 
-  return true;
+  logWarn('  venv 安装依赖失败');
+  if (!silent && lastFailOutput) {
+    console.log('    错误:', lastFailOutput);
+  }
+  return false;
 }
 
 /**
@@ -288,50 +327,34 @@ async function installWithVenv(reqFile, venvDir, silent) {
 async function installWithPipUser(reqFile, silent) {
   logInfo('  尝试: pip --user（PEP 668 兜底）');
 
-  const pipMirrorArgs = await getPipMirrorArgs();
-  const tsinghuaArgs = [...TSINGHUA_PIP_ARGS];
-
-  const pipCommands = [
-    {
-      cmd: getPythonCmd(),
-      args: ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', '--user', ...pipMirrorArgs],
-      name: 'pip --user',
-    },
-    {
-      cmd: getPythonCmd(),
-      args: ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', ...pipMirrorArgs],
-      name: 'pip',
-    },
-  ];
-
-  for (const { cmd, args, name } of pipCommands) {
-    if (!commandExists(cmd)) continue;
-
-    const result = runCommand(cmd, args, { silent, timeout: 180000 });
-    if (result.success) {
-      return { success: true, method: name };
-    }
+  const wheelArgs = getPipWheelArgs();
+  const mirrorSequence = buildMirrorFallbackSequence(await getPipMirrorArgs());
+  const py = getPythonCmd();
+  if (!commandExists(py)) {
+    return { success: false, method: null };
   }
 
-  // 默认源失败，尝试清华镜像
-  if (!pipMirrorArgs.length) {
-    logWarn('  默认源失败，尝试清华镜像...');
-    const retryCommands = [
-      {
-        cmd: getPythonCmd(),
-        args: ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', '--user', ...tsinghuaArgs],
-        name: 'pip --user (tsinghua)',
-      },
-      {
-        cmd: getPythonCmd(),
-        args: ['-m', 'pip', 'install', ...PIP_PREFER_BINARY, '-r', reqFile, '-q', ...tsinghuaArgs],
-        name: 'pip (tsinghua)',
-      },
+  for (let i = 0; i < mirrorSequence.length; i++) {
+    const mirrorArgs = mirrorSequence[i];
+    if (i > 0) {
+      const joined = mirrorArgs.join(' ');
+      const label = joined.includes('aliyun.com')
+        ? '阿里云 PyPI 镜像'
+        : joined.includes('tuna.tsinghua.edu.cn')
+          ? '清华镜像'
+          : '备用索引';
+      logWarn(`  换源重试: ${label}...`);
+    }
+    const variants = [
+      { extra: ['--user'], name: 'pip --user' },
+      { extra: [], name: 'pip' },
     ];
-    for (const { cmd, args, name } of retryCommands) {
-      if (!commandExists(cmd)) continue;
-      const result = runCommand(cmd, args, { silent, timeout: 180000 });
-      if (result.success) return { success: true, method: name };
+    for (const { extra, name } of variants) {
+      const args = ['-m', 'pip', 'install', ...wheelArgs, '-r', reqFile, '-q', ...extra, ...mirrorArgs];
+      const result = runCommand(py, args, { silent, timeout: 180000 });
+      if (result.success) {
+        return { success: true, method: name };
+      }
     }
   }
 
@@ -442,8 +465,14 @@ function printPythonDepsHelp(reqFile) {
       console.log('    $env:PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"');
       console.log('    $env:PIP_TRUSTED_HOST="pypi.tuna.tsinghua.edu.cn"');
       console.log('');
-      console.log('若报错含 pydantic-core、Rust、Cargo：多为 pip 走了源码包。请拉取最新插件（安装脚本会加 --prefer-binary），');
-      console.log('  或手动：pip install --prefer-binary -r requirements.txt');
+      console.log('若报错含 pydantic-core、Rust、Cargo：pip 拉了源码包。请升级插件内 install-python-deps.js（Windows 会强制 pydantic-core 仅用 wheel），');
+      console.log('  或试：$env:OPENCLAW_PIP_MIRROR="aliyun" 换阿里云 PyPI；仍失败可换 Python 3.12。');
+      console.log('');
+      console.log('若 npm 报 No matching version / ETARGET：多为 npm 国内镜像未同步，可临时：');
+      console.log('  npm config set registry https://registry.npmjs.org/');
+      console.log('  再执行 openclaw plugins install ...');
+      console.log('');
+      console.log('若 Rust 下载报 os error 10013：公司防火墙拦截 static.rust-lang.org，应优先用 wheel（勿编 pydantic-core），勿手改 OPENCLAW_PIP_ALLOW_SOURCE。');
       console.log('');
       break;
 

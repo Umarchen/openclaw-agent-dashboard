@@ -10,7 +10,15 @@
  * 3. openclaw.json 中 plugins.entries.openclaw-agent-dashboard.config.port
  * 4. 默认 38271
  *
- * 启动前：若首选端口被占用且 /api/version 确认为本插件 Dashboard，则在 Unix 上结束旧进程（SIGTERM → 必要时 SIGKILL；无 lsof 时 Linux 可试 fuser），尽量仍在 38271 起新实例。
+ * 启动前：若首选端口被占用且 /api/version 确认为本插件 Dashboard，则在 Unix 上结束旧进程
+ * （SIGTERM → 必要时 SIGKILL；无 lsof 时 Linux 可试 fuser），尽量仍在 38271 起新实例。
+ *
+ * 热重载恢复（评审文档 FR-1~FR-9）：
+ * - activeStartId 所有权互斥 + 世代号防止并发双起与 stop 后仍 spawn（FR-7/FR-9）
+ * - stop 带超时等待子进程退出（FR-1）
+ * - 启动重试 + 探测 + 回收循环（FR-2/FR-3/FR-5）
+ * - spawn 后就绪探测（FR-9）
+ * - PID 文件辅助孤儿发现（FR-8）
  */
 const path = require('path');
 const os = require('os');
@@ -19,7 +27,50 @@ const net = require('net');
 const http = require('http');
 const { spawn, execFileSync } = require('child_process');
 
+// ── 模块级状态 ──────────────────────────────────────────────────────────────
 let dashboardProcess = null;
+
+/** 世代号：每次进入异步启动链时递增，stop 时 bump，用于作废旧的异步链 */
+let generation = 0;
+/** 中止标志：stop 时置 true，start 入口时重置为 false */
+let aborted = false;
+
+/**
+ * 互斥锁：保证全局最多一条「选口→spawn→就绪确认」的启动链在途。
+ * 采用所有权语义：值为本次启动的 generation（非零），0 表示空闲。
+ * 仅持有该 generation 的 IIFE 可在 finally 中释放（比较 activeStartId === myId），
+ * stop() 和其他链不得修改此值——避免旧链误清新链的锁。
+ *
+ * 残余窗口：stop() 后、旧链 finally 执行前 activeStartId !== 0，
+ * 新的 startDashboard() 会「启动链已在进行中, 跳过」。若宿主不会再次调用
+ * startDashboard，理论上存在极短窗口内「看起来没自动拉起」；但旧链会在
+ * 下一个 await 边界因 generation/aborted 快速退出并释放锁。
+ * 若需更强保证（宿主仅调一次 start），可在锁释放后自动重试（后续增强）。
+ */
+let activeStartId = 0;
+
+// ── 常量 / 可通过环境变量覆盖 ────────────────────────────────────────────────
+const DEFAULT_PORT = 38271;
+const MAX_START_RETRIES = parseInt(process.env.DASHBOARD_START_MAX_RETRIES, 10) || 5;
+const TOTAL_RETRY_TIMEOUT_MS = parseInt(process.env.DASHBOARD_START_TOTAL_TIMEOUT_MS, 10) || 15000;
+const BACKOFF_BASE_MS = 500;
+const STOP_SIGTERM_TIMEOUT_MS = 5000;
+const STOP_SIGKILL_TIMEOUT_MS = 3000;
+const READY_CHECK_TIMEOUT_MS = 8000;
+const READY_CHECK_INTERVAL_MS = 500;
+const PID_FILENAME = 'dashboard-runtime.json';
+
+const LOG_PREFIX = '[OpenClaw-Dashboard]';
+
+// ── 工具函数 ────────────────────────────────────────────────────────────────
+
+function log(...args) { console.log(LOG_PREFIX, ...args); }
+function logWarn(...args) { console.warn(LOG_PREFIX, ...args); }
+function logError(...args) { console.error(LOG_PREFIX, ...args); }
+
+function sleepMs(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 /** 解析系统 Python（Linux/macOS 多为 python3，Windows 多为 python） */
 function resolveSystemPython() {
@@ -41,17 +92,16 @@ function getOpenClawHome() {
   return process.env.OPENCLAW_HOME || path.join(os.homedir(), '.openclaw');
 }
 
-/** Dashboard 数据目录，与 Python 端一致：本工程数据统一放此，不写入 ~/.openclaw */
+/** Dashboard 数据目录 */
 function getDashboardDataDir() {
   return process.env.OPENCLAW_AGENT_DASHBOARD_DATA || path.join(os.homedir(), '.openclaw-agent-dashboard');
 }
 
 function getDashboardDir() {
-  const pluginDir = __dirname;
-  return path.join(pluginDir, 'dashboard');
+  return path.join(__dirname, 'dashboard');
 }
 
-/** 兼容旧路径：若存在 ~/.openclaw/dashboard 或 ~/.openclaw-dashboard 下的 config.json 则迁移到新目录一次 */
+/** 兼容旧路径：若存在旧 config.json 则迁移到新目录 */
 function migrateLegacyConfigIfNeeded() {
   const openclawHome = getOpenClawHome();
   const newDir = getDashboardDataDir();
@@ -59,7 +109,7 @@ function migrateLegacyConfigIfNeeded() {
   if (fs.existsSync(newPath)) return;
   const legacyPaths = [
     path.join(openclawHome, 'dashboard', 'config.json'),
-    path.join(os.homedir(), '.openclaw-dashboard', 'config.json')
+    path.join(os.homedir(), '.openclaw-dashboard', 'config.json'),
   ];
   for (const legacyPath of legacyPaths) {
     if (!fs.existsSync(legacyPath)) continue;
@@ -75,8 +125,7 @@ function migrateLegacyConfigIfNeeded() {
  * 加载配置，优先级：env > 用户 config.json（新路径 > 旧路径）> api.pluginConfig > 默认
  */
 function loadConfig(apiPluginConfig = {}) {
-  const openclawHome = getOpenClawHome();
-  let config = { port: 38271, autoStart: true }; // 使用罕见端口避免冲突
+  let config = { port: DEFAULT_PORT, autoStart: true };
 
   if (apiPluginConfig && typeof apiPluginConfig.port === 'number') {
     config.port = apiPluginConfig.port;
@@ -95,7 +144,7 @@ function loadConfig(apiPluginConfig = {}) {
 
   migrateLegacyConfigIfNeeded();
   const userConfigPath = path.join(getDashboardDataDir(), 'config.json');
-  const legacyUserConfigPath = path.join(openclawHome, 'dashboard', 'config.json');
+  const legacyUserConfigPath = path.join(getOpenClawHome(), 'dashboard', 'config.json');
   const prevUserConfigPath = path.join(os.homedir(), '.openclaw-dashboard', 'config.json');
   const pathToRead = fs.existsSync(userConfigPath) ? userConfigPath
     : (fs.existsSync(prevUserConfigPath) ? prevUserConfigPath : legacyUserConfigPath);
@@ -115,6 +164,8 @@ function loadConfig(apiPluginConfig = {}) {
   return config;
 }
 
+// ── 端口检测 ────────────────────────────────────────────────────────────────
+
 /** 检测端口是否可用 */
 function isPortAvailable(port) {
   return new Promise((resolve) => {
@@ -127,7 +178,7 @@ function isPortAvailable(port) {
   });
 }
 
-/** 检测端口是否已被占用（有进程在监听） */
+/** 检测端口是否已被占用 */
 function isPortInUse(port) {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -148,7 +199,9 @@ async function findAvailablePort(basePort, maxAttempts = 10) {
   return basePort;
 }
 
-/** 与 Python 端 VersionInfo.name 一致（来自 openclaw.plugin.json / package.json） */
+// ── 探测与回收 ──────────────────────────────────────────────────────────────
+
+/** 与 Python 端 VersionInfo.name 一致 */
 function getExpectedDashboardApiName() {
   try {
     const manifestPath = path.join(__dirname, 'openclaw.plugin.json');
@@ -163,7 +216,6 @@ function getExpectedDashboardApiName() {
 
 /**
  * 探测本机 port 上是否为当前插件的 Dashboard（FastAPI /api/version）
- * @returns {Promise<boolean>}
  */
 function probeOurDashboardListening(port) {
   const expected = getExpectedDashboardApiName();
@@ -194,7 +246,6 @@ function probeOurDashboardListening(port) {
 
 /**
  * 获取在 port 上 LISTEN 的进程 PID（Unix）。Windows 暂不支持，返回空数组。
- * @returns {number[]}
  */
 function getListenPidsOnPort(port) {
   if (process.platform === 'win32') {
@@ -220,13 +271,9 @@ function getListenPidsOnPort(port) {
   return [...new Set(pids)];
 }
 
-function sleepMs(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 /**
- * Linux：无 lsof PID 时尝试 fuser 释放监听该 TCP 端口的进程（仅在已确认 /api/version 为本插件后调用）。
- * @param {number} port
+ * Linux：无 lsof PID 时尝试 fuser 释放监听该 TCP 端口的进程。
+ * 仅在已确认 /api/version 为本插件后调用。
  */
 function tryFuserKillTcpPort(port) {
   if (process.platform !== 'linux') return;
@@ -238,8 +285,41 @@ function tryFuserKillTcpPort(port) {
 }
 
 /**
- * Gateway 重启/升级后旧 Dashboard 常仍占用首选端口，导致新实例落到 38272 或「跳过启动」仍连旧进程。
- * 若占用者为本插件 Dashboard（/api/version 校验），则多轮结束旧进程后再启动（仅 Unix；Windows 不变）。
+ * 单轮回收：尝试结束占用 port 的本插件 Dashboard 进程。
+ *
+ * 前提：调用方必须已通过 probeOurDashboardListening 确认端口上为本插件 Dashboard，
+ *       本函数不做二次 probe（与 tryFuserKillTcpPort 约定一致）。
+ *
+ * 返回 true 表示本轮执行了 kill / fuser 操作。
+ */
+function reclaimOneRound(port) {
+  const pids = getListenPidsOnPort(port);
+  if (pids.length > 0) {
+    for (const pid of pids) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (_) {}
+    }
+    log(`回收端口 ${port}: 已向 PID ${pids.join(', ')} 发送 SIGTERM`);
+    return true;
+  }
+
+  /* 有 lsof 但拿不到 PID（极少见），或 Windows 无 PID 手段 */
+  if (process.platform === 'linux') {
+    log(`回收端口 ${port}: 无 lsof PID, 尝试 fuser`);
+    tryFuserKillTcpPort(port);
+    return true;
+  }
+
+  if (process.platform === 'win32') {
+    logWarn(`回收端口 ${port}: Windows 无 PID 手段, 跳过 reclaim (将走备用端口或告警)`);
+  }
+  return false;
+}
+
+/**
+ * Gateway 重启/升级后旧 Dashboard 常仍占用首选端口。
+ * 若占用者为本插件 Dashboard（/api/version 校验），则多轮结束旧进程后再启动。
  */
 async function reclaimStaleOurDashboardPort(port) {
   const maxPasses = 4;
@@ -256,138 +336,441 @@ async function reclaimStaleOurDashboardPort(port) {
     const pids = getListenPidsOnPort(port);
     if (pids.length > 0) {
       const sig = pass === 0 ? 'SIGTERM' : 'SIGKILL';
-      console.log(
-        `[OpenClaw-Dashboard] 端口 ${port} 被上一实例 Dashboard 占用 (PID: ${pids.join(', ')})，${sig} 以便在 ${port} 启动新实例`
+      log(
+        `端口 ${port} 被上一实例 Dashboard 占用 (PID: ${pids.join(', ')}), ${sig} 以便在 ${port} 启动新实例`
       );
       for (const pid of pids) {
         try {
           process.kill(pid, sig);
         } catch (e) {
-          console.warn(`[OpenClaw-Dashboard] 无法向 PID ${pid} 发送 ${sig}:`, e.message || e);
+          logWarn(`无法向 PID ${pid} 发送 ${sig}:`, e.message || e);
         }
       }
       await sleepMs(pass === 0 ? 1200 : 800);
       continue;
     }
 
-    /* 已确认是本插件 HTTP 服务，但拿不到 PID（常见：未装 lsof） */
     if (process.platform === 'linux' && pass >= maxPasses - 2) {
-      console.log(
-        `[OpenClaw-Dashboard] 端口 ${port} 上为本插件 Dashboard，尝试 fuser 释放（建议安装 lsof 以便精确杀进程）`
-      );
+      log(`端口 ${port} 上为本插件 Dashboard, 尝试 fuser 释放（建议安装 lsof）`);
       tryFuserKillTcpPort(port);
       await sleepMs(700);
       continue;
     }
 
     if (pass === 0) {
-      console.log(
-        `[OpenClaw-Dashboard] 端口 ${port} 上检测到本插件 Dashboard，但无法解析占用进程（可安装 lsof），稍后重试或换端口`
-      );
+      log(`端口 ${port} 上检测到本插件 Dashboard, 但无法解析占用进程（可安装 lsof）, 稍后重试或换端口`);
     }
     await sleepMs(500);
   }
 }
 
+// ── PID 文件（FR-8）────────────────────────────────────────────────────────
+
+function getPidFilePath() {
+  return path.join(getDashboardDataDir(), PID_FILENAME);
+}
+
+function writePidFile(childPid, port) {
+  try {
+    const dir = getDashboardDataDir();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const data = {
+      gatewayPid: process.pid,
+      childPid,
+      port,
+      startedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(getPidFilePath(), JSON.stringify(data, null, 2), 'utf8');
+  } catch (_) {}
+}
+
+function removePidFile() {
+  try {
+    const p = getPidFilePath();
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  } catch (_) {}
+}
+
+/**
+ * 读取旧 PID 文件，若端口被占且为本插件则执行 reclaim。
+ * PID 文件仅作辅助线索，实际 kill 前仍须 /api/version 二次确认。
+ *
+ * 返回 true 表示回收成功（端口已释放或本来就是空的）；
+ * 返回 false 表示端口仍被占用（可能是本插件但回收失败，也可能是其他服务）。
+ */
+async function reclaimFromPidFile(basePort) {
+  try {
+    const p = getPidFilePath();
+    if (!fs.existsSync(p)) return true;
+    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (!data || typeof data.port !== 'number') {
+      removePidFile();
+      return true;
+    }
+
+    const port = data.port;
+
+    if (!(await isPortInUse(port))) {
+      // 端口已空闲，旧实例已退出，清理文件
+      removePidFile();
+      return true;
+    }
+
+    const ours = await probeOurDashboardListening(port);
+    if (!ours) {
+      // 非本插件占用，不动，保留 PID 文件供后续参考
+      log(`PID 文件记录端口 ${port}, 但 /api/version 表明非本插件, 保留文件`);
+      return false;
+    }
+
+    log(`PID 文件发现旧实例占用端口 ${port} (旧 childPid: ${data.childPid}), 执行回收`);
+    await reclaimStaleOurDashboardPort(port);
+
+    // 仅在确认端口已释放时才删文件，否则保留供下次启动再试
+    if (await isPortAvailable(port)) {
+      removePidFile();
+      return true;
+    }
+
+    logWarn(`PID 文件旧实例回收后端口 ${port} 仍被占用, 保留 PID 文件`);
+    return false;
+  } catch (_) {
+    return true;
+  }
+}
+
+// ── 就绪探测（FR-9）────────────────────────────────────────────────────────
+
+/**
+ * spawn 后轮询 /api/version 直至就绪或超时。
+ * 返回 true 表示 Dashboard 已就绪；false 表示超时或世代失配。
+ */
+async function waitForReady(port, startGen, timeoutMs = READY_CHECK_TIMEOUT_MS) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (generation !== startGen || aborted) {
+      return false;
+    }
+    const ready = await probeOurDashboardListening(port);
+    if (ready) {
+      return true;
+    }
+    await sleepMs(READY_CHECK_INTERVAL_MS);
+  }
+  return false;
+}
+
+// ── 核心：stop / start ─────────────────────────────────────────────────────
+
+/**
+ * FR-1: 停止 Dashboard 子进程，带后台超时等待。
+ * stop() 本身保持同步（不阻塞调用方），子进程退出等待异步进行。
+ */
+function stopDashboard() {
+  // FR-7: bump generation + set aborted
+  // 注意：不修改 activeStartId——旧链会因 generation !== startGen 自行退出，
+  // 其 finally 中只有 activeStartId === myId 时才会清锁，不会误清新链。
+  generation++;
+  aborted = true;
+
+  const child = dashboardProcess;
+  dashboardProcess = null;
+
+  if (!child || child.killed) {
+    removePidFile();
+    return;
+  }
+
+  // 发送 SIGTERM
+  try {
+    child.kill('SIGTERM');
+  } catch (_) {}
+  log('服务停止中 (SIGTERM)');
+
+  // 后台异步等待退出（不阻塞 stop 调用方）
+  let settled = false;
+  let sigtermTimer = null;
+  let sigkillTimer = null;
+
+  const settle = (exited) => {
+    if (settled) return;
+    settled = true;
+    if (sigtermTimer) clearTimeout(sigtermTimer);
+    if (sigkillTimer) clearTimeout(sigkillTimer);
+    removePidFile();
+    if (exited) {
+      log('服务已停止, 子进程已退出');
+    } else {
+      logWarn('服务停止超时, 子进程可能仍在运行');
+    }
+  };
+
+  child.once('exit', () => {
+    settle(true);
+  });
+
+  // T1 超时后 SIGKILL
+  sigtermTimer = setTimeout(() => {
+    if (settled) return;
+    try {
+      if (!child.killed) {
+        child.kill('SIGKILL');
+        logWarn('子进程未在 SIGTERM 超时内退出, 已发送 SIGKILL');
+      }
+    } catch (_) {}
+
+    // T2: SIGKILL 后最终超时
+    sigkillTimer = setTimeout(() => {
+      settle(false);
+    }, STOP_SIGKILL_TIMEOUT_MS);
+  }, STOP_SIGTERM_TIMEOUT_MS);
+}
+
+/**
+ * FR-9 辅助: spawn + 就绪探测。
+ * 调用前必须已持有 activeStartId 锁（activeStartId === startGen）。
+ * 返回 true 表示成功启动并就绪。
+ */
+async function spawnAndReadyCheck(port, startGen, env, dashboardDir, pythonCmd, args) {
+  if (generation !== startGen || aborted) return false;
+  // activeStartId 锁已由调用方保证，直接 spawn
+  const child = spawn(pythonCmd, args, {
+    env,
+    cwd: dashboardDir,
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+
+  child.on('error', (err) => {
+    logError('启动失败:', err.message);
+    if (dashboardProcess === child) dashboardProcess = null;
+  });
+
+  child.on('exit', (code, signal) => {
+    if (dashboardProcess === child) dashboardProcess = null;
+    if (code !== 0 && code !== null) {
+      log(`进程退出 code=${code} signal=${signal}`);
+    }
+  });
+
+  // 立即占位 dashboardProcess（spawn 原子赋值，JS 单线程无竞态）
+  dashboardProcess = child;
+
+  // FR-9: 就绪探测
+  const ready = await waitForReady(port, startGen);
+  if (!ready) {
+    // 就绪超时或世代失配 → kill 该子进程
+    try { child.kill('SIGKILL'); } catch (_) {}
+    if (dashboardProcess === child) dashboardProcess = null;
+    return false;
+  }
+
+  // 就绪成功 → 写 PID 文件（FR-8）
+  writePidFile(child.pid, port);
+  return true;
+}
+
+/**
+ * FR-2/FR-3/FR-5: 带退避重试的启动循环。
+ * 调用前必须已持有 activeStartId 锁（activeStartId === startGen）。
+ * 锁由外层 IIFE 的 finally 释放，本函数不操作 activeStartId。
+ */
+async function startWithRetry(port, isExplicitPort, startGen) {
+  const startTime = Date.now();
+  let currentPort = port;
+
+  for (let attempt = 1; attempt <= MAX_START_RETRIES; attempt++) {
+    // 世代校验
+    if (generation !== startGen || aborted) {
+      log(`启动链已作废 (世代 ${startGen} → ${generation})`);
+      return;
+    }
+
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= TOTAL_RETRY_TIMEOUT_MS) {
+      logError(`启动失败: 重试总超时 (${TOTAL_RETRY_TIMEOUT_MS}ms), 端口 ${currentPort}`);
+      return;
+    }
+
+    // ── 端口可用 → spawn ──
+    const portAvailable = await isPortAvailable(currentPort);
+    if (portAvailable) {
+      const env = {
+        ...process.env,
+        OPENCLAW_HOME: getOpenClawHome(),
+        DASHBOARD_PORT: String(currentPort),
+      };
+
+      const pythonCmd = resolvePythonCmd();
+      const args = ['-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', String(currentPort)];
+
+      if (!isExplicitPort && currentPort !== port) {
+        log(`端口 ${port} 被占用, 尝试 ${currentPort} (${attempt}/${MAX_START_RETRIES})`);
+      } else {
+        log(`尝试启动 (${attempt}/${MAX_START_RETRIES}), 端口 ${currentPort}`);
+      }
+
+      const ok = await spawnAndReadyCheck(currentPort, startGen, env, getDashboardDir(), pythonCmd, args);
+
+      if (ok) {
+        log(`插件服务已启动`);
+        log(`访问地址: http://localhost:${currentPort}`);
+        return;
+      }
+
+      // spawn 或就绪失败 → 退避重试
+      const backoff = BACKOFF_BASE_MS * attempt;
+      logWarn(`端口 ${currentPort} spawn/就绪失败, ${backoff}ms 后重试 (${attempt}/${MAX_START_RETRIES})`);
+      await sleepMs(backoff);
+      continue;
+    }
+
+    // ── 端口被占用 → 探测 + 决策 ──
+    const ours = await probeOurDashboardListening(currentPort);
+
+    if (ours) {
+      // FR-3: 本插件旧实例 → 回收
+      log(`[ours] 端口 ${currentPort} 被本插件旧实例占用, 执行回收 (${attempt}/${MAX_START_RETRIES})`);
+      reclaimOneRound(currentPort);
+      const backoff = BACKOFF_BASE_MS * attempt;
+      await sleepMs(backoff);
+      continue;
+    }
+
+    // 非本插件占用
+    if (isExplicitPort) {
+      // FR-5: 显式固定端口 → 不误杀，重试 + 告警
+      logWarn(
+        `[other] 端口 ${currentPort} 被非本插件服务占用, 不可回收, 重试中 (${attempt}/${MAX_START_RETRIES})`
+      );
+      const backoff = BACKOFF_BASE_MS * attempt;
+      await sleepMs(backoff);
+      continue;
+    }
+
+    // FR-4: 非显式端口 → 尝试备用端口
+    const altPort = await findAvailablePort(currentPort + 1);
+    if (altPort !== currentPort) {
+      log(`[other] 端口 ${currentPort} 被占用, 切换到备用端口 ${altPort}`);
+      currentPort = altPort;
+      continue;
+    }
+
+    // 无可用备用端口
+    logWarn(
+      `[unknown] 端口 ${currentPort} 被占用且无备用端口, 重试中 (${attempt}/${MAX_START_RETRIES})`
+    );
+    const backoff = BACKOFF_BASE_MS * attempt;
+    await sleepMs(backoff);
+  }
+
+  logError(
+    `启动失败: 重试耗尽 (${MAX_START_RETRIES} 次), 最后尝试端口 ${currentPort}`
+  );
+}
+
+/**
+ * 解析 Python 命令（venv 优先 → 系统 Python）
+ */
+function resolvePythonCmd() {
+  const dashboardDir = getDashboardDir();
+  const venvPythonUnix = path.join(dashboardDir, '.venv', 'bin', 'python');
+  const venvPythonWin = path.join(dashboardDir, '.venv', 'Scripts', 'python.exe');
+
+  if (process.env.PYTHON_CMD) return process.env.PYTHON_CMD;
+
+  const venvPython = fs.existsSync(venvPythonUnix) ? venvPythonUnix
+    : (fs.existsSync(venvPythonWin) ? venvPythonWin : null);
+
+  if (venvPython) {
+    try {
+      execFileSync(venvPython, ['-c', 'import uvicorn'], { stdio: 'ignore', timeout: 3000 });
+      return venvPython;
+    } catch (_) {
+      return resolveSystemPython();
+    }
+  }
+  return resolveSystemPython();
+}
+
 function startDashboard(config = {}) {
-  // 仅在 Gateway 进程内自动启动（OPENCLAW_GATEWAY_PORT 由 Gateway 设置）
-  // CLI 命令（status、health 等）加载插件时不会设置此变量，故不启动
+  // 仅在 Gateway 进程内自动启动
   if (!process.env.OPENCLAW_GATEWAY_PORT?.trim()) {
     return;
   }
 
   if (dashboardProcess) {
-    console.log('[OpenClaw-Dashboard] 服务已在运行');
+    log('服务已在运行');
+    return;
+  }
+
+  if (activeStartId !== 0) {
+    log('启动链已在进行中, 跳过');
     return;
   }
 
   const dashboardDir = getDashboardDir();
-  const openclawHome = getOpenClawHome();
-
   if (!fs.existsSync(dashboardDir)) {
-    console.warn('[OpenClaw-Dashboard] dashboard 目录不存在，请先执行 npm run deploy 安装插件');
+    logWarn('dashboard 目录不存在, 请先执行 npm run deploy 安装插件');
     return;
   }
 
-  const basePort = config.port ?? 38271;
-  const isExplicitPort = basePort !== 38271; // 用户显式配置了端口（非默认 38271）
-  const autoStart = config.autoStart !== false; // 默认 true，可配置为 false 禁用自动启动
+  const basePort = config.port ?? DEFAULT_PORT;
+  const isExplicitPort = basePort !== DEFAULT_PORT;
+  const autoStart = config.autoStart !== false;
 
   if (!autoStart) {
     return;
   }
 
-  const portPromise = (async () => {
-    await reclaimStaleOurDashboardPort(basePort);
-    return isExplicitPort ? basePort : await findAvailablePort(basePort);
+  // 仅在即将启动异步链时递增世代 + 重置中止标志
+  generation++;
+  aborted = false;
+  const startGen = generation;
+
+  // 占位互斥锁：activeStartId 设为本次 generation
+  activeStartId = startGen;
+
+  // 异步启动链
+  (async () => {
+    try {
+      // FR-8: 先从 PID 文件检查旧实例
+      await reclaimFromPidFile(basePort);
+
+      // 世代校验（PID 文件回收可能耗时）
+      if (generation !== startGen || aborted) {
+        log(`启动链 ${startGen} 在 PID 文件回收后被作废`);
+        return;
+      }
+
+      // 回收已知旧实例
+      await reclaimStaleOurDashboardPort(basePort);
+
+      // 世代校验
+      if (generation !== startGen || aborted) {
+        log(`启动链 ${startGen} 在 stale port 回收后被作废`);
+        return;
+      }
+
+      // 选择端口
+      const port = isExplicitPort ? basePort : await findAvailablePort(basePort);
+
+      // 世代校验
+      if (generation !== startGen || aborted) {
+        log(`启动链 ${startGen} 在端口选择后被作废`);
+        return;
+      }
+
+      // FR-2/3/5: 带重试的启动
+      await startWithRetry(port, isExplicitPort, startGen);
+    } catch (err) {
+      logError(`启动链 ${startGen} 异常:`, err.message || err);
+    } finally {
+      // 所有权释放：仅当 activeStartId 仍归我所有时才清锁
+      if (activeStartId === startGen) {
+        activeStartId = 0;
+      }
+    }
   })();
-
-  portPromise.then(async (port) => {
-    if (dashboardProcess) return;
-
-    // 若端口已被占用，认为 Dashboard 已在其他进程运行，跳过启动，避免重复实例
-    if (await isPortInUse(port)) {
-      console.log(`[OpenClaw-Dashboard] 端口 ${port} 已被占用，Dashboard 可能已在运行，跳过启动`);
-      return;
-    }
-
-    const env = {
-      ...process.env,
-      OPENCLAW_HOME: openclawHome,
-      DASHBOARD_PORT: String(port),
-    };
-
-    // 优先使用插件 venv 的 Python（安装时 venv 优先，避免 PEP 668）
-    // 若 venv 存在但不完整（如缺 python3-venv 导致 ensurepip 失败、无 uvicorn），回退到 python3
-    const venvPythonUnix = path.join(dashboardDir, '.venv', 'bin', 'python');
-    const venvPythonWin = path.join(dashboardDir, '.venv', 'Scripts', 'python.exe');
-    let pythonCmd = process.env.PYTHON_CMD;
-    if (!pythonCmd) {
-      const venvPython = fs.existsSync(venvPythonUnix) ? venvPythonUnix : (fs.existsSync(venvPythonWin) ? venvPythonWin : null);
-      if (venvPython) {
-        try {
-          execFileSync(venvPython, ['-c', 'import uvicorn'], { stdio: 'ignore', timeout: 3000 });
-          pythonCmd = venvPython;
-        } catch (_) {
-          pythonCmd = resolveSystemPython(); // venv 不完整，回退到系统 Python
-        }
-      } else {
-        pythonCmd = resolveSystemPython();
-      }
-    }
-    const args = ['-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', String(port)];
-
-    if (!isExplicitPort && port !== basePort) {
-      console.log(`[OpenClaw-Dashboard] 端口 ${basePort} 被占用，使用 ${port}`);
-    }
-    console.log(`[OpenClaw-Dashboard] 插件服务已启动`);
-    console.log(`[OpenClaw-Dashboard] 访问地址: http://localhost:${port}`);
-
-    dashboardProcess = spawn(pythonCmd, args, {
-      env,
-      cwd: dashboardDir,
-      stdio: ['ignore', 'ignore', 'ignore'],
-    });
-
-    dashboardProcess.on('error', (err) => {
-      console.error('[OpenClaw-Dashboard] 启动失败:', err.message);
-      dashboardProcess = null;
-    });
-    dashboardProcess.on('exit', (code, signal) => {
-      dashboardProcess = null;
-      if (code !== 0 && code !== null) {
-        console.log(`[OpenClaw-Dashboard] 进程退出 code=${code} signal=${signal}`);
-      }
-    });
-  });
-}
-
-function stopDashboard() {
-  if (dashboardProcess) {
-    dashboardProcess.kill('SIGTERM');
-    dashboardProcess = null;
-    console.log('[OpenClaw-Dashboard] 服务已停止');
-  }
 }
 
 /**
@@ -395,10 +778,13 @@ function stopDashboard() {
  * @param {object} api - OpenClaw 插件 API，pluginConfig 来自 openclaw.json 的 config 字段
  */
 function DashboardPlugin(api) {
-  console.log('[OpenClaw-Dashboard] 插件已加载');
-
   const pluginConfig = (api && api.pluginConfig) || {};
   const config = loadConfig(pluginConfig);
+
+  if (process.env.OPENCLAW_GATEWAY_PORT?.trim()) {
+    log('插件已加载, 准备启动 Dashboard');
+  }
+
   startDashboard(config);
 
   return {

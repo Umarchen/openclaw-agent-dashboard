@@ -206,13 +206,22 @@ const renderItems = computed(() => {
   const items: Array<{ type: 'round' | 'step', data: unknown }> = []
   const renderedStepIds = new Set<string>()
 
+  const rounds = data.value.rounds ?? []
+  const stepIdToRound = new Map<string, (typeof rounds)[0]>()
+  for (const r of rounds) {
+    for (const id of r.stepIds) {
+      if (!stepIdToRound.has(id)) {
+        stepIdToRound.set(id, r)
+      }
+    }
+  }
+
   // 遍历所有步骤，按顺序构建渲染项
   for (const step of data.value.steps) {
     // 如果已经在某个轮次中渲染过，跳过
     if (renderedStepIds.has(step.id)) continue
 
-    // 查找包含此步骤的轮次
-    const round = data.value.rounds?.find(r => r.stepIds.includes(step.id))
+    const round = stepIdToRound.get(step.id)
 
     if (round) {
       // 渲染整个轮次
@@ -296,8 +305,8 @@ function formatNumber(n: number): string {
 // 初始加载
 onMounted(refresh)
 
-// 监听 agentId 变化
-watch(() => props.agentId, refresh)
+// agentId / session_key 任一变则重新拉取（例如补全 runs 的 childSessionKey 后重试）
+watch(() => [props.agentId, props.sessionKey] as const, refresh)
 
 // 自动刷新
 let refreshTimer: ReturnType<typeof setInterval> | null = null

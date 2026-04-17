@@ -2,9 +2,8 @@
 时序数据读取器 - 将 session jsonl 解析为可视化时序步骤
 """
 import json
-import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -561,12 +560,11 @@ def _get_subagent_timeline_from_runs(agent_id: str, limit: int) -> Dict[str, Any
     }
 
 
-def _extract_subagent_steps_from_main_session(
-    main_session_file: Path,
+def _collect_subagent_steps_from_main_session_lines(
+    lines: Iterable[str],
     subagent_id: str,
-    limit: int
 ) -> List[Dict[str, Any]]:
-    """从主 Agent session 中提取与指定子 Agent 相关的步骤"""
+    """由主会话 jsonl 行（已 strip 的非空行）解析出与子 Agent 相关的步骤（单遍顺序与原先一致）。"""
     subagent_key_pattern = f"agent:{subagent_id}:"
     subagent_name = _get_subagent_display_name(subagent_id)
     main_agent_id = _get_main_agent_id()
@@ -575,153 +573,186 @@ def _extract_subagent_steps_from_main_session(
     step_index = 0
     cumulative_tokens = 0
     last_timestamp: Optional[int] = None
-    with open(main_session_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            try:
-                data = json.loads(line.strip())
-            except json.JSONDecodeError:
+    for stripped in lines:
+        # 主会话极大时，无关行跳过 json 解析（子 Agent 相关片段才继续）
+        if subagent_key_pattern not in stripped:
+            if not any(m in stripped for m in _SUBAGENT_RESULT_MARKERS):
                 continue
-            if data.get('type') != 'message':
-                continue
-            msg = data.get('message', {})
-            role = msg.get('role')
-            if not role:
-                continue
-            timestamp = _parse_timestamp(msg.get('timestamp') or data.get('timestamp', 0))
-            duration = 0
-            if last_timestamp and timestamp:
-                duration = timestamp - last_timestamp
-            last_timestamp = timestamp
-            content_list = msg.get('content', [])
-            if isinstance(content_list, str):
-                content_list = [{'type': 'text', 'text': content_list}]
-            usage = msg.get('usage', {})
-            if usage:
-                cumulative_tokens += usage.get('input', 0) + usage.get('output', 0)
-            # 提取文本内容
-            text_content = ""
-            for c in content_list:
-                if isinstance(c, dict) and c.get('type') == 'text':
-                    text_content += c.get('text', '')
-            # 判断是否与该子 Agent 相关
-            is_related = subagent_key_pattern in text_content
-            if role == 'user':
-                # 检查是否为子 Agent 回传
-                if any(m in text_content for m in _SUBAGENT_RESULT_MARKERS) and is_related:
-                    # 这是子 Agent 的输出，角色变换为 subagentResult
-                    result_text = _extract_subagent_result_content(text_content)
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if data.get('type') != 'message':
+            continue
+        msg = data.get('message', {})
+        role = msg.get('role')
+        if not role:
+            continue
+        timestamp = _parse_timestamp(msg.get('timestamp') or data.get('timestamp', 0))
+        duration = 0
+        if last_timestamp and timestamp:
+            duration = timestamp - last_timestamp
+        last_timestamp = timestamp
+        content_list = msg.get('content', [])
+        if isinstance(content_list, str):
+            content_list = [{'type': 'text', 'text': content_list}]
+        usage = msg.get('usage', {})
+        if usage:
+            cumulative_tokens += usage.get('input', 0) + usage.get('output', 0)
+        # 提取文本内容
+        text_content = ""
+        for c in content_list:
+            if isinstance(c, dict) and c.get('type') == 'text':
+                text_content += c.get('text', '')
+        # 判断是否与该子 Agent 相关
+        is_related = subagent_key_pattern in text_content
+        if role == 'user':
+            # 检查是否为子 Agent 回传
+            if any(m in text_content for m in _SUBAGENT_RESULT_MARKERS) and is_related:
+                # 这是子 Agent 的输出，角色变换为 subagentResult
+                result_text = _extract_subagent_result_content(text_content)
+                steps.append({
+                    "id": f"sub_step_{step_index}",
+                    "type": StepType.SUBAGENT_RESULT.value,
+                    "status": StepStatus.SUCCESS.value,
+                    "timestamp": timestamp,
+                    "duration": duration,
+                    "content": _truncate_text(result_text, 1000),
+                    "senderId": subagent_id,
+                    "senderName": f"{subagent_name}输出",
+                    "tokens": {"input": 0, "output": usage.get('output', 0), "cumulative": cumulative_tokens}
+                })
+                step_index += 1
+            elif is_related:
+                # 主 Agent 发给子 Agent 的指令
+                task_text = _extract_task_content(text_content)
+                if task_text:
                     steps.append({
                         "id": f"sub_step_{step_index}",
-                        "type": StepType.SUBAGENT_RESULT.value,
+                        "type": StepType.USER.value,
                         "status": StepStatus.SUCCESS.value,
                         "timestamp": timestamp,
                         "duration": duration,
-                        "content": _truncate_text(result_text, 1000),
-                        "senderId": subagent_id,
-                        "senderName": f"{subagent_name}输出",
-                        "tokens": {"input": 0, "output": usage.get('output', 0), "cumulative": cumulative_tokens}
+                        "content": _truncate_text(task_text, 1000),
+                        "senderId": main_agent_id,
+                        "senderName": main_agent_name,
+                        "tokens": {"input": usage.get('input', 0), "output": 0, "cumulative": cumulative_tokens}
                     })
                     step_index += 1
-                elif is_related:
-                    # 主 Agent 发给子 Agent 的指令
-                    task_text = _extract_task_content(text_content)
-                    if task_text:
-                        steps.append({
-                            "id": f"sub_step_{step_index}",
-                            "type": StepType.USER.value,
-                            "status": StepStatus.SUCCESS.value,
-                            "timestamp": timestamp,
-                            "duration": duration,
-                            "content": _truncate_text(task_text, 1000),
-                            "senderId": main_agent_id,
-                            "senderName": main_agent_name,
-                            "tokens": {"input": usage.get('input', 0), "output": 0, "cumulative": cumulative_tokens}
+        elif role == 'assistant':
+            # 主 Agent 的思考/回复，只在与该子 Agent 相关时保留
+            if is_related:
+                thinking_text = ""
+                text_content_part = ""
+                tool_calls = []
+                for c in content_list:
+                    if not isinstance(c, dict):
+                        continue
+                    ct = c.get('type')
+                    if ct == 'thinking':
+                        thinking_text += c.get('thinking', '')
+                    elif ct == 'text':
+                        text_content_part += c.get('text', '')
+                    elif ct == 'toolCall':
+                        tool_calls.append({
+                            'name': c.get('name'),
+                            'arguments': c.get('arguments'),
+                            'id': c.get('id')
                         })
-                        step_index += 1
-            elif role == 'assistant':
-                # 主 Agent 的思考/回复，只在与该子 Agent 相关时保留
-                if is_related:
-                    thinking_text = ""
-                    text_content_part = ""
-                    tool_calls = []
-                    for c in content_list:
-                        if not isinstance(c, dict):
-                            continue
-                        ct = c.get('type')
-                        if ct == 'thinking':
-                            thinking_text += c.get('thinking', '')
-                        elif ct == 'text':
-                            text_content_part += c.get('text', '')
-                        elif ct == 'toolCall':
-                            tool_calls.append({
-                                'name': c.get('name'),
-                                'arguments': c.get('arguments'),
-                                'id': c.get('id')
-                            })
-                    if thinking_text:
-                        steps.append({
-                            "id": f"sub_step_{step_index}",
-                            "type": StepType.THINKING.value,
-                            "status": StepStatus.SUCCESS.value,
-                            "timestamp": timestamp,
-                            "duration": duration,
-                            "thinking": _truncate_text(thinking_text, 500),
-                            "collapsed": True,
-                            "tokens": {"input": usage.get('input', 0), "output": 0, "cumulative": cumulative_tokens}
-                        })
-                        step_index += 1
-                        duration = 0
-                    for tc in tool_calls:
-                        steps.append({
-                            "id": f"sub_step_{step_index}",
-                            "type": StepType.TOOL_CALL.value,
-                            "status": StepStatus.SUCCESS.value,
-                            "timestamp": timestamp,
-                            "duration": duration,
-                            "toolName": tc.get('name'),
-                            "toolCallId": tc.get('id') or f"sub_step_{step_index}",
-                            "toolArguments": tc.get('arguments'),
-                            "tokens": {"input": 0, "output": 0, "cumulative": cumulative_tokens}
-                        })
-                        step_index += 1
-                        duration = 0
-            elif role == 'toolResult':
-                # 工具结果，如果与该子 Agent 相关则保留
-                if is_related:
-                    tool_name = msg.get('toolName', 'unknown')
-                    tc_id = msg.get('toolCallId', '')
-                    details = msg.get('details', {})
-                    is_error = (
-                        msg.get('isError') == True or
-                        details.get('exitCode', 0) != 0 or
-                        details.get('status') == 'error'
-                    )
-                    result_status = 'error' if is_error else 'ok'
-                    tool_error = details.get('error') if isinstance(details.get('error'), str) else None
-                    result_content = ""
-                    for c in content_list:
-                        if isinstance(c, dict):
-                            if c.get('type') == 'text':
-                                result_content += c.get('text', '')
-                            elif c.get('type') == 'toolResult':
-                                result_content += str(c.get('content', ''))
-                    if not result_content:
-                        result_content = str(details)
+                if thinking_text:
                     steps.append({
                         "id": f"sub_step_{step_index}",
-                        "type": StepType.TOOL_RESULT.value,
-                        "status": StepStatus.ERROR.value if result_status == 'error' else StepStatus.SUCCESS.value,
+                        "type": StepType.THINKING.value,
+                        "status": StepStatus.SUCCESS.value,
                         "timestamp": timestamp,
                         "duration": duration,
-                        "toolName": tool_name,
-                        "toolCallId": tc_id,
-                        "toolResult": _truncate_text(result_content, 2000),
-                        "toolResultStatus": result_status,
-                        "toolResultError": tool_error,
+                        "thinking": _truncate_text(thinking_text, 500),
+                        "collapsed": True,
+                        "tokens": {"input": usage.get('input', 0), "output": 0, "cumulative": cumulative_tokens}
+                    })
+                    step_index += 1
+                    duration = 0
+                for tc in tool_calls:
+                    steps.append({
+                        "id": f"sub_step_{step_index}",
+                        "type": StepType.TOOL_CALL.value,
+                        "status": StepStatus.SUCCESS.value,
+                        "timestamp": timestamp,
+                        "duration": duration,
+                        "toolName": tc.get('name'),
+                        "toolCallId": tc.get('id') or f"sub_step_{step_index}",
+                        "toolArguments": tc.get('arguments'),
                         "tokens": {"input": 0, "output": 0, "cumulative": cumulative_tokens}
                     })
                     step_index += 1
-    return steps[-limit:] if len(steps) > limit else steps
+                    duration = 0
+        elif role == 'toolResult':
+            # 工具结果，如果与该子 Agent 相关则保留
+            if is_related:
+                tool_name = msg.get('toolName', 'unknown')
+                tc_id = msg.get('toolCallId', '')
+                details = msg.get('details', {})
+                is_error = (
+                    msg.get('isError') == True or
+                    details.get('exitCode', 0) != 0 or
+                    details.get('status') == 'error'
+                )
+                result_status = 'error' if is_error else 'ok'
+                tool_error = details.get('error') if isinstance(details.get('error'), str) else None
+                result_content = ""
+                for c in content_list:
+                    if isinstance(c, dict):
+                        if c.get('type') == 'text':
+                            result_content += c.get('text', '')
+                        elif c.get('type') == 'toolResult':
+                            result_content += str(c.get('content', ''))
+                if not result_content:
+                    result_content = str(details)
+                steps.append({
+                    "id": f"sub_step_{step_index}",
+                    "type": StepType.TOOL_RESULT.value,
+                    "status": StepStatus.ERROR.value if result_status == 'error' else StepStatus.SUCCESS.value,
+                    "timestamp": timestamp,
+                    "duration": duration,
+                    "toolName": tool_name,
+                    "toolCallId": tc_id,
+                    "toolResult": _truncate_text(result_content, 2000),
+                    "toolResultStatus": result_status,
+                    "toolResultError": tool_error,
+                    "tokens": {"input": 0, "output": 0, "cumulative": cumulative_tokens}
+                })
+                step_index += 1
+    return steps
+
+
+def _extract_subagent_steps_from_main_session(
+    main_session_file: Path,
+    subagent_id: str,
+    limit: int
+) -> List[Dict[str, Any]]:
+    """
+    从主 Agent session 中提取与指定子 Agent 相关的步骤。
+
+    主会话文件极大时只读尾部若干行（与 _parse_session_file 同源策略），
+    若筛出的步骤不足 limit 再回退全文件，避免子 Agent 时序接口随主会话变长线性变慢。
+    """
+    file_size = main_session_file.stat().st_size
+    line_budget = max(min(limit * 60, 15_000), 500)
+
+    def slice_limit(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return steps[-limit:] if len(steps) > limit else steps
+
+    if file_size <= _SESSION_FILE_TAIL_THRESHOLD_BYTES:
+        lines = _read_all_text_lines(main_session_file)
+        return slice_limit(_collect_subagent_steps_from_main_session_lines(lines, subagent_id))
+
+    lines = _read_last_n_text_lines(main_session_file, line_budget)
+    steps = _collect_subagent_steps_from_main_session_lines(lines, subagent_id)
+    # 尾部窗口内筛出的子 Agent 步骤不足时（极少见），回退全量
+    if len(steps) < limit:
+        lines = _read_all_text_lines(main_session_file)
+        steps = _collect_subagent_steps_from_main_session_lines(lines, subagent_id)
+    return slice_limit(steps)
 
 
 def _extract_subagent_result_content(text: str) -> str:
@@ -763,15 +794,55 @@ def _extract_task_content(text: str) -> str:
     return '\n'.join(task_lines).strip()
 
 
-def _parse_session_file(
-    session_file: Path,
-    agent_id: str,
-    session_id: Optional[str],
-    limit: int,
+# 大于此字节数的 session 文件优先只读尾部若干行再解析，避免每次请求全量扫描
+_SESSION_FILE_TAIL_THRESHOLD_BYTES = 512 * 1024
+
+
+def _read_all_text_lines(path: Path) -> List[str]:
+    """读取 jsonl 非空行。"""
+    out: List[str] = []
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            s = line.strip()
+            if s:
+                out.append(s)
+    return out
+
+
+def _read_last_n_text_lines(path: Path, n: int) -> List[str]:
+    """
+    仅读取文件末尾 n 条非空行（自 EOF 向前扩展读取块，避免载入全文）。
+    n 超过文件实际行数时返回全部行。
+    """
+    if n <= 0:
+        return []
+    size = path.stat().st_size
+    if size == 0:
+        return []
+    chunk = min(64 * 1024, size)
+    while chunk <= size:
+        with open(path, 'rb') as f:
+            f.seek(max(0, size - chunk))
+            block = f.read()
+        text = block.decode('utf-8', errors='replace')
+        raw_lines = text.split('\n')
+        if size > chunk and raw_lines:
+            raw_lines = raw_lines[1:]
+        lines = [ln.strip() for ln in raw_lines if ln.strip()]
+        if len(lines) >= n or chunk >= size:
+            return lines[-n:] if len(lines) > n else lines
+        nxt = min(chunk * 2, size)
+        if nxt <= chunk:
+            return lines
+        chunk = nxt
+    return []
+
+
+def _collect_timeline_steps_from_session_lines(
+    lines: Iterable[str],
     requester_info: Optional[Dict[str, str]] = None,
-    round_mode: bool = True
-) -> Dict[str, Any]:
-    """解析 session jsonl 文件"""
+) -> Tuple[List[TimelineStep], Optional[int], str]:
+    """将 session jsonl 行解析为 TimelineStep 列表（与原 _parse_session_file 单遍逻辑一致）。"""
     steps: List[TimelineStep] = []
     step_index = 0
     cumulative_tokens = 0
@@ -781,172 +852,175 @@ def _parse_session_file(
     tool_call_map: Dict[str, str] = {}
     sender_id = requester_info.get('senderId') if requester_info else None
     sender_name = requester_info.get('senderName') if requester_info else None
-    with open(session_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            try:
-                data = json.loads(line.strip())
-            except json.JSONDecodeError:
-                continue
-            msg_type = data.get('type')
-            if msg_type == 'session':
-                started_at = _parse_timestamp(data.get('timestamp', 0))
-                continue
-            if msg_type != 'message':
-                continue
-            msg = data.get('message', {})
-            role = msg.get('role')
-            if not role:
-                continue
-            timestamp = _parse_timestamp(msg.get('timestamp') or data.get('timestamp', 0))
-            duration = 0
-            if last_timestamp and timestamp:
-                duration = timestamp - last_timestamp
-            last_timestamp = timestamp
-            if not started_at:
-                started_at = timestamp
-            content_list = msg.get('content', [])
-            if isinstance(content_list, str):
-                content_list = [{'type': 'text', 'text': content_list}]
-            usage = msg.get('usage', {})
-            if usage:
-                cumulative_tokens += usage.get('input', 0) + usage.get('output', 0)
-            stop_reason = msg.get('stopReason')
-            if stop_reason == 'error':
-                session_status = "error"
-                error_msg = msg.get('errorMessage', '')
+    for line in lines:
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_type = data.get('type')
+        if msg_type == 'session':
+            started_at = _parse_timestamp(data.get('timestamp', 0))
+            continue
+        if msg_type != 'message':
+            continue
+        msg = data.get('message', {})
+        role = msg.get('role')
+        if not role:
+            continue
+        timestamp = _parse_timestamp(msg.get('timestamp') or data.get('timestamp', 0))
+        duration = 0
+        if last_timestamp and timestamp:
+            duration = timestamp - last_timestamp
+        last_timestamp = timestamp
+        if not started_at:
+            started_at = timestamp
+        content_list = msg.get('content', [])
+        if isinstance(content_list, str):
+            content_list = [{'type': 'text', 'text': content_list}]
+        usage = msg.get('usage', {})
+        if usage:
+            cumulative_tokens += usage.get('input', 0) + usage.get('output', 0)
+        stop_reason = msg.get('stopReason')
+        if stop_reason == 'error':
+            session_status = "error"
+            error_msg = msg.get('errorMessage', '')
+            steps.append(TimelineStep(
+                id=f"step_{step_index}",
+                type=StepType.ERROR.value,
+                status=StepStatus.ERROR.value,
+                timestamp=timestamp,
+                duration=duration,
+                errorMessage=_truncate_text(error_msg, 1000),
+                errorType=_detect_error_type(error_msg),
+                tokens={"input": usage.get('input', 0), "output": usage.get('output', 0), "cumulative": cumulative_tokens}
+            ))
+            step_index += 1
+            continue
+        if role == 'user':
+            user_text = ""
+            for c in content_list:
+                if isinstance(c, dict) and c.get('type') == 'text':
+                    user_text += c.get('text', '')
+            if requester_info and sender_name:
+                display_sender = sender_name
+                final_sender_id = sender_id
+            else:
+                subagent_label = _detect_subagent_sender(user_text)
+                if subagent_label:
+                    display_sender = subagent_label
+                else:
+                    display_sender = "用户"
+                final_sender_id = sender_id
+            steps.append(TimelineStep(
+                id=f"step_{step_index}",
+                type=StepType.USER.value,
+                status=StepStatus.SUCCESS.value,
+                timestamp=timestamp,
+                duration=duration,
+                content=_truncate_text(user_text, 1000),
+                senderId=final_sender_id,
+                senderName=display_sender
+            ))
+            step_index += 1
+        elif role == 'assistant':
+            thinking_text = ""
+            text_content = ""
+            tool_calls = []
+            for c in content_list:
+                if not isinstance(c, dict):
+                    continue
+                ct = c.get('type')
+                if ct == 'thinking':
+                    thinking_text += c.get('thinking', '')
+                elif ct == 'text':
+                    text_content += c.get('text', '')
+                elif ct == 'toolCall':
+                    tool_calls.append({
+                        'name': c.get('name'),
+                        'arguments': c.get('arguments'),
+                        'id': c.get('id')
+                    })
+            if thinking_text:
                 steps.append(TimelineStep(
                     id=f"step_{step_index}",
-                    type=StepType.ERROR.value,
-                    status=StepStatus.ERROR.value,
+                    type=StepType.THINKING.value,
+                    status=StepStatus.SUCCESS.value,
                     timestamp=timestamp,
-                    duration=duration,
-                    errorMessage=_truncate_text(error_msg, 1000),
-                    errorType=_detect_error_type(error_msg),
-                    tokens={"input": usage.get('input', 0), "output": usage.get('output', 0), "cumulative": cumulative_tokens}
+                    duration=duration if not text_content and not tool_calls else 0,
+                    thinking=_truncate_text(thinking_text, 500),
+                    collapsed=True,
+                    tokens={"input": usage.get('input', 0), "output": 0, "cumulative": cumulative_tokens}
                 ))
                 step_index += 1
-                continue
-            if role == 'user':
-                user_text = ""
-                for c in content_list:
-                    if isinstance(c, dict) and c.get('type') == 'text':
-                        user_text += c.get('text', '')
-                if requester_info and sender_name:
-                    display_sender = sender_name
-                    final_sender_id = sender_id
-                else:
-                    subagent_label = _detect_subagent_sender(user_text)
-                    if subagent_label:
-                        display_sender = subagent_label
-                    else:
-                        display_sender = "用户"
-                    final_sender_id = sender_id
+                duration = 0
+            for tc in tool_calls:
+                step_id = f"step_{step_index}"
+                tc_id = tc.get('id') or step_id
+                tool_call_map[tc_id] = step_id
                 steps.append(TimelineStep(
-                    id=f"step_{step_index}",
-                    type=StepType.USER.value,
+                    id=step_id,
+                    type=StepType.TOOL_CALL.value,
                     status=StepStatus.SUCCESS.value,
                     timestamp=timestamp,
                     duration=duration,
-                    content=_truncate_text(user_text, 1000),
-                    senderId=final_sender_id,
-                    senderName=display_sender
-                ))
-                step_index += 1
-            elif role == 'assistant':
-                thinking_text = ""
-                text_content = ""
-                tool_calls = []
-                for c in content_list:
-                    if not isinstance(c, dict):
-                        continue
-                    ct = c.get('type')
-                    if ct == 'thinking':
-                        thinking_text += c.get('thinking', '')
-                    elif ct == 'text':
-                        text_content += c.get('text', '')
-                    elif ct == 'toolCall':
-                        tool_calls.append({
-                            'name': c.get('name'),
-                            'arguments': c.get('arguments'),
-                            'id': c.get('id')
-                        })
-                if thinking_text:
-                    steps.append(TimelineStep(
-                        id=f"step_{step_index}",
-                        type=StepType.THINKING.value,
-                        status=StepStatus.SUCCESS.value,
-                        timestamp=timestamp,
-                        duration=duration if not text_content and not tool_calls else 0,
-                        thinking=_truncate_text(thinking_text, 500),
-                        collapsed=True,
-                        tokens={"input": usage.get('input', 0), "output": 0, "cumulative": cumulative_tokens}
-                    ))
-                    step_index += 1
-                    duration = 0
-                for tc in tool_calls:
-                    step_id = f"step_{step_index}"
-                    tc_id = tc.get('id') or step_id
-                    tool_call_map[tc_id] = step_id
-                    steps.append(TimelineStep(
-                        id=step_id,
-                        type=StepType.TOOL_CALL.value,
-                        status=StepStatus.SUCCESS.value,
-                        timestamp=timestamp,
-                        duration=duration,
-                        toolName=tc.get('name'),
-                        toolCallId=tc_id,
-                        toolArguments=tc.get('arguments'),
-                        tokens={"input": 0, "output": 0, "cumulative": cumulative_tokens}
-                    ))
-                    step_index += 1
-                    duration = 0
-                if text_content:
-                    steps.append(TimelineStep(
-                        id=f"step_{step_index}",
-                        type=StepType.TEXT.value,
-                        status=StepStatus.SUCCESS.value,
-                        timestamp=timestamp,
-                        duration=duration,
-                        content=_truncate_text(text_content, 1000),
-                        tokens={"input": usage.get('input', 0), "output": usage.get('output', 0), "cumulative": cumulative_tokens}
-                    ))
-                    step_index += 1
-                if stop_reason not in ('end_turn', None):
-                    session_status = "running"
-            elif role == 'toolResult':
-                tool_name = msg.get('toolName', 'unknown')
-                tc_id = msg.get('toolCallId', '')
-                details = msg.get('details', {})
-                is_error = (
-                    msg.get('isError') == True or
-                    details.get('exitCode', 0) != 0 or
-                    details.get('status') == 'error'
-                )
-                result_status = 'error' if is_error else 'ok'
-                tool_error = details.get('error') if isinstance(details.get('error'), str) else None
-                result_content = ""
-                for c in content_list:
-                    if isinstance(c, dict):
-                        if c.get('type') == 'text':
-                            result_content += c.get('text', '')
-                        elif c.get('type') == 'toolResult':
-                            result_content += str(c.get('content', ''))
-                if not result_content:
-                    result_content = str(details)
-                steps.append(TimelineStep(
-                    id=f"step_{step_index}",
-                    type=StepType.TOOL_RESULT.value,
-                    status=StepStatus.ERROR.value if result_status == 'error' else StepStatus.SUCCESS.value,
-                    timestamp=timestamp,
-                    duration=duration,
-                    toolName=tool_name,
+                    toolName=tc.get('name'),
                     toolCallId=tc_id,
-                    toolResult=_truncate_text(result_content, 2000),
-                    toolResultStatus=result_status,
-                    toolResultError=tool_error,
+                    toolArguments=tc.get('arguments'),
                     tokens={"input": 0, "output": 0, "cumulative": cumulative_tokens}
                 ))
                 step_index += 1
+                duration = 0
+            if text_content:
+                steps.append(TimelineStep(
+                    id=f"step_{step_index}",
+                    type=StepType.TEXT.value,
+                    status=StepStatus.SUCCESS.value,
+                    timestamp=timestamp,
+                    duration=duration,
+                    content=_truncate_text(text_content, 1000),
+                    tokens={"input": usage.get('input', 0), "output": usage.get('output', 0), "cumulative": cumulative_tokens}
+                ))
+                step_index += 1
+            if stop_reason not in ('end_turn', None):
+                session_status = "running"
+        elif role == 'toolResult':
+            tool_name = msg.get('toolName', 'unknown')
+            tc_id = msg.get('toolCallId', '')
+            details = msg.get('details', {})
+            is_error = (
+                msg.get('isError') == True or
+                details.get('exitCode', 0) != 0 or
+                details.get('status') == 'error'
+            )
+            result_status = 'error' if is_error else 'ok'
+            tool_error = details.get('error') if isinstance(details.get('error'), str) else None
+            result_content = ""
+            for c in content_list:
+                if isinstance(c, dict):
+                    if c.get('type') == 'text':
+                        result_content += c.get('text', '')
+                    elif c.get('type') == 'toolResult':
+                        result_content += str(c.get('content', ''))
+            if not result_content:
+                result_content = str(details)
+            steps.append(TimelineStep(
+                id=f"step_{step_index}",
+                type=StepType.TOOL_RESULT.value,
+                status=StepStatus.ERROR.value if result_status == 'error' else StepStatus.SUCCESS.value,
+                timestamp=timestamp,
+                duration=duration,
+                toolName=tool_name,
+                toolCallId=tc_id,
+                toolResult=_truncate_text(result_content, 2000),
+                toolResultStatus=result_status,
+                toolResultError=tool_error,
+                tokens={"input": 0, "output": 0, "cumulative": cumulative_tokens}
+            ))
+            step_index += 1
+    return steps, started_at, session_status
+
+
+def _stats_from_steps(steps: List[TimelineStep]) -> Dict[str, int]:
     total_duration = 0
     total_input = 0
     total_output = 0
@@ -959,21 +1033,56 @@ def _parse_session_file(
             total_output += step.tokens.get('output', 0)
         if step.type == StepType.TOOL_CALL.value:
             tool_call_count += 1
+    return {
+        "totalDuration": total_duration,
+        "totalInputTokens": total_input,
+        "totalOutputTokens": total_output,
+        "toolCallCount": tool_call_count,
+        "stepCount": len(steps),
+    }
+
+
+def _parse_session_file(
+    session_file: Path,
+    agent_id: str,
+    session_id: Optional[str],
+    limit: int,
+    requester_info: Optional[Dict[str, str]] = None,
+    round_mode: bool = True
+) -> Dict[str, Any]:
+    """解析 session jsonl 文件（大文件仅解析尾部行以控制耗时）。"""
+    requester_info = requester_info or {}
+    file_size = session_file.stat().st_size
+    # 每条 jsonl 至多展开成多条步骤，行数预算留足余量
+    line_budget = max(min(limit * 60, 15_000), 500)
+
+    if file_size <= _SESSION_FILE_TAIL_THRESHOLD_BYTES:
+        lines = _read_all_text_lines(session_file)
+        steps, started_at, session_status = _collect_timeline_steps_from_session_lines(
+            lines, requester_info
+        )
+    else:
+        lines = _read_last_n_text_lines(session_file, line_budget)
+        steps, started_at, session_status = _collect_timeline_steps_from_session_lines(
+            lines, requester_info
+        )
+        # 尾部行仍不足 limit 条步骤时（极稀疏或行预算偏小），回退全量解析
+        if len(steps) < limit:
+            lines = _read_all_text_lines(session_file)
+            steps, started_at, session_status = _collect_timeline_steps_from_session_lines(
+                lines, requester_info
+            )
+
     if len(steps) > limit:
         steps = steps[-limit:]
+    stats = _stats_from_steps(steps)
     result = {
         "sessionId": session_id,
         "agentId": agent_id,
         "startedAt": started_at,
         "status": session_status,
         "steps": [s.to_dict() for s in steps],
-        "stats": {
-            "totalDuration": total_duration,
-            "totalInputTokens": total_input,
-            "totalOutputTokens": total_output,
-            "toolCallCount": tool_call_count,
-            "stepCount": len(steps)
-        }
+        "stats": stats,
     }
     result["steps"] = _pair_tool_calls_and_results(result["steps"])
     if round_mode:

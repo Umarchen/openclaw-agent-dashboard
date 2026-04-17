@@ -1,7 +1,7 @@
 """
 Agent API 路由
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 import sys
@@ -51,8 +51,35 @@ async def get_agent(agent_id: str):
                 agent['lastActiveFormatted'] = format_last_active(agent['lastActiveAt'])
             return agent
     
-    from fastapi import HTTPException
     raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+
+class TimelineContextResponse(BaseModel):
+    """供「实时执行时序」与 runs.json 对齐：使用最新 run 的 childSessionKey 解析独立会话。"""
+    childSessionKey: Optional[str] = None
+
+
+@router.get("/agents/{agent_id}/timeline-context", response_model=TimelineContextResponse)
+async def get_agent_timeline_context(agent_id: str):
+    """
+    返回该 Agent 在 runs.json 中最近一条 run 的 childSessionKey（若有）。
+    前端传给 GET /api/timeline/{agent_id}?session_key= 以命中 sessions.json 指定 jsonl，
+    避免仅靠 mtime 选文件或误扫主会话合并路径。
+    """
+    from data.config_reader import get_agents_list
+    from data.subagent_reader import get_agent_runs
+
+    agents = get_agents_list()
+    if not any(a.get("id") == agent_id for a in agents):
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    runs = get_agent_runs(agent_id, limit=1)
+    key = None
+    if runs:
+        key = runs[0].get("childSessionKey") or None
+        if isinstance(key, str) and not key.strip():
+            key = None
+    return TimelineContextResponse(childSessionKey=key)
 
 
 @router.get("/agents/{agent_id}/output")
@@ -66,7 +93,6 @@ async def get_agent_output(agent_id: str, limit: int = 50):
     
     agents = get_agents_list()
     if not any(a.get('id') == agent_id for a in agents):
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
     
     turns = get_session_turns(agent_id, limit=limit)

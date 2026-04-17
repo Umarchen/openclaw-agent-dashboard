@@ -114,12 +114,15 @@
             </button>
           </div>
 
-          <!-- 时序视图 -->
+          <!-- 时序视图：先对齐 runs.json 的 childSessionKey，再加载，避免误扫主会话 -->
           <div v-if="activeView === 'timeline'" class="timeline-container">
             <TimelineView
+              v-if="timelineContextLoaded"
               :agentId="agent.id"
+              :sessionKey="timelineSessionKey"
               :autoRefresh="false"
             />
+            <div v-else class="timeline-context-loading">正在解析会话…</div>
           </div>
 
           <!-- 链路视图 -->
@@ -182,6 +185,9 @@ defineEmits<{
 }>()
 
 const activeView = ref<'timeline' | 'chain' | 'advanced'>('timeline')
+/** runs.json 最近 run 的 childSessionKey，供 /api/timeline?session_key= 精确命中独立会话 */
+const timelineSessionKey = ref<string | undefined>(undefined)
+const timelineContextLoaded = ref(false)
 const subagentRun = ref<SubagentRun | null>(null)
 const currentTime = ref(Date.now())
 let timeUpdateInterval: ReturnType<typeof setInterval> | null = null
@@ -338,9 +344,32 @@ function refreshStatus() {
   loadSubagentRun()
 }
 
+async function loadTimelineContext() {
+  timelineContextLoaded.value = false
+  timelineSessionKey.value = undefined
+  const id = props.agent?.id
+  if (!id) {
+    timelineContextLoaded.value = true
+    return
+  }
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(id)}/timeline-context`)
+    if (res.ok) {
+      const data = await res.json() as { childSessionKey?: string | null }
+      const k = data.childSessionKey
+      timelineSessionKey.value = typeof k === 'string' && k.trim() ? k.trim() : undefined
+    }
+  } catch {
+    /* 无 key 时仍可按 mtime/合并回退 */
+  } finally {
+    timelineContextLoaded.value = true
+  }
+}
+
 watch(() => props.agent?.id, () => {
   loadTurns()
   loadSubagentRun()
+  loadTimelineContext()
 }, { immediate: true })
 
 // 监听 agent 状态变化
@@ -553,6 +582,14 @@ onUnmounted(() => {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   overflow: hidden;
+}
+
+.timeline-context-loading {
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  color: #6b7280;
+  background: #fafafa;
 }
 
 /* 高级视图容器 */

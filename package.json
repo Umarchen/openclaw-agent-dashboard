@@ -24,5 +24,8 @@
   },
   "bin": {
     "openclaw-agent-dashboard": "scripts/install.js"
+  },
+  "dependencies": {
+    "openclaw-agent-dashboard": "^1.0.34"
   }
 }

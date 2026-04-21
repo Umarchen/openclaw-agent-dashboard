@@ -4,7 +4,7 @@
 import json
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -407,6 +407,102 @@ def _build_llm_rounds(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return rounds
 
 
+def resolve_agent_session_jsonl(
+    agent_id: str,
+    session_key: Optional[str] = None,
+) -> Tuple[Optional[Path], Optional[str], Optional[str]]:
+    """
+    定位 agents/{agent_id}/sessions 下应对应的 .jsonl。
+
+    不再仅用目录 glob 判断「是否有会话」：OpenClaw 在 sessions.json 里记录的
+    sessionFile（含绝对路径）可能与 glob 不同步；子 Agent 应优先走独立转写。
+
+    返回 (jsonl_path, session_id, resolved_session_key)；无法解析时为 (None, None, None)。
+    """
+    sessions_path = get_openclaw_root() / f"agents/{agent_id}/sessions"
+    if not sessions_path.exists():
+        return None, None, None
+
+    index_path = sessions_path / "sessions.json"
+    index_map: Dict[str, Dict[str, Any]] = {}
+    if index_path.exists():
+        try:
+            with open(index_path, 'r', encoding='utf-8') as f:
+                index_map = normalize_sessions_index(json.load(f))
+        except (json.JSONDecodeError, IOError):
+            index_map = {}
+
+    prefix = f"agent:{agent_id}:"
+
+    if session_key:
+        entry = index_map.get(session_key)
+        if isinstance(entry, dict):
+            p = resolve_session_jsonl_path(sessions_path, entry)
+            if p and p.is_file():
+                sid = entry.get('sessionId') or session_key
+                return p, sid, session_key
+        return None, None, None
+
+    agent_keys = [
+        k for k in index_map
+        if isinstance(index_map.get(k), dict) and str(k).startswith(prefix)
+    ]
+
+    # 1) 与当前子任务最一致：runs.json 中该 agent 最近一次 run 的 childSessionKey
+    runs = get_subagent_runs().get(agent_id, [])
+    if runs:
+        runs.sort(key=lambda x: x.get('startedAt', 0), reverse=True)
+        preferred_key = runs[0].get('childSessionKey')
+        if preferred_key and preferred_key in index_map:
+            ent = index_map[preferred_key]
+            if isinstance(ent, dict):
+                p = resolve_session_jsonl_path(sessions_path, ent)
+                if p and p.is_file():
+                    sid = ent.get('sessionId') or preferred_key
+                    return p, sid, preferred_key
+
+    # 2) 目录下最新的 *.jsonl（mtime）
+    jsonl_files = list(sessions_path.glob("*.jsonl"))
+    if jsonl_files:
+        jsonl_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+        f = jsonl_files[0]
+        sid = f.stem
+        resolved_key: Optional[str] = None
+        try:
+            f_resolved = f.resolve()
+        except OSError:
+            f_resolved = None
+        if f_resolved is not None:
+            for k, ent in index_map.items():
+                if not isinstance(ent, dict):
+                    continue
+                rp = resolve_session_jsonl_path(sessions_path, ent)
+                if not rp or not rp.is_file():
+                    continue
+                try:
+                    if rp.resolve() == f_resolved:
+                        resolved_key = k
+                        break
+                except OSError:
+                    continue
+        return f, sid, resolved_key
+
+    # 3) 仅有 sessions.json 索引、尚无 glob 到的文件时：按 updatedAt 试解析路径
+    if agent_keys:
+        agent_keys.sort(
+            key=lambda k: (index_map[k].get('updatedAt') or index_map[k].get('lastMessageAt') or 0),
+            reverse=True,
+        )
+        for k in agent_keys:
+            ent = index_map[k]
+            p = resolve_session_jsonl_path(sessions_path, ent)
+            if p and p.is_file():
+                sid = ent.get('sessionId') or k
+                return p, sid, k
+
+    return None, None, None
+
+
 def get_timeline_steps(
     agent_id: str,
     session_key: Optional[str] = None,
@@ -414,45 +510,24 @@ def get_timeline_steps(
     round_mode: bool = True
 ) -> Dict[str, Any]:
     """获取 Agent 会话的时序步骤"""
-    sessions_path = get_openclaw_root() / f"agents/{agent_id}/sessions"
-    if not sessions_path.exists() or not list(sessions_path.glob("*.jsonl")):
-        return _get_subagent_timeline(agent_id, limit)
-    session_file: Optional[Path] = None
-    session_id: Optional[str] = None
-    if session_key:
-        sessions_index = sessions_path / "sessions.json"
-        if sessions_index.exists():
-            try:
-                with open(sessions_index, 'r', encoding='utf-8') as f:
-                    index_data = json.load(f)
-                index_map = normalize_sessions_index(index_data)
-                entry = index_map.get(session_key)
-                if entry:
-                    session_file = resolve_session_jsonl_path(sessions_path, entry)
-                    session_id = entry.get('sessionId') or session_key
-            except (json.JSONDecodeError, IOError):
-                pass
-    else:
-        jsonl_files = list(sessions_path.glob("*.jsonl"))
-        if jsonl_files:
-            jsonl_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-            session_file = jsonl_files[0]
-            session_id = session_file.stem
-    if not session_file or not session_file.exists():
-        return _get_subagent_timeline(agent_id, limit)
-    requester_info = _get_requester_info_for_session(agent_id, session_key)
-    return _parse_session_file(session_file, agent_id, session_id, limit, requester_info, round_mode)
+    session_file, session_id, resolved_key = resolve_agent_session_jsonl(agent_id, session_key)
+    if session_file and session_file.exists():
+        req_key = session_key if session_key else resolved_key
+        requester_info = _get_requester_info_for_session(agent_id, req_key)
+        return _parse_session_file(session_file, agent_id, session_id, limit, requester_info, round_mode)
+    return _get_subagent_timeline(agent_id, limit)
 
 
 def _get_subagent_timeline(agent_id: str, limit: int) -> Dict[str, Any]:
     """
-    获取子 Agent 时序数据
+    获取子 Agent 时序数据（仅在 resolve_agent_session_jsonl 无法定位独立 .jsonl 时进入）。
 
     数据源优先级（基于实时性）：
     1. runs.json - 更及时，适合判断创建/进行中/完成状态（spawn 和 complete 时立即写入）
-    2. 主 Agent session - 详细步骤，但有延迟（消息持久化和 announce flow 后才写入）
+    2. 主 Agent session - 从主会话中按子 Agent 过滤的步骤（旧逻辑，有延迟/不完整）
 
-    策略：runs.json 提供实时状态 + 主 Agent session 补充详细步骤
+    正常情况应已通过 agents/{agent_id}/sessions 下独立 jsonl + sessions.json 解析
+    （见 resolve_agent_session_jsonl）；此处为回退。
     """
     # 1. 从 runs.json 获取实时状态和基础信息
     runs_data = _get_subagent_timeline_from_runs(agent_id, limit)

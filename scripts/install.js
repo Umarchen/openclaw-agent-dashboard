@@ -525,11 +525,40 @@ async function uninstallOld(pluginPath, verbose) {
 }
 
 async function installPlugin(verbose) {
-  logInfo('  执行: openclaw plugins install ./plugin');
-  const result = await runCommandAsync('openclaw', ['plugins', 'install', './plugin']);
+  const rootDir = path.join(__dirname, '..');
+  const pluginSrc = path.resolve(rootDir, 'plugin');
+  const pluginPath = getPluginPath();
+
+  // OpenClaw 新版会扫描「危险代码」(如 child_process)；Dashboard 插件需显式放行。
+  // 使用绝对路径，避免 cwd 不在仓库根目录时 ./plugin 失效。
+  const installFrom = (dir) =>
+    runCommandAsync('openclaw', [
+      'plugins',
+      'install',
+      dir,
+      '--dangerously-force-unsafe-install',
+    ]);
+
+  logInfo(
+    `  执行: openclaw plugins install ${pluginSrc} --dangerously-force-unsafe-install`,
+  );
+  let result = await installFrom(pluginSrc);
+
+  if (!result.success) {
+    logWarn('  首次安装失败，复制到 extensions 后重试...');
+    copyDir(pluginSrc, pluginPath);
+    logOk('  已复制插件目录');
+    logInfo(
+      `  执行: openclaw plugins install ${pluginPath} --dangerously-force-unsafe-install`,
+    );
+    result = await installFrom(pluginPath);
+  }
 
   if (!result.success) {
     logError('插件安装失败');
+    logError(
+      `  可手动执行: openclaw plugins install ${pluginSrc} --dangerously-force-unsafe-install`,
+    );
     return false;
   }
 

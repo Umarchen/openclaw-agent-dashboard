@@ -1,11 +1,15 @@
 """
 Timeline API 路由 - 实时执行时序图
 """
+import logging
+import time
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import sys
 from pathlib import Path
+
+LOG = logging.getLogger(__name__)
 sys.path.append(str(Path(__file__).parent.parent))
 
 from data.timeline_reader import get_timeline_steps, StepType, StepStatus
@@ -38,13 +42,17 @@ class TimelineResponse(BaseModel):
     agentName: Optional[str] = None
     model: Optional[str] = None
     startedAt: Optional[int] = None
+    runStartedAt: Optional[int] = None
     status: str
     steps: List[Dict[str, Any]]
     stats: TimelineStats
     message: Optional[str] = None
+    # 主 Agent 无会话文件时由后端置 True，避免前端误用「子代理」空态文案
+    isMainAgent: Optional[bool] = None
     # LLM 轮次分组
     rounds: Optional[List[LLMRound]] = None
     roundMode: Optional[bool] = None
+    dataSource: Optional[str] = None
 
 
 @router.get("/timeline/{agent_id}", response_model=TimelineResponse)
@@ -73,8 +81,17 @@ async def get_timeline(
     if not agent_info:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    # 获取时序数据
+    t0 = time.perf_counter()
     result = get_timeline_steps(agent_id, session_key, limit)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if elapsed_ms >= 200.0:
+        LOG.info(
+            "timeline agent=%s limit=%d steps=%d ms=%.1f",
+            agent_id,
+            limit,
+            len(result.get("steps", [])),
+            elapsed_ms,
+        )
 
     # 补充 Agent 信息
     result['agentName'] = agent_info.get('name', agent_id)

@@ -52,8 +52,11 @@ def get_agents_list() -> List[Dict[str, Any]]:
 
 
 def get_main_agent_id() -> str:
-    """获取主 Agent ID（配置中 id 为 main 的，或列表第一个）"""
+    """获取主 Agent ID：优先 default:true，其次 id 为 main，否则列表第一项。"""
     agents = get_agents_list()
+    for a in agents:
+        if a.get('default') is True:
+            return a.get('id', 'main')
     for a in agents:
         if a.get('id') == 'main':
             return 'main'

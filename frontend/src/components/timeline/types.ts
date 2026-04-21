@@ -86,13 +86,18 @@ export interface TimelineResponse {
   agentName?: string
   model?: string
   startedAt: number | null
+  /** runs.json 中本次子 Agent run 的 startedAt（与子会话派发时刻对齐） */
+  runStartedAt?: number | null
   status: 'running' | 'completed' | 'error' | 'empty' | 'no_sessions'
   steps: TimelineStep[]
   stats: TimelineStats
   message?: string
+  /** 主 Agent 无会话文件等场景，后端标记，避免与子 Agent 空态混淆 */
+  isMainAgent?: boolean
   // LLM 轮次分组
   rounds?: LLMRound[]
   roundMode?: boolean
+  dataSource?: string
 }
 
 /** 步骤图标和颜色配置 */

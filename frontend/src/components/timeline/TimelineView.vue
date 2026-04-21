@@ -28,7 +28,16 @@
     <!-- 空状态 -->
     <div v-else-if="!data || data.steps.length === 0" class="empty-state">
       <span class="empty-icon">📭</span>
-      <span v-if="data?.status === 'no_sessions'" class="empty-message">
+      <span
+        v-if="data?.status === 'no_sessions' && data?.isMainAgent"
+        class="empty-message"
+      >
+        主 Agent 暂无会话记录
+      </span>
+      <span
+        v-else-if="data?.status === 'no_sessions'"
+        class="empty-message"
+      >
         该 Agent 是子代理，暂无独立会话记录
       </span>
       <span v-else>暂无会话记录</span>
@@ -187,6 +196,18 @@ const useRoundMode = computed(() => {
   return data.value?.roundMode && data.value.rounds && data.value.rounds.length > 0
 })
 
+// stepId -> 轮次（避免对每个 step 做 rounds.find）
+const stepIdToRound = computed(() => {
+  const m = new Map<string, { id: string; stepIds: string[]; [k: string]: unknown }>()
+  if (!data.value?.rounds) return m
+  for (const r of data.value.rounds) {
+    for (const id of r.stepIds) {
+      m.set(id, r)
+    }
+  }
+  return m
+})
+
 // 获取不属于任何轮次的步骤（如 toolResult）
 const standaloneSteps = computed(() => {
   if (!data.value || !useRoundMode.value) return []
@@ -211,8 +232,7 @@ const renderItems = computed(() => {
     // 如果已经在某个轮次中渲染过，跳过
     if (renderedStepIds.has(step.id)) continue
 
-    // 查找包含此步骤的轮次
-    const round = data.value.rounds?.find(r => r.stepIds.includes(step.id))
+    const round = stepIdToRound.value.get(step.id)
 
     if (round) {
       // 渲染整个轮次

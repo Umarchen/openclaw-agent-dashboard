@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from data.config_reader import get_openclaw_root
+from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
 from data.session_reader import normalize_sessions_index, resolve_session_jsonl_path
 
 
@@ -37,10 +37,10 @@ def get_agent_runs(agent_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     """获取指定 Agent 的运行记录"""
     runs = load_subagent_runs()
     agent_runs = []
-    
+    prefix = f"agent:{normalize_openclaw_agent_id(agent_id)}:"
     for run in runs:
         child_key = run.get('childSessionKey', '')
-        if f'agent:{agent_id}:' in child_key:
+        if prefix in child_key:
             agent_runs.append(run)
     
     # 按开始时间倒序
@@ -55,12 +55,13 @@ def is_agent_working(agent_id: str) -> bool:
     - 作为派发者：requesterSessionKey 包含 agent:{agent_id}:（主 Agent 等待子 Agent 完成）
     """
     active_runs = get_active_runs()
+    prefix = f"agent:{normalize_openclaw_agent_id(agent_id)}:"
     for run in active_runs:
         child_key = run.get('childSessionKey', '')
         requester_key = run.get('requesterSessionKey', '')
-        if f'agent:{agent_id}:' in child_key:
+        if prefix in child_key:
             return True
-        if f'agent:{agent_id}:' in requester_key:
+        if prefix in requester_key:
             return True
     return False
 
@@ -79,10 +80,11 @@ def get_waiting_child_agent(agent_id: str) -> Optional[str]:
         子代理 ID，如果没有则返回 None
     """
     active_runs = get_active_runs()
+    prefix = f"agent:{normalize_openclaw_agent_id(agent_id)}:"
     for run in active_runs:
         requester_key = run.get('requesterSessionKey', '')
         # 检查这个 agent 是否是 requester（即它在等待子 agent）
-        if f'agent:{agent_id}:' in requester_key:
+        if prefix in requester_key:
             child_key = run.get('childSessionKey', '')
             if child_key and ':' in child_key:
                 parts = child_key.split(':')
@@ -108,7 +110,7 @@ def get_agent_output_for_run(child_session_key: str, max_chars: int = 10000) -> 
     parts = child_session_key.split(':')
     if len(parts) < 2 or parts[0] != 'agent':
         return None
-    agent_id = parts[1]
+    agent_id = normalize_openclaw_agent_id(parts[1])
     
     openclaw_path = get_openclaw_root()
     sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
@@ -170,7 +172,7 @@ def get_agent_files_for_run(child_session_key: str) -> List[str]:
     parts = child_session_key.split(':')
     if len(parts) < 2 or parts[0] != 'agent':
         return []
-    agent_id = parts[1]
+    agent_id = normalize_openclaw_agent_id(parts[1])
     
     openclaw_path = get_openclaw_root()
     sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"

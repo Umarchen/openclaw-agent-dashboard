@@ -43,8 +43,10 @@ def _get_agent_info(agent_id: str) -> Dict[str, Any]:
     """获取单个 agent 的信息"""
     config = _get_agents_config()
     agents = config.get('agents', {}).get('list', [])
+    from data.config_reader import agent_ids_equal
+
     for a in agents:
-        if a.get('id') == agent_id:
+        if agent_ids_equal(a.get('id'), agent_id):
             return a
     return {}
 

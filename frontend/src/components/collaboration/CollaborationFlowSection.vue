@@ -349,11 +349,25 @@ function getAgentForNode(node: CollaborationNode): AgentForCard {
 
 function getModelInfoForNode(node: CollaborationNode): { primary?: string; fallbacks?: string[] } | undefined {
   if (node.type !== 'agent') return undefined
-  return agentModels.value[node.id]
+  const direct = agentModels.value[node.id]
+  if (direct) return direct
+  const needle = node.id.toLowerCase()
+  for (const [k, v] of Object.entries(agentModels.value)) {
+    if (k.toLowerCase() === needle) return v
+  }
+  return undefined
 }
 
+/** 后端 agentActiveTasks 的 key 可能为会话规范化小写 id，节点 id 与 openclaw.json 一致，需兼容查找 */
 function getAgentActiveTasks(agentId: string): ActiveTask[] | undefined {
-  return agentActiveTasks.value[agentId]
+  const map = agentActiveTasks.value
+  const direct = map[agentId]
+  if (direct?.length) return direct
+  const needle = agentId.toLowerCase()
+  for (const [k, v] of Object.entries(map)) {
+    if (k.toLowerCase() === needle && v?.length) return v
+  }
+  return undefined
 }
 
 function getAgentTasks(agentId: string): TaskInfo[] {
@@ -374,11 +388,16 @@ function getAgentTasks(agentId: string): TaskInfo[] {
 }
 
 function isActiveNode(node: CollaborationNode): boolean {
-  return activePath.value.includes(node.id)
+  if (activePath.value.includes(node.id)) return true
+  const needle = node.id.toLowerCase()
+  return activePath.value.some(p => p.toLowerCase() === needle)
 }
 
 function isActiveEdge(edge: CollaborationEdge): boolean {
-  return activePath.value.includes(edge.source) && activePath.value.includes(edge.target)
+  const path = activePath.value
+  const has = (id: string) =>
+    path.includes(id) || path.some(p => p.toLowerCase() === id.toLowerCase())
+  return has(edge.source) && has(edge.target)
 }
 
 // 计算连线路径

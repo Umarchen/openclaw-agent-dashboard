@@ -31,7 +31,7 @@ class ErrorSeverity(Enum):
     LOW = "low"            # 轻微错误，可忽略
 
 
-from data.config_reader import get_openclaw_root
+from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
 
 
 # 错误模式匹配规则
@@ -313,7 +313,8 @@ def get_tool_call_chain(session_path: Path, before_turn: int, limit: int = 10) -
 
 def analyze_agent_errors(agent_id: str, session_limit: int = 5) -> Dict[str, Any]:
     """分析 Agent 的错误情况"""
-    sessions_dir = get_openclaw_root() / "agents" / agent_id / "sessions"
+    aid = normalize_openclaw_agent_id(agent_id)
+    sessions_dir = get_openclaw_root() / "agents" / aid / "sessions"
     if not sessions_dir.exists():
         return {'agentId': agent_id, 'error': 'Sessions directory not found', 'errors': []}
 
@@ -415,7 +416,8 @@ def analyze_all_agents_errors() -> Dict[str, Any]:
 
 def get_error_detail(agent_id: str, session_file: str, turn_index: int) -> Optional[Dict[str, Any]]:
     """获取单个错误的详细信息"""
-    session_path = get_openclaw_root() / "agents" / agent_id / "sessions" / session_file
+    aid = normalize_openclaw_agent_id(agent_id)
+    session_path = get_openclaw_root() / "agents" / aid / "sessions" / session_file
     if not session_path.exists():
         return None
 

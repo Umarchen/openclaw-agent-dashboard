@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 import logging
 import time
 from typing import Literal, Dict, Any, List
-from data.config_reader import get_agents_list, get_agent_config, get_main_agent_id
+from data.config_reader import get_agents_list, get_agent_config, get_main_agent_id, agent_ids_equal
 from data.subagent_reader import is_agent_working, get_agent_runs
 from data.session_reader import (
     has_recent_errors,
@@ -38,7 +38,7 @@ def _main_agent_solo_processing(agent_id: str) -> bool:
     弱信号（短窗）：sessions 聚合 updatedAt 在 MAIN_AGENT_SOLO_STREAM_GRACE_SEC 内——覆盖纯等模型首包、
     流式尚未落 thinking/tool 的阶段；不用于填充 currentTask，避免假任务文案。
     """
-    if agent_id != get_main_agent_id():
+    if not agent_ids_equal(agent_id, get_main_agent_id()):
         return False
     if is_agent_working(agent_id):
         return False

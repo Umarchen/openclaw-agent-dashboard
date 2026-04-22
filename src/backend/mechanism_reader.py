@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 
-from data.config_reader import get_openclaw_root
+from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
 from data.session_reader import normalize_sessions_index
 
 
@@ -15,7 +15,8 @@ def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
     获取 Agent 使用的机制：Memory、Skill、Channel、Heartbeat、Cron
     数据来源：sessions.json 的 systemPromptReport、origin、deliveryContext
     """
-    sessions_index = get_openclaw_root() / "agents" / agent_id / "sessions" / "sessions.json"
+    aid = normalize_openclaw_agent_id(agent_id)
+    sessions_index = get_openclaw_root() / "agents" / aid / "sessions" / "sessions.json"
     result = {
         "agentId": agent_id,
         "memory": [],

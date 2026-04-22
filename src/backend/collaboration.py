@@ -113,7 +113,7 @@ async def get_collaboration():
     """获取协作流程数据 - 主 Agent 与子 Agents 的拓扑关系，含模型配置与最近调用"""
     from data.config_reader import (
         get_agents_list, get_agent_models, get_models_configured_by_agents,
-        get_model_display_name, get_main_agent_id
+        get_model_display_name, get_main_agent_id, agent_ids_equal,
     )
     from data.subagent_reader import get_active_runs
     from status.status_calculator import calculate_agent_status
@@ -132,8 +132,10 @@ async def get_collaboration():
         active_runs = get_active_runs()
 
         main_agent_id = get_main_agent_id()
-        main_agent_config = next((a for a in agents_list if a.get('id') == main_agent_id), None)
-        sub_agents_config = [a for a in agents_list if a.get('id') != main_agent_id]
+        main_agent_config = next(
+            (a for a in agents_list if agent_ids_equal(a.get('id'), main_agent_id)), None
+        )
+        sub_agents_config = [a for a in agents_list if not agent_ids_equal(a.get('id'), main_agent_id)]
 
         all_agents = [a for a in agents_list if a.get('id')]
         for agent in all_agents:

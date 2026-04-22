@@ -107,16 +107,21 @@ def _build_agent_active_tasks(
             ...
         }
     """
+    from data.config_reader import agent_ids_equal, canonical_agent_id_from_config
+
     agent_active_tasks: Dict[str, List[Dict[str, Any]]] = {}
 
     for run in active_runs:
         child_key = run.get('childSessionKey', '')
         requester_key = run.get('requesterSessionKey', '')
 
-        # 解析执行者 Agent
-        child_agent_id = _parse_agent_id(child_key)
-        # 解析派发者 Agent
-        requester_agent_id = _parse_agent_id(requester_key)
+        # 解析执行者 Agent（会话 key 内为小写，映射到配置中的原始 id）
+        raw_child = _parse_agent_id(child_key)
+        raw_requester = _parse_agent_id(requester_key)
+        child_agent_id = canonical_agent_id_from_config(raw_child) if raw_child else ''
+        requester_agent_id = (
+            canonical_agent_id_from_config(raw_requester) if raw_requester else ''
+        )
 
         if not child_agent_id:
             continue
@@ -141,7 +146,7 @@ def _build_agent_active_tasks(
         }
 
         # 如果有派发者，添加 childAgentId（用于主 Agent 显示任务流向）
-        if requester_agent_id and requester_agent_id != child_agent_id:
+        if requester_agent_id and not agent_ids_equal(requester_agent_id, child_agent_id):
             task_item['childAgentId'] = child_agent_id
 
         # 1. 添加到派发者（如果派发者是某个已知 agent）
@@ -420,13 +425,15 @@ def _analyze_stuck_reason(agent_id: str, idle_seconds: int) -> Dict[str, Any]:
         }
     """
     from data.subagent_reader import get_active_runs
+    from data.config_reader import normalize_openclaw_agent_id
 
     # 检查是否在等待子 agent
     active_runs = get_active_runs()
+    prefix = f"agent:{normalize_openclaw_agent_id(agent_id)}:"
     for run in active_runs:
         requester_key = run.get('requesterSessionKey', '')
         # 如果这个 agent 是 requester，说明它在等待子 agent
-        if f'agent:{agent_id}:' in requester_key:
+        if prefix in requester_key:
             child_key = run.get('childSessionKey', '')
             if child_key and ':' in child_key:
                 parts = child_key.split(':')
@@ -533,7 +540,8 @@ async def get_collaboration():
     """获取协作流程数据 - 主 Agent 与子 Agents 的拓扑关系，含模型配置与最近调用"""
     from data.config_reader import (
         get_agents_list, get_agent_models, get_models_configured_by_agents,
-        get_model_display_name, get_main_agent_id
+        get_model_display_name, get_main_agent_id,
+        agent_ids_equal, normalize_openclaw_agent_id, canonical_agent_id_from_config,
     )
     from data.subagent_reader import get_active_runs
     from status.status_calculator import calculate_agent_status, get_current_task
@@ -553,8 +561,10 @@ async def get_collaboration():
         active_runs = get_active_runs()
 
         main_agent_id = get_main_agent_id()
-        main_agent_config = next((a for a in agents_list if a.get('id') == main_agent_id), None)
-        sub_agents_config = [a for a in agents_list if a.get('id') != main_agent_id]
+        main_agent_config = next(
+            (a for a in agents_list if agent_ids_equal(a.get('id'), main_agent_id)), None
+        )
+        sub_agents_config = [a for a in agents_list if not agent_ids_equal(a.get('id'), main_agent_id)]
 
         all_agents = [a for a in agents_list if a.get('id')]
         for agent in all_agents:
@@ -579,9 +589,10 @@ async def get_collaboration():
         main_stuck = None
         if active_runs:
             # 找到主 agent 作为 requester 的任务
+            main_prefix = f"agent:{normalize_openclaw_agent_id(main_agent_id)}:"
             for run in active_runs:
                 requester_key = run.get('requesterSessionKey', '')
-                if f'agent:{main_agent_id}:' in requester_key:
+                if main_prefix in requester_key:
                     main_current_task = _clean_task_name(run.get('task', ''))
                     break
             if not main_current_task and active_runs:
@@ -622,9 +633,10 @@ async def get_collaboration():
 
             # 获取子 agent 的当前任务
             current_task = ''
+            child_prefix = f"agent:{normalize_openclaw_agent_id(agent_id)}:"
             for run in active_runs:
                 child_key = run.get('childSessionKey', '')
-                if f'agent:{agent_id}:' in child_key:
+                if child_prefix in child_key:
                     current_task = _clean_task_name(run.get('task', ''))
                     break
 
@@ -695,6 +707,11 @@ async def get_collaboration():
             if not agent_id:
                 continue
 
+            agent_id_canon = canonical_agent_id_from_config(agent_id)
+            requester_id_canon = (
+                canonical_agent_id_from_config(requester_id) if requester_id else requester_id
+            )
+
             task_name = _clean_task_name(run.get('task', ''))
 
             task_id = f"task-{run.get('runId', agent_id)}"
@@ -708,8 +725,8 @@ async def get_collaboration():
             nodes.append(task_node)
 
             edges.append(CollaborationEdge(
-                id=f"edge-{agent_id}-{task_id}",
-                source=agent_id,
+                id=f"edge-{agent_id_canon}-{task_id}",
+                source=agent_id_canon,
                 target=task_id,
                 type="calls",
                 label="执行"
@@ -718,15 +735,15 @@ async def get_collaboration():
             # Spawn 链：主 Agent 派发 -> 子 Agent 执行
             if requester_id and requester_id != agent_id:
                 edges.append(CollaborationEdge(
-                    id=f"edge-spawn-{requester_id}-{task_id}",
-                    source=requester_id,
+                    id=f"edge-spawn-{requester_id_canon}-{task_id}",
+                    source=requester_id_canon,
                     target=task_id,
                     type="delegates",
                     label="派发"
                 ))
                 # 如果 requester 是主 agent，给主 agent 也添加一个任务节点（用户命令）
                 # 移除 main_agent_task_created 限制，支持多任务并行显示
-                if requester_id == main_agent_id:
+                if agent_ids_equal(requester_id, main_agent_id):
                     # 主 agent 的任务就是用户原始命令
                     main_task_id = f"task-main-{run.get('runId', 'current')}"
                     main_task_node = CollaborationNode(
@@ -745,7 +762,7 @@ async def get_collaboration():
                         label="执行"
                     ))
 
-            active_path.extend([main_agent_id, agent_id, task_id])
+            active_path.extend([main_agent_id, agent_id_canon, task_id])
 
     except Exception as e:
         print(f"Error building collaboration data: {e}")

@@ -262,9 +262,10 @@ def _get_session_message_count(child_session_key: str) -> int:
     agent_id = parts[1]
 
     try:
-        from data.config_reader import get_openclaw_root
+        from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
         openclaw_path = get_openclaw_root()
-        sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
+        aid = normalize_openclaw_agent_id(agent_id)
+        sessions_index = openclaw_path / "agents" / aid / "sessions" / "sessions.json"
         if not sessions_index.exists():
             return 0
 
@@ -274,7 +275,7 @@ def _get_session_message_count(child_session_key: str) -> int:
         entry = index_map.get(child_session_key)
         if not entry:
             return 0
-        sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+        sessions_dir = openclaw_path / "agents" / aid / "sessions"
         session_path = resolve_session_jsonl_path(sessions_dir, entry)
         if not session_path:
             return 0
@@ -352,9 +353,10 @@ def _extract_subtasks_from_session(child_session_key: str) -> List[Dict[str, Any
     agent_id = parts[1]
 
     try:
-        from data.config_reader import get_openclaw_root
+        from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
         openclaw_path = get_openclaw_root()
-        sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
+        aid = normalize_openclaw_agent_id(agent_id)
+        sessions_index = openclaw_path / "agents" / aid / "sessions" / "sessions.json"
         if not sessions_index.exists():
             return []
 
@@ -364,7 +366,7 @@ def _extract_subtasks_from_session(child_session_key: str) -> List[Dict[str, Any
         entry = index_map.get(child_session_key)
         if not entry:
             return []
-        sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+        sessions_dir = openclaw_path / "agents" / aid / "sessions"
         session_path = resolve_session_jsonl_path(sessions_dir, entry)
         if not session_path:
             return []
@@ -512,9 +514,10 @@ def _extract_timeline_from_session(child_session_key: str) -> List[Dict[str, Any
     agent_id = parts[1]
 
     try:
-        from data.config_reader import get_openclaw_root
+        from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
         openclaw_path = get_openclaw_root()
-        sessions_index = openclaw_path / "agents" / agent_id / "sessions" / "sessions.json"
+        aid = normalize_openclaw_agent_id(agent_id)
+        sessions_index = openclaw_path / "agents" / aid / "sessions" / "sessions.json"
         if not sessions_index.exists():
             return []
 
@@ -524,7 +527,7 @@ def _extract_timeline_from_session(child_session_key: str) -> List[Dict[str, Any
         entry = index_map.get(child_session_key)
         if not entry:
             return []
-        sessions_dir = openclaw_path / "agents" / agent_id / "sessions"
+        sessions_dir = openclaw_path / "agents" / aid / "sessions"
         session_path = resolve_session_jsonl_path(sessions_dir, entry)
         if not session_path:
             return []

@@ -91,7 +91,7 @@ class TimelineStep:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
 
-from data.config_reader import get_openclaw_root
+from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id, agent_ids_equal
 from data.session_reader import normalize_sessions_index, resolve_session_jsonl_path
 
 
@@ -274,7 +274,7 @@ def _get_subagent_runs_cached(mtime: float) -> Dict[str, List[Dict]]:
         if ':' in child_key:
             parts = child_key.split(':')
             if len(parts) >= 2:
-                agent_id = parts[1]
+                agent_id = normalize_openclaw_agent_id(parts[1])
                 if agent_id not in runs_by_agent:
                     runs_by_agent[agent_id] = []
                 runs_by_agent[agent_id].append({
@@ -291,8 +291,9 @@ def _get_subagent_runs_cached(mtime: float) -> Dict[str, List[Dict]]:
 
 def _get_requester_info_for_session(agent_id: str, session_key: Optional[str]) -> Dict[str, Optional[str]]:
     """获取子 Agent 会话的消息来源（requester）信息"""
+    state_id = normalize_openclaw_agent_id(agent_id)
     # 方法1：从 sessions.json 的 spawnedBy 字段获取
-    sessions_index = get_openclaw_root() / f"agents/{agent_id}/sessions/sessions.json"
+    sessions_index = get_openclaw_root() / f"agents/{state_id}/sessions/sessions.json"
     if sessions_index.exists():
         try:
             with open(sessions_index, 'r', encoding='utf-8') as f:
@@ -320,7 +321,7 @@ def _get_requester_info_for_session(agent_id: str, session_key: Optional[str]) -
             pass
     # 方法2：从 runs.json 查找 requesterSessionKey
     if not session_key:
-        runs = get_subagent_runs().get(agent_id, [])
+        runs = get_subagent_runs().get(state_id, [])
         if runs:
             runs.sort(key=lambda x: x.get('startedAt', 0), reverse=True)
             session_key = runs[0].get('childSessionKey')
@@ -402,7 +403,7 @@ def _subagent_run_anchor_ms(agent_id: str, resolved_session_key: Optional[str]) 
     返回 runs.json 中与子会话对应的本次 run 的 startedAt（毫秒）。
     用于从「派发/子 Agent 会话开始」起展示，去掉同文件内更早的噪声。
     """
-    runs = get_subagent_runs().get(agent_id, [])
+    runs = get_subagent_runs().get(normalize_openclaw_agent_id(agent_id), [])
     if not runs:
         return None
     if resolved_session_key:
@@ -561,7 +562,8 @@ def resolve_agent_session_jsonl(
 
     返回 (jsonl_path, session_id, resolved_session_key)；无法解析时为 (None, None, None)。
     """
-    sessions_path = get_openclaw_root() / f"agents/{agent_id}/sessions"
+    state_id = normalize_openclaw_agent_id(agent_id)
+    sessions_path = get_openclaw_root() / f"agents/{state_id}/sessions"
     if not sessions_path.exists():
         return None, None, None
 
@@ -574,7 +576,7 @@ def resolve_agent_session_jsonl(
         except (json.JSONDecodeError, IOError):
             index_map = {}
 
-    prefix = f"agent:{agent_id}:"
+    prefix = f"agent:{state_id}:"
 
     if session_key:
         entry = index_map.get(session_key)
@@ -591,7 +593,7 @@ def resolve_agent_session_jsonl(
     ]
 
     # 1) 与当前子任务最一致：runs.json 中该 agent 最近一次 run 的 childSessionKey
-    runs = get_subagent_runs().get(agent_id, [])
+    runs = get_subagent_runs().get(state_id, [])
     if runs:
         runs.sort(key=lambda x: x.get('startedAt', 0), reverse=True)
         preferred_key = runs[0].get('childSessionKey')
@@ -650,7 +652,8 @@ def _empty_main_agent_timeline(agent_id: str) -> Dict[str, Any]:
     主 Agent 无法定位会话 jsonl 时的响应（勿走子 Agent 回退，否则会误显示「子代理」空态）。
     """
     root = get_openclaw_root()
-    rel = f"agents/{agent_id}/sessions"
+    state_id = normalize_openclaw_agent_id(agent_id)
+    rel = f"agents/{state_id}/sessions"
     return {
         "sessionId": None,
         "agentId": agent_id,
@@ -685,12 +688,12 @@ def get_timeline_steps(
         requester_info = _get_requester_info_for_session(agent_id, req_key)
         result = _parse_session_file(session_file, agent_id, session_id, limit, requester_info, round_mode)
         # 子 Agent：从 runs.json 本次 run 的 startedAt 起展示（对应派发进子会话的时刻，含 PM 经链路下发）
-        if agent_id != _get_main_agent_id():
+        if not agent_ids_equal(agent_id, _get_main_agent_id()):
             anchor = _subagent_run_anchor_ms(agent_id, resolved_key)
             if anchor is not None:
                 result = _apply_subagent_run_anchor_to_result(result, anchor, limit, round_mode)
         return result
-    if agent_id == _get_main_agent_id():
+    if agent_ids_equal(agent_id, _get_main_agent_id()):
         return _empty_main_agent_timeline(agent_id)
     return _get_subagent_timeline(agent_id, limit)
 
@@ -712,7 +715,7 @@ def _get_subagent_timeline(agent_id: str, limit: int) -> Dict[str, Any]:
 
     # 2. 尝试从主 Agent session 获取详细步骤
     main_agent_id = _get_main_agent_id()
-    main_session_dir = get_openclaw_root() / f"agents/{main_agent_id}/sessions"
+    main_session_dir = get_openclaw_root() / f"agents/{normalize_openclaw_agent_id(main_agent_id)}/sessions"
     jsonl_files = list(main_session_dir.glob("*.jsonl")) if main_session_dir.exists() else []
 
     if not jsonl_files:
@@ -768,7 +771,7 @@ def _get_subagent_timeline(agent_id: str, limit: int) -> Dict[str, Any]:
 def _get_subagent_timeline_from_runs(agent_id: str, limit: int) -> Dict[str, Any]:
     """从 runs.json 获取子 Agent 时序（回退方案）"""
     runs_by_agent = get_subagent_runs()
-    runs = runs_by_agent.get(agent_id, [])
+    runs = runs_by_agent.get(normalize_openclaw_agent_id(agent_id), [])
     if not runs:
         return {
             "sessionId": None,
@@ -829,7 +832,7 @@ def _extract_subagent_steps_from_main_lines(
     limit: int,
 ) -> List[Dict[str, Any]]:
     """从主会话行序列中提取与指定子 Agent 相关的步骤（供尾部窗口与全量解析复用）。"""
-    subagent_key_pattern = f"agent:{subagent_id}:"
+    subagent_key_pattern = f"agent:{normalize_openclaw_agent_id(subagent_id)}:"
     steps: List[Dict[str, Any]] = []
     step_index = 0
     cumulative_tokens = 0

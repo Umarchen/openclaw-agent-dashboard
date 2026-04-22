@@ -45,8 +45,10 @@ async def get_agent(agent_id: str):
     """获取单个 Agent 详情"""
     agents = get_agents_with_status()
     
+    from data.config_reader import agent_ids_equal
+
     for agent in agents:
-        if agent['id'] == agent_id:
+        if agent_ids_equal(agent['id'], agent_id):
             if agent.get('lastActiveAt'):
                 agent['lastActiveFormatted'] = format_last_active(agent['lastActiveAt'])
             return agent
@@ -62,10 +64,9 @@ async def get_agent_output(agent_id: str, limit: int = 50):
     用于调试视图展示
     """
     from data.session_reader import get_session_turns
-    from data.config_reader import get_agents_list
-    
-    agents = get_agents_list()
-    if not any(a.get('id') == agent_id for a in agents):
+    from data.config_reader import get_agent_config
+
+    if not get_agent_config(agent_id):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
     

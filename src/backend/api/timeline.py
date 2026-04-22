@@ -13,7 +13,7 @@ LOG = logging.getLogger(__name__)
 sys.path.append(str(Path(__file__).parent.parent))
 
 from data.timeline_reader import get_timeline_steps, StepType, StepStatus
-from data.config_reader import get_agents_list
+from data.config_reader import get_agent_config
 
 router = APIRouter()
 
@@ -70,14 +70,7 @@ async def get_timeline(
     - 工具调用及结果
     - 错误信息
     """
-    # 验证 agent_id
-    agents = get_agents_list()
-    agent_info = None
-    for a in agents:
-        if a.get('id') == agent_id:
-            agent_info = a
-            break
-
+    agent_info = get_agent_config(agent_id)
     if not agent_info:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
@@ -118,8 +111,7 @@ async def get_timeline_steps_only(
 
     可按步骤类型过滤
     """
-    agents = get_agents_list()
-    if not any(a.get('id') == agent_id for a in agents):
+    if not get_agent_config(agent_id):
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     result = get_timeline_steps(agent_id, session_key, limit)
@@ -139,8 +131,7 @@ async def get_timeline_summary(agent_id: str, session_key: Optional[str] = Query
 
     快速查看会话概览，不返回详细步骤
     """
-    agents = get_agents_list()
-    if not any(a.get('id') == agent_id for a in agents):
+    if not get_agent_config(agent_id):
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     result = get_timeline_steps(agent_id, session_key, limit=10)  # 只需基本信息

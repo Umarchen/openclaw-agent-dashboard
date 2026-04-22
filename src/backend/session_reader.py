@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 
-from data.config_reader import get_openclaw_root
+from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
 
 
 def get_agent_sessions_path(agent_id: str) -> Optional[Path]:
     """获取 Agent 的 sessions 目录"""
-    sessions_path = get_openclaw_root() / "agents" / agent_id / "sessions"
+    sessions_path = get_openclaw_root() / "agents" / normalize_openclaw_agent_id(agent_id) / "sessions"
     if not sessions_path.exists():
         return None
     return sessions_path
@@ -105,7 +105,8 @@ def get_session_updated_at(agent_id: str) -> int:
     获取 Agent 会话的最后更新时间（sessions.json 中 updatedAt 的最大值）
     用于判断「最近 5 分钟是否有 session 活动」
     """
-    sessions_index = get_openclaw_root() / "agents" / agent_id / "sessions" / "sessions.json"
+    aid = normalize_openclaw_agent_id(agent_id)
+    sessions_index = get_openclaw_root() / "agents" / aid / "sessions" / "sessions.json"
     if not sessions_index.exists():
         return 0
     
@@ -140,7 +141,8 @@ def get_session_turns(agent_id: str, session_key: Optional[str] = None, limit: i
     解析 jsonl 获取会话轮次，每轮包含 user/assistant/toolResult 及 usage
     返回格式: [{ turnIndex, role, content, usage?, toolCalls?, stopReason?, timestamp }]
     """
-    sessions_index = get_openclaw_root() / "agents" / agent_id / "sessions" / "sessions.json"
+    aid = normalize_openclaw_agent_id(agent_id)
+    sessions_index = get_openclaw_root() / "agents" / aid / "sessions" / "sessions.json"
     if not sessions_index.exists():
         return []
     
@@ -156,7 +158,7 @@ def get_session_turns(agent_id: str, session_key: Optional[str] = None, limit: i
                 if sf:
                     session_file = Path(sf)
                 elif sid:
-                    session_file = get_openclaw_root() / "agents" / agent_id / "sessions" / f"{sid}.jsonl"
+                    session_file = get_openclaw_root() / "agents" / aid / "sessions" / f"{sid}.jsonl"
         except (json.JSONDecodeError, IOError):
             pass
     

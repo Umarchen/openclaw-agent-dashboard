@@ -1,6 +1,6 @@
 {
   "name": "openclaw-agent-dashboard",
-  "version": "1.0.36",
+  "version": "1.0.37",
   "description": "多 Agent 可视化看板 - OpenClaw 插件",
   "main": "index.js",
   "openclaw": {

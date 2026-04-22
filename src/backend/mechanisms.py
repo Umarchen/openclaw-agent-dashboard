@@ -22,10 +22,9 @@ async def get_mechanisms():
 async def get_agent_mechanisms(agent_id: str):
     """获取单个 Agent 的机制使用情况"""
     from data.mechanism_reader import get_agent_mechanisms
-    from data.config_reader import get_agents_list
-    
-    agents = get_agents_list()
-    if not any(a.get('id') == agent_id for a in agents):
+    from data.config_reader import get_agent_config
+
+    if not get_agent_config(agent_id):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
     

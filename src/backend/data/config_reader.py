@@ -4,8 +4,46 @@
 """
 import json
 import os
+import re
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
+# 与 OpenClaw core 的 normalizeAgentId 对齐（dist/session-key-*.js）
+_DEFAULT_OPENCLAW_AGENT_ID = "main"
+_VALID_OPENCLAW_AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$", re.IGNORECASE)
+_INVALID_OPENCLAW_AGENT_CHARS_RE = re.compile(r"[^a-z0-9_-]+")
+
+
+def normalize_openclaw_agent_id(value: Optional[str]) -> str:
+    """
+    将 agents.list[].id 规范化为状态目录名（agents/<id>/sessions）。
+    OpenClaw 落盘时始终使用该形式；配置里可写任意大小写。
+    """
+    trimmed = (value or "").strip()
+    if not trimmed:
+        return _DEFAULT_OPENCLAW_AGENT_ID
+    normalized = trimmed.lower()
+    if _VALID_OPENCLAW_AGENT_ID_RE.match(trimmed):
+        return normalized
+    sanitized = _INVALID_OPENCLAW_AGENT_CHARS_RE.sub("-", normalized)
+    sanitized = sanitized.lstrip("-").rstrip("-")[:64] or _DEFAULT_OPENCLAW_AGENT_ID
+    return sanitized
+
+
+def agent_ids_equal(a: Optional[str], b: Optional[str]) -> bool:
+    """两枚 Agent ID 是否在 OpenClaw 语义下相同（大小写/规范化后）。"""
+    return normalize_openclaw_agent_id(a) == normalize_openclaw_agent_id(b)
+
+
+def canonical_agent_id_from_config(agent_id: str) -> str:
+    """
+    返回 agents.list 中条目的原始 id（与配置一致），供 UI 节点 id 与边 source/target 对齐。
+    若配置中无匹配，则回退为规范化 id。
+    """
+    cfg = get_agent_config(agent_id)
+    if cfg and cfg.get("id"):
+        return str(cfg["id"])
+    return normalize_openclaw_agent_id(agent_id)
 
 
 def get_openclaw_root() -> Path:
@@ -81,10 +119,11 @@ def get_workspace_paths() -> List[Path]:
 
 
 def get_agent_config(agent_id: str) -> Dict[str, Any]:
-    """获取单个 Agent 配置"""
+    """获取单个 Agent 配置（id 与 openclaw.json 中条目大小写可不一致）。"""
     agents = get_agents_list()
+    target = normalize_openclaw_agent_id(agent_id)
     for agent in agents:
-        if agent.get('id') == agent_id:
+        if normalize_openclaw_agent_id(agent.get("id")) == target:
             return agent
     return {}
 

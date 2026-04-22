@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 import shutil
 from datetime import datetime
 
-from data.config_reader import get_openclaw_root
+from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id, agent_ids_equal
 from data.session_reader import normalize_sessions_index
 
 
@@ -52,7 +52,7 @@ def get_agent_config(agent_id: str) -> Optional[Dict[str, Any]]:
     agent_list = agents.get('list', [])
 
     for agent in agent_list:
-        if agent.get('id') == agent_id:
+        if agent_ids_equal(agent.get('id'), agent_id):
             return agent
     return None
 
@@ -192,7 +192,7 @@ def update_agent_model(agent_id: str, primary: Optional[str] = None, fallbacks: 
 
     found = False
     for agent in agent_list:
-        if agent.get('id') == agent_id:
+        if agent_ids_equal(agent.get('id'), agent_id):
             if 'model' not in agent:
                 agent['model'] = {}
 
@@ -223,7 +223,8 @@ def get_agent_full_info(agent_id: str) -> Dict[str, Any]:
     model_config = get_agent_model_config(agent_id)
 
     # 检查运行状态
-    session_file = get_openclaw_root() / "agents" / agent_id / "sessions" / "sessions.json"
+    aid = normalize_openclaw_agent_id(agent_id)
+    session_file = get_openclaw_root() / "agents" / aid / "sessions" / "sessions.json"
     status = 'idle'
     last_active = None
 
@@ -242,7 +243,7 @@ def get_agent_full_info(agent_id: str) -> Dict[str, Any]:
 
     return {
         'found': True,
-        'id': agent_id,
+        'id': agent_config.get('id', agent_id),
         'name': agent_config.get('name', agent_id),
         'workspace': agent_config.get('workspace', ''),
         'model': model_config,

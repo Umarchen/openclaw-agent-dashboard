@@ -118,7 +118,8 @@
           <div v-if="activeView === 'timeline'" class="timeline-container">
             <TimelineView
               :agentId="agent.id"
-              :autoRefresh="false"
+              :autoRefresh="true"
+              :refreshInterval="3"
             />
           </div>
 

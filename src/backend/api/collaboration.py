@@ -73,6 +73,23 @@ class ActiveTask(BaseModel):
     featureId: Optional[str] = None     # FEATURE_ID（如果有）
 
 
+def _main_agent_status_for_collaboration(main_agent_id: str) -> str:
+    """
+    协作流程里 PM 卡片状态：与 delegate 边是否激活同源——只认 subagents/runs.json 的活跃 run
+    （is_agent_working）+ 近期会话错误；不使用 calculate_agent_status 里的主会话 solo 启发式
+    （thinking / 未完成 tool / sessions 短窗），避免「连线已变实线仍显示工作中」。
+    全局 /api/agents 仍用 calculate_agent_status，可继续反映「主会话自己在跑」的语义。
+    """
+    from data.session_reader import has_recent_errors
+    from data.subagent_reader import is_agent_working
+
+    if has_recent_errors(main_agent_id, minutes=5):
+        return 'error'
+    if is_agent_working(main_agent_id):
+        return 'working'
+    return 'idle'
+
+
 def _extract_feature_id(task_name: str) -> Optional[str]:
     """从任务名称中提取 FEATURE_ID"""
     if not task_name:
@@ -149,6 +166,14 @@ def _build_agent_active_tasks(
         if requester_agent_id and not agent_ids_equal(requester_agent_id, child_agent_id):
             task_item['childAgentId'] = child_agent_id
 
+        # 自派：派发者与执行者为同一 Agent（如 PM 派给自己）时，同一 run 只记一条，否则会显示「2 个并行任务」
+        if requester_agent_id and agent_ids_equal(requester_agent_id, child_agent_id):
+            if child_agent_id not in agent_active_tasks:
+                agent_active_tasks[child_agent_id] = []
+            self_task = {k: v for k, v in task_item.items() if k != 'childAgentId'}
+            agent_active_tasks[child_agent_id].append(self_task)
+            continue
+
         # 1. 添加到派发者（如果派发者是某个已知 agent）
         if requester_agent_id:
             if requester_agent_id not in agent_active_tasks:
@@ -195,8 +220,6 @@ class CollaborationFlow(BaseModel):
     recentCalls: Optional[List[ModelCall]] = None
     hierarchy: Optional[Dict[str, List[str]]] = None  # agentId -> 子 agent 列表
     depths: Optional[Dict[str, int]] = None  # agentId -> 层级深度 (0=主, 1=子, 2=孙...)
-    # 多任务并行展示：每个 Agent 的活跃任务列表
-    agentActiveTasks: Optional[Dict[str, List[ActiveTask]]] = None
     # 多任务并行展示：每个 Agent 的活跃任务列表
     agentActiveTasks: Optional[Dict[str, List[ActiveTask]]] = None
 
@@ -340,30 +363,11 @@ def _enrich_main_agent_active_tasks_if_needed(
     main_agent_id: str,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    主 Agent 仅更新主会话、subagents/runs 无条目时，agentActiveTasks 为空；
-    在仍为 working 时补一条会话摘要，便于卡片「并行任务」区有文案。
+    PM 协作状态已与 runs 对齐；不再在「无 subagent run」时用 calculate_agent_status
+    伪造一条主会话任务，否则会出现徽章已空闲、卡片仍显示「当前任务」的矛盾。
+    主会话 solo 执行中的语义由 /api/agents 等入口展示。
     """
-    from status.status_calculator import calculate_agent_status, get_current_task
-
-    if calculate_agent_status(main_agent_id) != 'working':
-        return agent_active_tasks
-    if agent_active_tasks.get(main_agent_id):
-        return agent_active_tasks
-    hint = get_current_task(main_agent_id)
-    name = _clean_task_name(hint) if hint else ''
-    if not name:
-        return agent_active_tasks
-    merged = dict(agent_active_tasks)
-    merged[main_agent_id] = [
-        {
-            'id': 'task-main-session',
-            'name': name,
-            'status': 'working',
-            'timestamp': None,
-            'featureId': None,
-        }
-    ]
-    return merged
+    return agent_active_tasks
 
 
 def _get_agent_error_info(agent_id: str) -> Optional[Dict[str, Any]]:
@@ -574,14 +578,8 @@ async def get_collaboration():
         recent_calls = _get_recent_model_calls(30)
 
         main_display_name = (main_agent_config.get('name') if main_agent_config else None) or "主 Agent"
-        # 与子 Agent 一致：基于 runs + session 活动判断；独立 PM 无 subagent run 时仍可能在工作
-        main_raw = calculate_agent_status(main_agent_id)
-        if main_raw == 'down':
-            main_status = 'error'
-        elif main_raw == 'working':
-            main_status = 'working'
-        else:
-            main_status = 'idle'
+        # PM：与连线 activePath 一致，仅用 runs 活跃 + 会话错误（见 _main_agent_status_for_collaboration）
+        main_status = _main_agent_status_for_collaboration(main_agent_id)
 
         # 获取主 agent 的当前任务和错误信息
         main_current_task = ''
@@ -909,8 +907,17 @@ async def get_collaboration_dynamic():
             except Exception as e:
                 logger.warning(f"Failed to get display status for {aid}: {e}")
 
-        # 主 Agent 状态已在上方循环中与 calculate_agent_status 一致，勿再用「有无 active_runs」覆盖
-        # （独立 PM 仅更新主会话时 runs 可能为空，否则会误显示空闲）
+        # PM：覆盖为与连线同源的状态；并修正 dynamic 文案，避免 calculate_agent_status 的 solo 与卡片矛盾
+        main_collab = _main_agent_status_for_collaboration(main_agent_id)
+        agent_statuses[main_agent_id] = main_collab
+        if main_collab == 'idle':
+            agent_dynamic_statuses[main_agent_id] = AgentDisplayStatus(
+                status='idle', display='空闲', duration=0, alert=False
+            )
+        elif main_collab == 'error':
+            agent_dynamic_statuses[main_agent_id] = AgentDisplayStatus(
+                status='idle', display='检测到错误', duration=0, alert=True
+            )
 
         # 处理活跃任务（简化：不在流程图中创建任务节点，任务信息由 agentActiveTasks 提供）
         # 任务详情在 Agent 卡片内显示，流程图只显示 Agent 之间的委托关系

@@ -129,10 +129,9 @@ def get_recent_messages(agent_id: str, limit: int = 10) -> List[Dict[str, Any]]:
             data = json.loads(line)
             if data.get('type') == 'message':
                 messages.append(data.get('message', {}))
-                if len(messages) >= limit:
-                    break
         except json.JSONDecodeError:
             continue
+    # 必须取尾部：原先在扫描到 limit 条就 break，会拿到「窗口内较早」的消息而非最新，导致 tool/ thinking 误判
     return messages[-limit:] if len(messages) > limit else messages
 
 
@@ -416,16 +415,26 @@ def get_latest_tool_call(agent_id: str) -> Optional[Dict[str, Any]]:
 
 
 def has_thinking_block(agent_id: str) -> bool:
-    """检查最近消息是否有 thinking 块"""
-    messages = get_recent_messages(agent_id, limit=5)
-    for msg in reversed(messages):
-        if msg.get('role') == 'assistant':
-            content = msg.get('content', [])
-            if isinstance(content, str):
-                continue
-            for c in content:
-                if isinstance(c, dict) and c.get('type') == 'thinking':
-                    return True
+    """
+    是否处于「当前回合的思考阶段」。
+    仅看会话中**最后一条**消息：已完成回合的 assistant 往往在 content 里仍保留 thinking 块，
+    若仍按「最近任意 assistant 含 thinking」会长期误判为工作中。
+    """
+    messages = get_recent_messages(agent_id, limit=24)
+    if not messages:
+        return False
+    last = messages[-1]
+    if last.get('role') != 'assistant':
+        return False
+    # 已结束的一轮通常带 stopReason；此时 content 里的 thinking 只算历史，不算仍在思考
+    if last.get('stopReason'):
+        return False
+    content = last.get('content', [])
+    if isinstance(content, str):
+        return False
+    for c in content:
+        if isinstance(c, dict) and c.get('type') == 'thinking':
+            return True
     return False
 
 
@@ -471,8 +480,6 @@ def get_recent_messages_with_timestamp(agent_id: str, limit: int = 10) -> List[D
                     'timestamp': msg.get('timestamp', 0),
                     'data_timestamp': data.get('timestamp', ''),
                 })
-                if len(messages) >= limit:
-                    break
         except json.JSONDecodeError:
             continue
 

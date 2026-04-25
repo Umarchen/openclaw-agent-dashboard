@@ -4,12 +4,12 @@
     <div class="chain-header">
       <div class="header-left">
         <span class="title">🔗 任务执行链路</span>
-        <span class="project-info" v-if="activeChain">
-          {{ activeChain.projectId || '当前任务' }}
+        <span class="project-info" v-if="displayChain">
+          {{ displayChain.projectId || '当前任务' }}
         </span>
       </div>
       <div class="header-right">
-        <span class="status-badge" :class="`status-${activeChain?.status || 'empty'}`">
+        <span class="status-badge" :class="`status-${displayChain?.status || 'empty'}`">
           {{ statusLabel }}
         </span>
         <button class="refresh-btn" @click="refresh" :disabled="loading">
@@ -19,13 +19,13 @@
     </div>
 
     <!-- 加载状态 -->
-    <div v-if="loading && !activeChain" class="loading-state">
+    <div v-if="loading && !displayChain" class="loading-state">
       <div class="spinner"></div>
       <span>加载链路数据...</span>
     </div>
 
     <!-- 空状态 -->
-    <div v-else-if="!activeChain && chains.length === 0" class="empty-state">
+    <div v-else-if="!displayChain && chains.length === 0" class="empty-state">
       <span class="empty-icon">🔗</span>
       <span>暂无任务链路</span>
       <div class="empty-hint">当 Main Agent 派发任务给子 Agent 时，这里会显示执行链路</div>
@@ -34,16 +34,16 @@
     <!-- 链路内容 -->
     <div v-else class="chain-content">
       <!-- 根任务信息 -->
-      <div class="root-task" v-if="activeChain">
+      <div class="root-task" v-if="displayChain">
         <div class="task-label">根任务</div>
-        <div class="task-text">{{ activeChain.rootTask }}</div>
+        <div class="task-text">{{ displayChain.rootTask }}</div>
         <div class="task-meta">
-          <span v-if="activeChain.startedAt">开始: {{ formatTime(activeChain.startedAt) }}</span>
+          <span v-if="displayChain.startedAt">开始: {{ formatTime(displayChain.startedAt) }}</span>
         </div>
       </div>
 
       <!-- 链路图 -->
-      <div class="chain-diagram" v-if="activeChain">
+      <div class="chain-diagram" v-if="displayChain">
         <div class="diagram-container">
           <template v-for="(node, index) in sortedNodes" :key="node.agentId">
             <!-- 连接线 -->
@@ -63,12 +63,12 @@
       </div>
 
       <!-- 进度条 -->
-      <div class="chain-progress" v-if="activeChain">
+      <div class="chain-progress" v-if="displayChain">
         <div class="progress-bar">
-          <div class="progress-fill" :style="{ width: `${activeChain.progress * 100}%` }"></div>
+          <div class="progress-fill" :style="{ width: `${displayChain.progress * 100}%` }"></div>
         </div>
         <div class="progress-text">
-          {{ Math.round(activeChain.progress * 100) }}% ({{ activeChain.completedNodes }}/{{ activeChain.totalNodes }} 完成)
+          {{ Math.round(displayChain.progress * 100) }}% ({{ displayChain.completedNodes }}/{{ displayChain.totalNodes }} 完成)
         </div>
       </div>
 
@@ -146,9 +146,17 @@ const props = defineProps<{
 }>()
 
 const chains = ref<TaskChain[]>([])
+/** 仅「进行中」的链路；任务结束后为 null，但 chains 中仍有已完成项 */
 const activeChain = ref<TaskChain | null>(null)
 const selectedNode = ref<ChainNodeType | null>(null)
 const loading = ref(false)
+
+/** 优先展示进行中的；若无（已全部结束）则展示最近一条链路，避免跑完后整块空白 */
+const displayChain = computed<TaskChain | null>(() => {
+  if (activeChain.value) return activeChain.value
+  if (chains.value.length > 0) return chains.value[0]
+  return null
+})
 
 const statusLabel = computed(() => {
   const labels: Record<string, string> = {
@@ -157,15 +165,16 @@ const statusLabel = computed(() => {
     error: '❌ 出错',
     empty: '空'
   }
-  return labels[activeChain.value?.status || 'empty'] || '未知'
+  return labels[displayChain.value?.status || 'empty'] || '未知'
 })
 
 const sortedNodes = computed(() => {
-  if (!activeChain.value?.nodes) return []
+  const nodes = displayChain.value?.nodes
+  if (!nodes) return []
 
   // 按照 main -> analyst -> architect -> devops 顺序排序
   const roleOrder = ['main', 'analyst', 'architect', 'devops']
-  return [...activeChain.value.nodes].sort((a, b) => {
+  return [...nodes].sort((a, b) => {
     const aIndex = roleOrder.findIndex(r => a.role.includes(r))
     const bIndex = roleOrder.findIndex(r => b.role.includes(r))
     return aIndex - bIndex

@@ -151,6 +151,7 @@ _AGENT_ID_TO_LABEL = {
     "analyst-agent": "分析师",
     "architect-agent": "架构师",
     "devops-agent": "运维",
+    "coder-agent": "开发",
     "project-manager": "项目经理",
     "test-agent": "测试",
     "frontend-agent": "前端",
@@ -423,10 +424,15 @@ def _rebuild_subagent_timeline_payload(
     result: Dict[str, Any],
     limit: int,
     round_mode: bool,
+    prefer_start: bool = False,
 ) -> None:
     """就地更新 result 的 steps / stats / rounds（步骤已为 dict 列表）。"""
     if len(steps) > limit:
-        steps = steps[-limit:]
+        # 子任务需从「本次下发」起展示：保留 [:limit]；主会话等仍用尾部 100
+        if prefer_start:
+            steps = steps[:limit]
+        else:
+            steps = steps[-limit:]
     result['steps'] = _pair_tool_calls_and_results(steps)
     total_duration = 0
     total_input = 0
@@ -452,24 +458,60 @@ def _rebuild_subagent_timeline_payload(
         result['roundMode'] = True
 
 
+def _include_subagent_steps_before_run_anchor(
+    steps_in: List[Dict[str, Any]],
+    first_kept_index: int,
+    _anchor_ms: int,
+    cutoff: int,
+) -> int:
+    """
+    从 runs 取的 startedAt 可能略晚于「PM/主控下发 user」的落盘时间，且其之间常有 thinking/工具 步；
+    在第一个 ts>=cutoff 的步骤之前，把同一工作段内、早于 cutoff 的连续步骤并回（时间窗 20 分钟内）。
+    """
+    if first_kept_index <= 0:
+        return 0
+    t_first = (steps_in[first_kept_index].get('timestamp') or 0) if first_kept_index < len(steps_in) else 0
+    if not t_first:
+        return first_kept_index
+    i0 = first_kept_index
+    # 在「首条已跨 cutoff」的步之前，并回同一 burst 中所有更早的步骤（含 PM 的 user 与紧挨的工具链）
+    while i0 > 0:
+        tlo = (steps_in[i0 - 1].get('timestamp') or 0)
+        if tlo >= cutoff:
+            i0 -= 1
+            continue
+        if (t_first - tlo) <= 20 * 60 * 1000:
+            i0 -= 1
+        else:
+            break
+    return i0
+
+
 def _apply_subagent_run_anchor_to_result(
     result: Dict[str, Any],
     anchor_ms: int,
     limit: int,
     round_mode: bool,
 ) -> Dict[str, Any]:
-    """去掉 anchor 之前的步骤；若过滤后为空则保留原步骤。"""
+    """去掉 anchor 之前无关步骤，并补回被锚点切掉的 PM/下发 user；若过滤后为空则保留原步骤。"""
     steps_in = result.get('steps') or []
     if not steps_in:
         return result
     cutoff = anchor_ms - _RUN_ANCHOR_SLACK_MS
-    filtered = [s for s in steps_in if (s.get('timestamp') or 0) >= cutoff]
+    first_i = next(
+        (i for i, s in enumerate(steps_in) if (s.get('timestamp') or 0) >= cutoff),
+        len(steps_in),
+    )
+    if first_i >= len(steps_in):
+        return result
+    i0 = _include_subagent_steps_before_run_anchor(steps_in, first_i, anchor_ms, cutoff)
+    filtered = steps_in[i0:]
     if not filtered:
         return result
     result['runStartedAt'] = anchor_ms
     if result.get('steps') and filtered[0].get('timestamp') is not None:
         result['startedAt'] = filtered[0]['timestamp']
-    _rebuild_subagent_timeline_payload(filtered, result, limit, round_mode)
+    _rebuild_subagent_timeline_payload(filtered, result, limit, round_mode, prefer_start=True)
     return result
 
 
@@ -605,7 +647,22 @@ def resolve_agent_session_jsonl(
                     sid = ent.get('sessionId') or preferred_key
                     return p, sid, preferred_key
 
-    # 2) 目录下最新的 *.jsonl（mtime）
+    # 2) 按 sessions.json 的 updatedAt/lastMessageAt 选最近会话（在 glob mtime 之前）
+    #    OpenClaw 在任务结束后可能从 runs.json 移除 run，此处仍可定位「最近活跃」子会话 jsonl。
+    #    多文件时比仅凭 *.jsonl 的 mtime 更稳，且与 4/24 当晚最晚更新 session 一致。
+    if agent_keys:
+        agent_keys.sort(
+            key=lambda k: (index_map[k].get('updatedAt') or index_map[k].get('lastMessageAt') or 0),
+            reverse=True,
+        )
+        for k in agent_keys:
+            ent = index_map[k]
+            p = resolve_session_jsonl_path(sessions_path, ent)
+            if p and p.is_file():
+                sid = ent.get('sessionId') or k
+                return p, sid, k
+
+    # 3) 无索引条目时：目录下最新的 *.jsonl（mtime）
     jsonl_files = list(sessions_path.glob("*.jsonl"))
     if jsonl_files:
         jsonl_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
@@ -630,19 +687,6 @@ def resolve_agent_session_jsonl(
                 except OSError:
                     continue
         return f, sid, resolved_key
-
-    # 3) 仅有 sessions.json 索引、尚无 glob 到的文件时：按 updatedAt 试解析路径
-    if agent_keys:
-        agent_keys.sort(
-            key=lambda k: (index_map[k].get('updatedAt') or index_map[k].get('lastMessageAt') or 0),
-            reverse=True,
-        )
-        for k in agent_keys:
-            ent = index_map[k]
-            p = resolve_session_jsonl_path(sessions_path, ent)
-            if p and p.is_file():
-                sid = ent.get('sessionId') or k
-                return p, sid, k
 
     return None, None, None
 
@@ -686,12 +730,23 @@ def get_timeline_steps(
     if session_file and session_file.exists():
         req_key = session_key if session_key else resolved_key
         requester_info = _get_requester_info_for_session(agent_id, req_key)
-        result = _parse_session_file(session_file, agent_id, session_id, limit, requester_info, round_mode)
-        # 子 Agent：从 runs.json 本次 run 的 startedAt 起展示（对应派发进子会话的时刻，含 PM 经链路下发）
-        if not agent_ids_equal(agent_id, _get_main_agent_id()):
-            anchor = _subagent_run_anchor_ms(agent_id, resolved_key)
-            if anchor is not None:
-                result = _apply_subagent_run_anchor_to_result(result, anchor, limit, round_mode)
+        is_sub = not agent_ids_equal(agent_id, _get_main_agent_id())
+        subagent_anchor: Optional[int] = None
+        if is_sub:
+            subagent_anchor = _subagent_run_anchor_ms(agent_id, resolved_key)
+        result = _parse_session_file(
+            session_file,
+            agent_id,
+            session_id,
+            limit,
+            requester_info,
+            round_mode,
+            is_subagent=is_sub,
+            subagent_anchor_ms=subagent_anchor,
+        )
+        # 子 Agent：从 runs.json 本次 run 的 startedAt 起展示（含 PM/主控经链路下发到 coder 等子 agent）
+        if is_sub and subagent_anchor is not None:
+            result = _apply_subagent_run_anchor_to_result(result, subagent_anchor, limit, round_mode)
         return result
     if agent_ids_equal(agent_id, _get_main_agent_id()):
         return _empty_main_agent_timeline(agent_id)
@@ -1224,33 +1279,147 @@ def _parse_session_lines(
     return steps, started_at, session_status
 
 
+# 子 agent 会话 jsonl 全量读的安全上限（仅防极端大文件 OOM，主逻辑不据此判断「从哪开始」）
+_SUBAGENT_READ_SAFETY_BYTES = 32 * 1024 * 1024
+# 自「首条 user」起再读多少行入内存（有 runs 时仍从文件头解析以便锚点；无 runs 时从首条 user 行起）
+_MAX_LINES_AFTER_TASK_START = 20000
+
+
+def _line_index_of_first_user_message(path: Path) -> Optional[int]:
+    """
+    扫描 jsonl，返回第一条 type=message 且 role=user 的所在行号（0-based）。
+    用于「无 runs 锚点」时从 PM/主控下发（或 Subagent 首条 user）起构时序，而非按文件体积选 tail/head。
+    """
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if '"role"' not in line or 'user' not in line:
+                    continue
+                try:
+                    d = json.loads(line.strip())
+                except json.JSONDecodeError:
+                    continue
+                if d.get('type') != 'message':
+                    continue
+                if (d.get('message') or {}).get('role') == 'user':
+                    return i
+    except (OSError, IOError):
+        pass
+    return None
+
+
+def _read_text_line_window(path: Path, start_line: int, max_lines: int) -> List[str]:
+    """从第 start_line 行起，最多读 max_lines 行（供超大文件、无锚点时从首条 user 后解析）。"""
+    out: List[str] = []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if i < start_line:
+                    continue
+                out.append(line)
+                if len(out) >= max_lines:
+                    break
+    except (OSError, IOError):
+        pass
+    return out
+
+
+def _slice_subagent_steps_from_first_user(
+    steps: List[TimelineStep],
+) -> List[TimelineStep]:
+    """从本会话中第一条 user（PM/主控下发到子 agent）起展示。"""
+    for i, s in enumerate(steps):
+        if s.type == StepType.USER.value:
+            return steps[i:]
+    return steps
+
+
 def _parse_session_file(
     session_file: Path,
     agent_id: str,
     session_id: Optional[str],
     limit: int,
     requester_info: Optional[Dict[str, str]] = None,
-    round_mode: bool = True
+    round_mode: bool = True,
+    is_subagent: bool = False,
+    subagent_anchor_ms: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """解析 session jsonl；大文件优先解析尾部窗口，步骤不足时再整文件解析。"""
+    """
+    解析 session jsonl；大文件对主 agent 仍可用尾部窗口。
+
+    子 agent：会话范围已由 resolve 指向「最近」jsonl。展示起点由语义决定——
+    有 runs 锚点用 startedAt 对齐；无锚点时从首条 user（PM/主控下发）起。仅对超大文件用 _SUBAGENT_READ_SAFETY_BYTES
+    与行数窗做**内存**保护，不作为「是否从 PM 起」的主判据。
+    """
     path = session_file
     header_ts = _read_session_header_timestamp(path)
-    tail_lines = _read_jsonl_tail_line_slice(path)
-    if tail_lines is not None:
-        steps, started_at, session_status = _parse_session_lines(
-            tail_lines, requester_info, started_at_hint=header_ts
-        )
-        if len(steps) < limit:
+    step_budget = limit
+    if is_subagent:
+        step_budget = max(5000, min(limit * 50, 20000))
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        file_size = 0
+
+    steps: List[TimelineStep] = []
+    started_at: Optional[int] = header_ts
+    session_status = "completed"
+
+    if is_subagent:
+        if file_size == 0:
+            steps, started_at, session_status = _parse_session_lines(
+                [], requester_info, started_at_hint=header_ts
+            )
+        elif file_size <= _SUBAGENT_READ_SAFETY_BYTES:
             steps, started_at, session_status = _parse_session_lines(
                 _read_text_lines(path), requester_info, started_at_hint=header_ts
             )
+            if subagent_anchor_ms is None:
+                steps = _slice_subagent_steps_from_first_user(steps)
+        elif subagent_anchor_ms is not None:
+            # 超大 + 有 run：以尾部为窗口（近期）再交给 get_timeline 的 _apply 锚定
+            tail_lines = _read_jsonl_tail_line_slice(path)
+            if tail_lines is not None:
+                steps, started_at, session_status = _parse_session_lines(
+                    tail_lines, requester_info, started_at_hint=header_ts
+                )
+            else:
+                steps, started_at, session_status = _parse_session_lines(
+                    _read_text_line_window(path, 0, _MAX_LINES_AFTER_TASK_START),
+                    requester_info, started_at_hint=header_ts
+                )
+        else:
+            # 超大 + 无 run：先定位首条 user 行，自 PM/主控下发起读有限行
+            uidx = _line_index_of_first_user_message(path)
+            start = uidx if uidx is not None else 0
+            part = _read_text_line_window(path, start, _MAX_LINES_AFTER_TASK_START)
+            steps, started_at, session_status = _parse_session_lines(
+                part, requester_info, started_at_hint=header_ts
+            )
+            steps = _slice_subagent_steps_from_first_user(steps)
     else:
-        steps, started_at, session_status = _parse_session_lines(
-            _read_text_lines(path), requester_info, started_at_hint=header_ts
-        )
+        tail_lines = _read_jsonl_tail_line_slice(path)
+        if tail_lines is not None:
+            steps, started_at, session_status = _parse_session_lines(
+                tail_lines, requester_info, started_at_hint=header_ts
+            )
+            if len(steps) < limit:
+                steps, started_at, session_status = _parse_session_lines(
+                    _read_text_lines(path), requester_info, started_at_hint=header_ts
+                )
+        else:
+            steps, started_at, session_status = _parse_session_lines(
+                _read_text_lines(path), requester_info, started_at_hint=header_ts
+            )
 
-    if len(steps) > limit:
-        steps = steps[-limit:]
+    if len(steps) > step_budget:
+        if is_subagent:
+            steps = steps[:step_budget]
+        else:
+            steps = steps[-limit:]
+
+    if is_subagent and subagent_anchor_ms is None and len(steps) > limit:
+        steps = steps[:limit]
 
     total_duration = 0
     total_input = 0

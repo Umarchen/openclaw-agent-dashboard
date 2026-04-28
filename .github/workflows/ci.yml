@@ -28,12 +28,11 @@ jobs:
           .venv/bin/pip install -q -r requirements.txt
           .venv/bin/pip install -q pytest pytest-asyncio httpx
 
-      - name: Run tests (exclude benchmark)
+      - name: Run tests
         run: .venv/bin/python -m pytest tests/test_fortify.py tests/test_api_contracts.py -v --tb=short -q
 
-      - name: Run benchmark probes (informational)
-        run: .venv/bin/python -m pytest tests/test_bench_fortify.py -v --tb=short -m benchmark || true
-        continue-on-error: true
+      - name: Run benchmark probes (strict SLA)
+        run: .venv/bin/python -m pytest tests/test_bench_fortify.py -v --tb=short -m benchmark
 
   frontend-test:
     runs-on: ubuntu-latest

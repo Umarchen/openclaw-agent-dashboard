@@ -53,7 +53,7 @@ execSync('npm run build', { cwd: FRONTEND_DIR, stdio: 'inherit', env: process.en
 
 console.log('[pack] 2. 复制 backend -> plugin/dashboard');
 rmrf(DASHBOARD_DEST);
-copyDir(BACKEND_SRC, DASHBOARD_DEST, ['__pycache__', '.pytest_cache']);
+copyDir(BACKEND_SRC, DASHBOARD_DEST, ['__pycache__', '.pytest_cache', '.venv', '.git']);
 
 console.log('[pack] 3. 复制 frontend/dist -> plugin/frontend-dist');
 rmrf(FRONTEND_DEST);

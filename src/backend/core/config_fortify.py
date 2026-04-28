@@ -78,6 +78,13 @@ class FortifyConfig:
     watcher_poll_interval_sec: float
     watcher_failure_window_sec: float
 
+    # NFR-S-003: Logging storage security
+    log_retention_days: int
+    log_max_size_mb: int
+    log_backup_count: int
+    log_file_path: str | None
+    log_compression: bool
+
 
 @lru_cache(maxsize=1)
 def get_fortify_config() -> FortifyConfig:
@@ -104,6 +111,12 @@ def get_fortify_config() -> FortifyConfig:
         watcher_max_retries=_env_int("OPENCLAW_WATCHER_MAX_RETRIES", 3, min_v=1, max_v=10),
         watcher_poll_interval_sec=_env_float("OPENCLAW_WATCHER_POLL_INTERVAL", 5.0),
         watcher_failure_window_sec=_env_float("OPENCLAW_WATCHER_FAILURE_WINDOW", 30.0),
+        # NFR-S-003: Logging storage security
+        log_retention_days=_env_int("OPENCLAW_LOG_RETENTION_DAYS", 30, min_v=1, max_v=365),
+        log_max_size_mb=_env_int("OPENCLAW_LOG_MAX_SIZE_MB", 100, min_v=1, max_v=1024),
+        log_backup_count=_env_int("OPENCLAW_LOG_BACKUP_COUNT", 5, min_v=1, max_v=50),
+        log_file_path=os.environ.get("OPENCLAW_LOG_FILE_PATH") or None,
+        log_compression=_env_bool("OPENCLAW_LOG_COMPRESSION", True),
     )
 
 

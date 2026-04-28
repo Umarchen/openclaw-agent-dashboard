@@ -15,6 +15,8 @@ LOG = logging.getLogger(__name__)
 LARGE_JSONL_BYTES = 512 * 1024
 TAIL_JSONL_BYTES = 2 * 1024 * 1024
 TAIL_JSONL_MAX_LINES = 4000
+# 主 Agent 头部安全行数（超大文件且步骤不足 limit 时补充读）
+_HEAD_JSONL_LINES = 2000
 
 
 class StepType(str, Enum):
@@ -115,9 +117,12 @@ def _read_session_header_timestamp(path: Path) -> Optional[int]:
     return None
 
 
-def _read_jsonl_tail_line_slice(path: Path) -> Optional[List[str]]:
+def _read_jsonl_tail_line_slice(path: Path, target_lines: int = 0) -> Optional[List[str]]:
     """
     大文件时返回尾部若干行（字节与行数双上限），否则返回 None 表示应整文件读取。
+
+    当 target_lines > 0 时：优先满足 target_lines（但最少读 TAIL_JSONL_MAX_LINES/2 行保证有足够数据），
+    上限为 TAIL_JSONL_MAX_LINES。当 target_lines = 0 时退化为原行为。
     """
     try:
         size = path.stat().st_size
@@ -125,6 +130,12 @@ def _read_jsonl_tail_line_slice(path: Path) -> Optional[List[str]]:
         return None
     if size <= LARGE_JSONL_BYTES:
         return None
+
+    # 目标行数转换为行数上限：多读一些（2x）以便有足够步骤，但不超过 TAIL_JSONL_MAX_LINES
+    max_lines = TAIL_JSONL_MAX_LINES
+    if target_lines > 0:
+        max_lines = min(max_lines, max(target_lines * 2, TAIL_JSONL_MAX_LINES // 2))
+
     with open(path, 'rb') as f:
         f.seek(max(0, size - TAIL_JSONL_BYTES))
         raw = f.read()
@@ -134,14 +145,40 @@ def _read_jsonl_tail_line_slice(path: Path) -> Optional[List[str]]:
         return []
     if size > TAIL_JSONL_BYTES:
         lines = lines[1:]
-    if len(lines) > TAIL_JSONL_MAX_LINES:
-        lines = lines[-TAIL_JSONL_MAX_LINES:]
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
     return lines
 
 
-def _read_text_lines(path: Path) -> List[str]:
+def _read_text_lines(path: Path, max_lines: int = 0) -> List[str]:
+    """读取文件全部行，或当 max_lines > 0 时只读尾部 max_lines 行。"""
+    if max_lines <= 0:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.readlines()
+    # 只读尾部 max_lines 行（从头读，跳过后半部分）
     with open(path, 'r', encoding='utf-8') as f:
-        return f.readlines()
+        f.seek(0, 2)
+        file_size = f.tell()
+        if file_size <= 64 * 1024:
+            lines = f.read().splitlines()
+        else:
+            # 从文件末尾读取约 1MB 再提取最后 max_lines 行
+            chunk_size = min(1024 * 1024, file_size)
+            f.seek(max(0, file_size - chunk_size))
+            tail = f.read()
+            all_lines = tail.splitlines()
+            # 如果不够，继续向前读
+            lines = all_lines
+            lines_read = len(all_lines)
+            while lines_read < max_lines and file_size > chunk_size:
+                f.seek(max(0, file_size - chunk_size * 2))
+                more = f.read(chunk_size)
+                more_lines = more.splitlines()
+                lines = more_lines + lines
+                lines_read = len(lines)
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    return lines
 
 
 # 子 Agent 回传消息的特征
@@ -1358,44 +1395,52 @@ def _parse_session_file(
             )
         elif file_size <= _SUBAGENT_READ_SAFETY_BYTES:
             steps, started_at, session_status = _parse_session_lines(
-                _read_text_lines(path), requester_info, started_at_hint=header_ts
+                _read_text_lines(path, limit * 3), requester_info, started_at_hint=header_ts
             )
             if subagent_anchor_ms is None:
                 steps = _slice_subagent_steps_from_first_user(steps)
         elif subagent_anchor_ms is not None:
             # 超大 + 有 run：以尾部为窗口（近期）再交给 get_timeline 的 _apply 锚定
-            tail_lines = _read_jsonl_tail_line_slice(path)
+            tail_lines = _read_jsonl_tail_line_slice(path, target_lines=limit)
             if tail_lines is not None:
                 steps, started_at, session_status = _parse_session_lines(
                     tail_lines, requester_info, started_at_hint=header_ts
                 )
             else:
                 steps, started_at, session_status = _parse_session_lines(
-                    _read_text_line_window(path, 0, _MAX_LINES_AFTER_TASK_START),
+                    _read_text_line_window(path, 0, limit * 3),
                     requester_info, started_at_hint=header_ts
                 )
         else:
             # 超大 + 无 run：先定位首条 user 行，自 PM/主控下发起读有限行
             uidx = _line_index_of_first_user_message(path)
             start = uidx if uidx is not None else 0
-            part = _read_text_line_window(path, start, _MAX_LINES_AFTER_TASK_START)
+            part = _read_text_line_window(path, start, limit * 3)
             steps, started_at, session_status = _parse_session_lines(
                 part, requester_info, started_at_hint=header_ts
             )
             steps = _slice_subagent_steps_from_first_user(steps)
     else:
-        tail_lines = _read_jsonl_tail_line_slice(path)
+        tail_lines = _read_jsonl_tail_line_slice(path, target_lines=limit)
         if tail_lines is not None:
             steps, started_at, session_status = _parse_session_lines(
                 tail_lines, requester_info, started_at_hint=header_ts
             )
             if len(steps) < limit:
-                steps, started_at, session_status = _parse_session_lines(
-                    _read_text_lines(path), requester_info, started_at_hint=header_ts
-                )
+                # 尾部步骤不够，从头部补充（最多读 limit 步对应的行数缓冲）
+                head_lines = _read_text_lines(path, _HEAD_JSONL_LINES)
+                if head_lines:
+                    more_steps, _, _ = _parse_session_lines(
+                        head_lines, requester_info, started_at_hint=header_ts
+                    )
+                    # 合并并重新截取最新的 limit 步
+                    combined = more_steps + steps
+                    if len(combined) > limit:
+                        combined = combined[-limit:]
+                    steps, started_at, session_status = combined, started_at, session_status
         else:
             steps, started_at, session_status = _parse_session_lines(
-                _read_text_lines(path), requester_info, started_at_hint=header_ts
+                _read_text_lines(path, limit * 3), requester_info, started_at_hint=header_ts
             )
 
     if len(steps) > step_budget:

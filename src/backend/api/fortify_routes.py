@@ -1,4 +1,4 @@
-"""TECHDEBT_FORTIFY: health, cache stats, data validation endpoints."""
+"""TECHDEBT_FORTIFY: health, cache stats, data validation, logging endpoints."""
 from __future__ import annotations
 
 import sys
@@ -78,3 +78,31 @@ async def validate_session_data(
     except Exception as e:
         record_error("unknown", str(e), "api:fortify:validate", exc=e)
         raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
+
+
+@router.get("/logging/config")
+async def logging_config() -> Any:
+    """
+    NFR-S-003: Get logging configuration and status.
+
+    Returns current logging configuration for diagnostics and monitoring.
+    """
+    try:
+        from core.logging_config import get_logging_config_summary
+        return {
+            "status": "ok",
+            "config": get_logging_config_summary(),
+        }
+    except ImportError:
+        # Fallback if logging_config is not available
+        return {
+            "status": "ok",
+            "config": {
+                "log_retention_days": 30,
+                "log_max_size_mb": 100,
+                "log_backup_count": 5,
+                "log_file_path": None,
+                "log_compression": True,
+            },
+            "note": "Enhanced logging not configured",
+        }

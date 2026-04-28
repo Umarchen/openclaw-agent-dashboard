@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Optional
 _LOG = logging.getLogger("openclaw.fortify.watcher")
 
 from core.config_fortify import get_fortify_config
-from core.error_handler import record_error
+from core.error_handler import record_error, record_watcher_failure, record_watcher_recovery
 
 DEBOUNCE_SECONDS = 0.3
 
@@ -350,6 +350,8 @@ def _switch_to_polling(loop) -> None:
     with _health_lock:
         _stop_watchdog_observer()
         _switch_count += 1
+    # NFR-R-002: Record watcher failure when switching to polling
+    record_watcher_failure()
     _persist_watcher_state()
     _start_polling_mode(loop)
 
@@ -408,6 +410,8 @@ def _try_resume_watchdog(loop) -> None:
         _set_mode("watchdog")
         _start_monitor_thread(loop)
         _LOG.info("file watcher resumed from polling to watchdog mode")
+        # NFR-R-002: Record watcher recovery
+        record_watcher_recovery()
         _full_resync_cache_and_push()
     except Exception as e:
         with _health_lock:
@@ -496,6 +500,13 @@ def get_watcher_health() -> Dict[str, Any]:
     fw_err = _watcher_framework_error_count()
     snapshot = _read_persisted_watcher_state()
 
+    # NFR-R reliability from error_handler
+    try:
+        from core.error_handler import get_reliability_metrics
+        reliability = get_reliability_metrics()
+    except Exception:
+        reliability = {}
+
     return {
         "status": status,
         "mode": display_mode,
@@ -512,4 +523,6 @@ def get_watcher_health() -> Dict[str, Any]:
         "observer_alive": obs_alive,
         "poll_interval_sec": cfg.watcher_poll_interval_sec,
         "persisted_snapshot": snapshot,
+        # NFR-R Reliability
+        "reliability": reliability,
     }

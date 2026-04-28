@@ -86,12 +86,13 @@ async def get_timeline(
         record_error("unknown", str(e), "api:timeline:get", exc=e)
         raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
     elapsed_ms = (time.perf_counter() - t0) * 1000
-    if elapsed_ms >= 200.0:
+    steps_count = len(result.get("steps", []))
+    if elapsed_ms >= 100.0:
         LOG.info(
             "timeline agent=%s limit=%d steps=%d ms=%.1f",
             agent_id,
             limit,
-            len(result.get("steps", [])),
+            steps_count,
             elapsed_ms,
         )
 

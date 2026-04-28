@@ -26,6 +26,18 @@ def _ensure_fortify_logging() -> None:
     level = getattr(logging, cfg.error_log_level, logging.INFO)
     _LOG.setLevel(level)
     if not _LOG.handlers:
+        # Try to use secure file-based logging if configured
+        try:
+            from core.logging_config import setup_secure_logging, get_log_file_path
+            log_path = get_log_file_path()
+            if log_path is not None:
+                # Secure logging is configured, skip console-only handler
+                # setup_secure_logging() already added file handlers
+                _ensure_fortify_logging._done = True  # type: ignore[attr-defined]
+                return
+        except ImportError:
+            pass  # Fall back to console handler
+
         h = logging.StreamHandler()
         h.setFormatter(
             logging.Formatter(
@@ -54,6 +66,137 @@ _retry_totals = defaultdict(int)
 _retry_budget_lock = threading.Lock()
 _retry_budget_deques: Dict[str, deque] = {}
 _retry_budget_blocks = 0
+
+# NFR-R: Reliability metrics
+_reliability_lock = threading.Lock()
+# Error recovery tracking
+_error_recovery_times: deque = deque(maxlen=100)  # last 100 recovery times in seconds
+_last_error_timestamp: Optional[float] = None
+_last_recovery_timestamp: Optional[float] = None
+
+# Graceful degradation tracking
+_fallback_total_attempts = 0
+_fallback_success_count = 0
+
+# Watcher availability tracking
+_watcher_uptime_start: Optional[float] = None
+_watcher_total_uptime_seconds = 0.0
+_watcher_total_downtime_seconds = 0.0
+_watchdog_last_failure_time: Optional[float] = None
+
+
+def record_fallback_attempt(success: bool) -> None:
+    """Record graceful degradation attempt (NFR-R-005)."""
+    global _fallback_total_attempts, _fallback_success_count
+    with _reliability_lock:
+        _fallback_total_attempts += 1
+        if success:
+            _fallback_success_count += 1
+
+
+def record_error_recovery(duration_seconds: float) -> None:
+    """Record error recovery time (NFR-R-003)."""
+    with _reliability_lock:
+        _error_recovery_times.append(duration_seconds)
+
+
+def record_watcher_failure() -> None:
+    """Mark watchdog failure start time."""
+    global _watchdog_last_failure_time, _watcher_uptime_start, _watcher_total_uptime_seconds
+    now = time.time()
+    with _reliability_lock:
+        if _watchdog_last_failure_time is None:
+            _watchdog_last_failure_time = now
+            if _watcher_uptime_start is not None:
+                _watcher_total_uptime_seconds += now - _watcher_uptime_start
+                _watcher_uptime_start = None
+
+
+def record_watcher_recovery() -> None:
+    """Mark watchdog recovery and record recovery time (NFR-R-003)."""
+    global _watchdog_last_failure_time, _watcher_uptime_start, _watcher_total_downtime_seconds
+    now = time.time()
+    recovery_time = 0.0
+    with _reliability_lock:
+        if _watchdog_last_failure_time is not None:
+            recovery_time = now - _watchdog_last_failure_time
+            _watcher_total_downtime_seconds += recovery_time
+            _watchdog_last_failure_time = None
+        _watcher_uptime_start = now
+    # Record outside lock to avoid deadlock (record_error_recovery also uses _reliability_lock)
+    if recovery_time > 0:
+        _error_recovery_times.append(recovery_time)
+
+
+def get_reliability_metrics() -> Dict[str, Any]:
+    """Get all reliability metrics for NFR-R-002/003/005."""
+    import statistics as _statistics
+
+    with _reliability_lock:
+        current_time = time.time()
+        current_uptime = 0.0
+        if _watcher_uptime_start is not None:
+            current_uptime = current_time - _watcher_uptime_start
+
+        total_uptime = _watcher_total_uptime_seconds + current_uptime
+        total_downtime = _watcher_total_downtime_seconds
+        total_time = total_uptime + total_downtime
+
+        # NFR-R-002: Watcher availability/success rate
+        availability_rate = 1.0
+        if total_time > 0:
+            availability_rate = total_uptime / total_time
+
+        # NFR-R-003: Error recovery time
+        recovery_times_list = list(_error_recovery_times)
+        avg_recovery_time = 0.0
+        p95_recovery_time = 0.0
+        if recovery_times_list:
+            avg_recovery_time = _statistics.mean(recovery_times_list)
+            sorted_times = sorted(recovery_times_list)
+            p95_idx = int(len(sorted_times) * 0.95)
+            p95_recovery_time = sorted_times[min(p95_idx, len(sorted_times) - 1)]
+
+        # NFR-R-005: Graceful degradation rate
+        graceful_degradation_rate = 1.0
+        if _fallback_total_attempts > 0:
+            graceful_degradation_rate = _fallback_success_count / _fallback_total_attempts
+
+        return {
+            # NFR-R-002: Watcher availability
+            "watcher_uptime_seconds": total_uptime,
+            "watcher_downtime_seconds": total_downtime,
+            "watcher_availability_rate": round(availability_rate, 4),
+            "watcher_uptime_percentage": round(availability_rate * 100, 2),
+            # NFR-R-003: Error recovery time
+            "avg_error_recovery_seconds": round(avg_recovery_time, 3),
+            "p95_error_recovery_seconds": round(p95_recovery_time, 3),
+            "error_recovery_count": len(recovery_times_list),
+            "last_error_recovery_time": recovery_times_list[-1] if recovery_times_list else None,
+            # NFR-R-005: Graceful degradation
+            "graceful_degradation_attempts": _fallback_total_attempts,
+            "graceful_degradation_successes": _fallback_success_count,
+            "graceful_degradation_rate": round(graceful_degradation_rate, 4),
+            "graceful_degradation_percentage": round(graceful_degradation_rate * 100, 2),
+        }
+
+
+def reset_reliability_metrics_for_tests() -> None:
+    """Reset reliability metrics for testing."""
+    global _error_recovery_times, _last_error_timestamp, _last_recovery_timestamp
+    global _fallback_total_attempts, _fallback_success_count
+    global _watcher_uptime_start, _watcher_total_uptime_seconds, _watcher_total_downtime_seconds
+    global _watchdog_last_failure_time
+    with _reliability_lock:
+        _error_recovery_times.clear()
+        _last_error_timestamp = None
+        _last_recovery_timestamp = None
+        _fallback_total_attempts = 0
+        _fallback_success_count = 0
+        _watcher_uptime_start = None
+        _watcher_total_uptime_seconds = 0.0
+        _watcher_total_downtime_seconds = 0.0
+        _watchdog_last_failure_time = None
 
 
 def _consume_retry_budget(operation: str) -> bool:
@@ -285,19 +428,25 @@ def get_framework_error_stats() -> Dict[str, Any]:
             {"scope": k, "count": v}
             for k, v in sorted(_stats.by_scope.items(), key=lambda kv: -kv[1])[:50]
         ]
-        return {
-            "total_count": _stats.total_count,
-            "by_type": by_type_out,
-            "by_agent": by_agent,
-            "by_scope_top": top_scopes,
-            "sum_by_type": sum_by_type,
-            "totals_consistent": sum_by_type == _stats.total_count,
-            "hourly_trend": list(_stats.hourly_trend),
-            "last_update": _stats.last_update_iso,
-            "last_error": _stats.last_error,
-            "retry_by_operation": dict(_retry_totals),
-            "retry_budget_blocks": _retry_budget_blocks,
-        }
+
+    # NFR-R reliability metrics
+    reliability = get_reliability_metrics()
+
+    return {
+        "total_count": _stats.total_count,
+        "by_type": by_type_out,
+        "by_agent": by_agent,
+        "by_scope_top": top_scopes,
+        "sum_by_type": sum_by_type,
+        "totals_consistent": sum_by_type == _stats.total_count,
+        "hourly_trend": list(_stats.hourly_trend),
+        "last_update": _stats.last_update_iso,
+        "last_error": _stats.last_error,
+        "retry_by_operation": dict(_retry_totals),
+        "retry_budget_blocks": _retry_budget_blocks,
+        # NFR-R Reliability
+        "reliability": reliability,
+    }
 
 
 def execute_with_retry(

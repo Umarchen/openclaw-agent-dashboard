@@ -119,7 +119,7 @@
             <TimelineView
               :agentId="agent.id"
               :autoRefresh="true"
-              :refreshInterval="3"
+              :refreshInterval="10"
             />
           </div>
 

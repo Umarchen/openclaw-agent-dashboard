@@ -295,3 +295,13 @@ async def get_errors_summary():
         "apiStatus": api_status,
         "stats": stats,
     }
+
+
+@router.get("/errors/reliability")
+async def get_reliability_stats():
+    """
+    NFR-R 可靠性指标接口
+    包括：监听成功率(NFR-R-002)、错误恢复时间(NFR-R-003)、优雅降级率(NFR-R-005)
+    """
+    from core.error_handler import get_reliability_metrics
+    return get_reliability_metrics()

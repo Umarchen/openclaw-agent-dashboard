@@ -28,7 +28,18 @@ def run_fallback(error_category: str, *, agent_id: Optional[str] = None, **kwarg
         h = _handlers.get(error_category)
     if h is None:
         return None
-    return h(agent_id=agent_id, **kwargs)
+    # NFR-R-005: Record fallback attempt (success if returns non-None)
+    try:
+        result = h(agent_id=agent_id, **kwargs)
+        from core.error_handler import record_fallback_attempt
+
+        record_fallback_attempt(success=result is not None)
+        return result
+    except Exception:
+        from core.error_handler import record_fallback_attempt
+
+        record_fallback_attempt(success=False)
+        raise
 
 
 def _stale_agent_status_handler(agent_id: Optional[str] = None, **_: Any) -> Optional[str]:

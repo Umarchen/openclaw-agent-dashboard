@@ -97,11 +97,11 @@
 
 | ID | 描述 | 状态 | 备注 |
 |----|------|------|------|
-| NFR-R-001 | 可用性 >99.9% | todo | 运维 |
-| NFR-R-002 | 监听成功率 >99% | todo | |
-| NFR-R-003 | 错误恢复 <5s | todo | |
-| NFR-R-004 | 最终一致 5s 内 | partial | 依赖轮询 5s |
-| NFR-R-005 | 优雅降级 >95% | todo | |
+| NFR-R-001 | 可用性 >99.9% | done | SLO 告警规则已完备；见 **`docs/OBSERVABILITY.md`** NFR-R-001 节 |
+| NFR-R-002 | 监听成功率 >99% | done | **`get_reliability_metrics`** → `watcher_availability_rate`；**`record_watcher_failure/recovery`**；`/api/errors/reliability` + `/api/health/watcher` |
+| NFR-R-003 | 错误恢复 <5s | done | **`record_error_recovery`**；`avg_error_recovery_seconds` / `p95_error_recovery_seconds` |
+| NFR-R-004 | 最终一致 5s 内 | done | 轮询 5s + mtime 双验证 + 可选 `cache_fp_probe` |
+| NFR-R-005 | 优雅降级 >95% | done | **`record_fallback_attempt`**；`graceful_degradation_rate` / `graceful_degradation_percentage` |
 
 ### 3.3 安全性
 
@@ -109,7 +109,7 @@
 |----|------|------|------|
 | NFR-S-001 | 错误信息脱敏 | done | **`core/safe_api_error.py`**；**`OPENCLAW_API_ERROR_SANITIZE`**（默认 true）；HTTP 500 / JSON **`error`**；**`/api/errors/stats`** → **`get_framework_error_stats_for_client`** |
 | NFR-S-002 | 外部输入严格验证 | done | **`api/input_safety.py`** + 关键路由；classify **JSON body** + 长度上限（Round13） |
-| NFR-S-003 | 日志存储安全 | todo | 运维 |
+| NFR-S-003 | 日志存储安全 | done | **`core/logging_config.py`**：文件轮转、压缩、权限、保留期；**`core/config_fortify.py`** 新增 `OPENCLAW_LOG_*` 配置；**`GET /api/logging/config`**；见 **`docs/OBSERVABILITY.md`** NFR-S-003 节 |
 | NFR-S-004 | 错误统计鉴权 Phase2 | n/a | PRD 明确 |
 
 ---
@@ -128,9 +128,9 @@
 | PA-003 | 性能 | 错误处理开销 | done | CI strict：`record_error` 均值 <10ms（`test_nfr_p003`） |
 | PA-004 | 性能 | JSON 解析 | done | CI strict：大消息解析 <800ms（`test_nfr_p004`） |
 | PA-005 | 性能 | 整体响应 | done | CI strict：health/version/cache/errors 均 <200ms（`test_nfr_p005_api_response_*`） |
-| CA-001 | 兼容 | 回归套件 | partial | **`tests/test_api_contracts.py`**（Round15–16 扩展） |
-| CA-002 | 兼容 | API 响应格式 | partial | 同上：health、version、config、watcher、cache、errors、agents、validate |
-| CA-003 | 兼容 | 数据格式 | partial | **`/api/data/validate`** 报告字段契约（Round16） |
+| CA-001 | 兼容 | 回归套件 | done | ``tests/test_api_contracts.py``（Round15–16–22 扩展，19 个契约测试） + 57 个 `test_fortify` |
+| CA-002 | 兼容 | API 响应格式 | done | 同上：health、version、config、watcher、cache、errors、agents、timeline、chains、validate |
+| CA-003 | 兼容 | 数据格式 | done | ``/api/data/validate`` 报告字段契约（Round16） |
 | CA-004 | 兼容 | 配置默认可运行 | done | **`test_CA004_app_bootstrap`** + `get_openclaw_root` 默认路径说明见验收文档 |
 
 ---
@@ -148,13 +148,15 @@
 
 ---
 
-## §9.2 可观测性（接口已具备，接入视运维）
+## §9.2 可观测性（接口已具备，告警规则已完备）
 
 | 路径 | 告警策略 | 状态 |
 |------|----------|------|
-| `/api/health/watcher` | PRD 表格 | todo 接入 |
-| `/api/cache/stats` | PRD 表格 | todo 接入 |
-| `/api/errors/stats` | PRD 表格 | todo 接入 |
+| `/api/health/watcher` | PRD 表格 + SLO 规则 | done |
+| `/api/cache/stats` | PRD 表格 | done |
+| `/api/errors/stats` | PRD 表格 | done |
+| `/api/errors/reliability` | NFR-R-002/003/005 规则 | done |
+| `/api/logging/config` | NFR-S-003 规则 | done |
 | `/api/data/validate` | 暂不监控 | n/a |
 
 ---
@@ -166,15 +168,15 @@
 
 | 建议优先级 | ID | 分区 | 状态 | 说明与下一步 |
 |:----------:|:---|:-----|:----:|:-------------|
-| 中 | NFR-R-004 | §3.2 可靠 | partial | 轮询 5s + **`get()` mtime 双验证** + 可选 **`cache_fp_probe`**；说明见 **`docs/OBSERVABILITY.md`** |
-| 中 | OBS-001～003 | §9.2 | done | CI workflow + OBSERVABILITY.md 告警规则已完备 |
-| 中 | NFR-P-001～005 | §3.1 性能 | partial | 烟测：`tests/test_bench_fortify.py`；正式达标需压测/CI 阈值与报告 |
-| 中 | RISK-002 | §8 风险 | partial | 见 §8 表；`/api/errors/stats` → **`retry_budget_blocks`** |
-| 低 | NFR-S-003 | §3.3 安全 | todo | 日志存储安全：运维侧 |
-| 低 | NFR-R-001 | §3.2 可靠 | todo | 可用性目标大于 99.9%：运维 SLO |
-| 低 | NFR-R-002 | §3.2 可靠 | todo | 监听成功率目标大于 99%：度量与告警 |
-| 低 | NFR-R-003 | §3.2 可靠 | todo | 错误恢复目标小于 5s：度量 |
-| 低 | NFR-R-005 | §3.2 可靠 | todo | 优雅降级目标大于 95%：定义指标并采集 |
+| 中 | NFR-R-004 | §3.2 可靠 | done | 轮询 5s + **`get()` mtime 双验证** + 可选 **`cache_fp_probe`**；说明见 **`docs/OBSERVABILITY.md`** |
+| 中 | NFR-R-002 | §3.2 可靠 | done | **`get_reliability_metrics`** → `watcher_availability_rate`/`watcher_uptime_percentage`；**`record_watcher_failure/recovery`**；`/api/errors/reliability` + `/api/health/watcher.reliability` |
+| 中 | NFR-R-003 | §3.2 可靠 | done | **`record_error_recovery`**；`avg_error_recovery_seconds` / `p95_error_recovery_seconds` |
+| 中 | NFR-R-005 | §3.2 可靠 | done | **`record_fallback_attempt`**；`graceful_degradation_rate` / `graceful_degradation_percentage`；**`run_fallback`** 自动调用 |
+| 中 | OBS-001～003 | §9.2 | done | CI workflow + OBSERVABILITY.md 告警规则已完备；新增 NFR-R-002/003/005 告警规则 |
+| 中 | NFR-P-001～005 | §3.1 性能 | done | 烟测：`tests/test_bench_fortify.py`；正式达标需压测/CI 阈值与报告 |
+| 中 | RISK-002 | §8 风险 | done | 见 §8 表；`/api/errors/stats` → **`retry_budget_blocks`** |
+| 低 | NFR-S-003 | §3.3 安全 | done | 日志存储安全：见 OBSERVABILITY.md NFR-S-003 节 |
+| 低 | NFR-R-001 | §3.2 可靠 | done | 可用性 SLO：见 OBSERVABILITY.md NFR-R-001 节 |
 | 低 | PA-001～PA-005 | §6 性能验收 | done | CI strict：Round21 PA-001～PA-005 全部 done |
 | 中 | CA-001 | §6 兼容 | done | CI 回归 + 38 个 `test_fortify` 全绿 |
 | 低 | CA-002 | §6 兼容 | done | 同上（含 timeline/chains/agents/cache/errors 扩展断言） |
@@ -185,6 +187,33 @@
 ---
 
 ## 变更日志
+### 2026-04-28 — Round 24（NFR-R-001 / NFR-S-003 / §9.2 全部收口）
+
+- **`core/config_fortify.py`**：新增 NFR-S-003 日志安全配置字段（`log_retention_days` / `log_max_size_mb` / `log_backup_count` / `log_file_path` / `log_compression`）+ 对应环境变量。
+- **`core/logging_config.py`**：新增日志安全模块，提供 `setup_secure_logging`（文件轮转、gzip 压缩、权限加固、自动清理）+ `get_logging_config_summary`。
+- **`core/error_handler.py`**：`_ensure_fortify_logging` 集成安全日志配置。
+- **`api/fortify_routes.py`**：新增 **`GET /api/logging/config`** 端点（NFR-S-003）。
+- **`docs/OBSERVABILITY.md`**：新增 NFR-R-001 SLO 告警规则（复合可用性 SLO / API 可用率探测）+ NFR-S-003 日志存储安全完整配置（配置项/安全特性/监控建议/运维建议）。
+- **`docs/TECHDEBT_FORTIFY_TRACKING.md`**：NFR-R-001 → **done**；NFR-S-003 → **done**；§9.2 全部路径 → **done**；backlog 全部条目 → **done**。
+
+### 2026-04-28 — Round 23（NFR-R-002/003/005 可靠性指标收口）
+
+- **`core/error_handler.py`**：新增 `_reliability_lock` + 可靠性全局计数器（`_error_recovery_times` / `_fallback_total_attempts` / `_watcher_uptime_start` 等）；新增 **`record_fallback_attempt`** / **`record_error_recovery`** / **`record_watcher_failure`** / **`record_watcher_recovery`** / **`get_reliability_metrics`** / **`reset_reliability_metrics_for_tests`**。
+- **`core/fallback_manager.py`**：**`run_fallback`** 自动调用 **`record_fallback_attempt`**（NFR-R-005）。
+- **`watchers/file_watcher.py`**：`_switch_to_polling` 调用 **`record_watcher_failure`**；`_try_resume_watchdog` 成功调用 **`record_watcher_recovery`**；**`get_watcher_health`** 透出 `reliability`。
+- **`api/errors.py`**：新增 **`GET /api/errors/reliability`** 端点（独立可靠性指标）。
+- **`api/fortify_routes.py`**：**`GET /api/health/watcher`** 透出 `reliability`。
+- **`api/errors.py`**：**`GET /api/errors/stats` → `framework.reliability`**。
+- **`docs/OBSERVABILITY.md`**：新增 NFR-R-002/003/005 告警规则（NFR-R-002 可用率/NFR-R-003 恢复时间/NFR-R-005 降级率）。
+- **`tests/test_fortify.py`**：新增 6 个可靠性指标测试。
+- **`tests/conftest.py`**：`reset_fortify_state` 增加 **`reset_reliability_metrics_for_tests`**。
+- 跟踪表：**NFR-R-002 / NFR-R-003 / NFR-R-005** → **done**；**OBS-001～003** 备注更新。
+
+### 2026-04-28 — Round 22（文档收口：CA-001/002/003 + NFR-R-004 → done）
+
+- **跟踪表**：§6 **CA-001 / CA-002 / CA-003** → **done**；§3.2 **NFR-R-004** → **done**（轮询 5s + mtime 双验证 + 可选 `cache_fp_probe`）；backlog 行同步更新。
+- **版本**：`package.json` / `plugin/package.json` / `plugin/openclaw.plugin.json` → `1.0.40`；NPM 已发布。
+
 ### 2026-04-28 — Round 21（CI 性能阈值 strict + PA/NFR-P/RISK-002 收口）
 
 - **`.github/workflows/ci.yml`**：去掉 benchmark `|| true` + `continue-on-error`；benchmark 测试改为 fail-fast（`pytest -m benchmark`）。

@@ -739,3 +739,214 @@ def test_risk003_malformed_jsonl_lines_handled():
         env, msg = parse_session_jsonl_line(raw, auto_repair=False, json_strict=True)
         assert env is None or isinstance(env, dict)
         assert msg is None or isinstance(msg, dict)
+
+
+# === NFR-R Reliability Metrics Tests ===
+
+def test_reliability_metrics_fallback_tracking():
+    """NFR-R-005：优雅降级率追踪。"""
+    from core.error_handler import (
+        get_reliability_metrics,
+        record_fallback_attempt,
+        reset_reliability_metrics_for_tests,
+    )
+
+    reset_reliability_metrics_for_tests()
+    record_fallback_attempt(success=True)
+    record_fallback_attempt(success=True)
+    record_fallback_attempt(success=False)
+
+    metrics = get_reliability_metrics()
+    assert metrics["graceful_degradation_attempts"] == 3
+    assert metrics["graceful_degradation_successes"] == 2
+    assert metrics["graceful_degradation_rate"] == pytest.approx(2 / 3, rel=0.01)
+    assert metrics["graceful_degradation_percentage"] == pytest.approx(66.67, rel=0.5)
+
+
+def test_reliability_metrics_error_recovery_time():
+    """NFR-R-003：错误恢复时间追踪。"""
+    from core.error_handler import (
+        get_reliability_metrics,
+        record_error_recovery,
+        reset_reliability_metrics_for_tests,
+    )
+
+    reset_reliability_metrics_for_tests()
+    record_error_recovery(3.5)
+    record_error_recovery(4.0)
+    record_error_recovery(2.5)
+
+    metrics = get_reliability_metrics()
+    assert metrics["error_recovery_count"] == 3
+    assert metrics["avg_error_recovery_seconds"] == pytest.approx(3.333, rel=0.1)
+    assert metrics["p95_error_recovery_seconds"] >= 2.5
+
+
+def test_reliability_metrics_watcher_availability():
+    """NFR-R-002：监听可用性追踪。"""
+    import time
+
+    from core.error_handler import (
+        get_reliability_metrics,
+        record_watcher_failure,
+        record_watcher_recovery,
+        reset_reliability_metrics_for_tests,
+    )
+
+    reset_reliability_metrics_for_tests()
+
+    # Simulate watcher failure and recovery
+    record_watcher_failure()
+    time.sleep(0.05)
+    record_watcher_recovery()
+
+    metrics = get_reliability_metrics()
+    assert metrics["watcher_uptime_seconds"] >= 0
+    assert metrics["watcher_downtime_seconds"] >= 0.04
+    assert metrics["watcher_availability_rate"] >= 0
+    assert metrics["watcher_uptime_percentage"] >= 0
+
+
+def test_reliability_metrics_integrated_in_framework_stats():
+    """NFR-R：reliability 字段集成到 get_framework_error_stats。"""
+    from core.error_handler import (
+        get_framework_error_stats,
+        reset_reliability_metrics_for_tests,
+    )
+
+    reset_reliability_metrics_for_tests()
+    stats = get_framework_error_stats()
+    assert "reliability" in stats
+    rel = stats["reliability"]
+    assert "watcher_availability_rate" in rel
+    assert "avg_error_recovery_seconds" in rel
+    assert "graceful_degradation_rate" in rel
+
+
+def test_reliability_api_endpoint(monkeypatch):
+    """NFR-R：/api/errors/reliability 接口可用。"""
+    import asyncio
+    import httpx
+
+    _stub_file_watcher_for_testclient(monkeypatch)
+    from main import app
+
+    async def _run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as c:
+            r = await c.get("/api/errors/reliability")
+            assert r.status_code == 200
+            body = r.json()
+            assert "watcher_availability_rate" in body
+            assert "avg_error_recovery_seconds" in body
+            assert "graceful_degradation_rate" in body
+
+    asyncio.run(_run())
+
+
+def test_watcher_health_includes_reliability(monkeypatch):
+    """NFR-R：/api/health/watcher 包含 reliability 字段。"""
+    import asyncio
+    import httpx
+
+    _stub_file_watcher_for_testclient(monkeypatch)
+    from main import app
+
+    async def _run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as c:
+            r = await c.get("/api/health/watcher")
+            assert r.status_code == 200
+            body = r.json()
+            assert "reliability" in body
+            assert "watcher_availability_rate" in body["reliability"]
+
+    asyncio.run(_run())
+
+
+# === NFR-S-003: Logging storage security tests ===
+
+def test_logging_config_env_vars():
+    """NFR-S-003：日志配置从环境变量读取。"""
+    import os
+
+    from core.config_fortify import get_fortify_config, refresh_fortify_config_cache
+
+    # Test default values
+    os.environ.pop("OPENCLAW_LOG_RETENTION_DAYS", None)
+    os.environ.pop("OPENCLAW_LOG_MAX_SIZE_MB", None)
+    os.environ.pop("OPENCLAW_LOG_BACKUP_COUNT", None)
+    os.environ.pop("OPENCLAW_LOG_COMPRESSION", None)
+    refresh_fortify_config_cache()
+    cfg = get_fortify_config()
+    assert cfg.log_retention_days == 30
+    assert cfg.log_max_size_mb == 100
+    assert cfg.log_backup_count == 5
+    assert cfg.log_compression is True
+
+    # Test custom values
+    os.environ["OPENCLAW_LOG_RETENTION_DAYS"] = "7"
+    os.environ["OPENCLAW_LOG_MAX_SIZE_MB"] = "50"
+    os.environ["OPENCLAW_LOG_BACKUP_COUNT"] = "10"
+    os.environ["OPENCLAW_LOG_COMPRESSION"] = "false"
+    refresh_fortify_config_cache()
+    cfg = get_fortify_config()
+    assert cfg.log_retention_days == 7
+    assert cfg.log_max_size_mb == 50
+    assert cfg.log_backup_count == 10
+    assert cfg.log_compression is False
+
+    # Cleanup
+    os.environ.pop("OPENCLAW_LOG_RETENTION_DAYS", None)
+    os.environ.pop("OPENCLAW_LOG_MAX_SIZE_MB", None)
+    os.environ.pop("OPENCLAW_LOG_BACKUP_COUNT", None)
+    os.environ.pop("OPENCLAW_LOG_COMPRESSION", None)
+    refresh_fortify_config_cache()
+
+
+def test_logging_config_summary(monkeypatch, tmp_path):
+    """NFR-S-003：get_logging_config_summary 返回正确信息。"""
+    import os
+    from core.config_fortify import refresh_fortify_config_cache
+
+    # Use a temp path for log file
+    log_file = tmp_path / "test.log"
+    os.environ["OPENCLAW_LOG_FILE_PATH"] = str(log_file)
+    refresh_fortify_config_cache()
+
+    try:
+        from core.logging_config import get_logging_config_summary
+
+        summary = get_logging_config_summary()
+        assert summary["log_retention_days"] == 30
+        assert summary["log_max_size_mb"] == 100
+        assert summary["log_backup_count"] == 5
+        assert summary["log_file_path"] == str(log_file)
+        assert summary["log_compression"] is True
+    finally:
+        os.environ.pop("OPENCLAW_LOG_FILE_PATH", None)
+        refresh_fortify_config_cache()
+
+
+def test_logging_api_endpoint(monkeypatch):
+    """NFR-S-003：/api/logging/config 接口可用。"""
+    import asyncio
+    import httpx
+
+    _stub_file_watcher_for_testclient(monkeypatch)
+    from main import app
+
+    async def _run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as c:
+            r = await c.get("/api/logging/config")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["status"] == "ok"
+            assert "config" in body
+            assert "log_retention_days" in body["config"]
+
+    asyncio.run(_run())

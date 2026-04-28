@@ -15,15 +15,18 @@ sys.path.insert(0, str(BACKEND))
 def reset_fortify_state():
     """Reset all fortify singletons between tests."""
     from core.config_fortify import refresh_fortify_config_cache
+    from core.error_handler import reset_reliability_metrics_for_tests
     from core.fallback_manager import reset_fallback_handlers_for_tests
     from status.status_cache import reset_cache_for_tests
 
     reset_cache_for_tests()
     reset_fallback_handlers_for_tests()
+    reset_reliability_metrics_for_tests()
     refresh_fortify_config_cache()
     yield
     reset_cache_for_tests()
     reset_fallback_handlers_for_tests()
+    reset_reliability_metrics_for_tests()
     refresh_fortify_config_cache()
 
 

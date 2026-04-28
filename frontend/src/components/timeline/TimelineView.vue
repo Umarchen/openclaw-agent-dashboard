@@ -254,7 +254,7 @@ async function refresh() {
   error.value = null
 
   try {
-    let url = `/api/timeline/${props.agentId}?limit=100`
+    let url = `/api/timeline/${props.agentId}?limit=500`
     if (props.sessionKey) {
       url += `&session_key=${encodeURIComponent(props.sessionKey)}`
     }

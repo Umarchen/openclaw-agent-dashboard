@@ -26,6 +26,6 @@
     "openclaw-agent-dashboard": "scripts/install.js"
   },
   "dependencies": {
-    "openclaw-agent-dashboard": "^1.0.42"
+    "openclaw-agent-dashboard": "^1.0.43"
   }
 }

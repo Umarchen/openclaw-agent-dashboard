@@ -1,6 +1,7 @@
 """
 会话读取器 - 读取 sessions/*.jsonl 和 sessions.json
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,8 +9,72 @@ from typing import List, Dict, Any, Optional
 
 
 from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
+from utils.data_repair import parse_session_jsonl_line
 
 _META_SESSION_INDEX_KEYS = frozenset({"entries", "version", "schema"})
+
+# 校验报告：大文件仅哈希尾部，与 tail 读取策略一致；小文件全量哈希
+_MAX_FULL_HASH_BYTES = 4 * 1024 * 1024
+_TAIL_HASH_BYTES = 512 * 1024
+
+
+def compute_session_file_integrity(path: Path) -> Dict[str, Any]:
+    """文件级完整性元数据：size、mtime、sha256（全文件或尾部窗口）。"""
+    try:
+        st = path.stat()
+    except OSError as e:
+        return {"path": str(path), "error": f"stat_failed:{e}"}
+    size = int(st.st_size)
+    mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+    out: Dict[str, Any] = {
+        "path": str(path.resolve()),
+        "size_bytes": size,
+        "mtime_ns": mtime_ns,
+    }
+    try:
+        if size == 0:
+            out["sha256"] = hashlib.sha256(b"").hexdigest()
+            out["hash_scope"] = "full"
+            return out
+        if size <= _MAX_FULL_HASH_BYTES:
+            with open(path, "rb") as f:
+                out["sha256"] = hashlib.sha256(f.read()).hexdigest()
+            out["hash_scope"] = "full"
+        else:
+            with open(path, "rb") as f:
+                f.seek(max(0, size - _TAIL_HASH_BYTES))
+                tail = f.read()
+            out["sha256"] = hashlib.sha256(tail).hexdigest()
+            out["hash_scope"] = "tail_512kb"
+            out["tail_hashed_bytes"] = len(tail)
+    except OSError as e:
+        out["error"] = f"read_failed:{e}"
+    return out
+
+
+def resolve_validated_session_jsonl(agent_id: str, relative: str) -> Optional[Path]:
+    """将相对路径解析为 agents/{id}/sessions 下的 .jsonl，禁止逃逸。"""
+    if not relative or not relative.strip():
+        return None
+    aid = normalize_openclaw_agent_id(agent_id)
+    base = get_openclaw_root() / "agents" / aid / "sessions"
+    if not base.is_dir():
+        return None
+    try:
+        base_r = base.resolve()
+    except OSError:
+        return None
+    rel = Path(relative.strip())
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    try:
+        cand = (base_r / rel).resolve()
+        cand.relative_to(base_r)
+    except ValueError:
+        return None
+    if not cand.is_file() or cand.suffix.lower() != ".jsonl":
+        return None
+    return cand
 
 
 def normalize_sessions_index(raw: Any) -> Dict[str, Dict[str, Any]]:
@@ -66,6 +131,38 @@ def resolve_session_jsonl_path(sessions_dir: Path, entry: Dict[str, Any]) -> Opt
         except OSError:
             pass
     return None
+
+
+def _load_sessions_index_file(sessions_index: Path) -> Optional[Dict[str, Any]]:
+    """读取 sessions.json；可选 JSON Schema 校验（OPENCLAW_JSON_STRICT）。失败返回 None 并记录错误。"""
+    if not sessions_index.exists():
+        return None
+    try:
+        with open(sessions_index, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        from core.error_handler import record_error
+
+        record_error("parsing-error", str(e), "sessions_index", exc=e)
+        return None
+    if not isinstance(data, dict):
+        from core.error_handler import record_error
+
+        record_error("validation-error", "sessions index root is not an object", "sessions_index")
+        return None
+    from core.config_fortify import get_fortify_config
+    from core.schemas.base import SchemaValidator
+    from core.schemas.session_schema import sessions_index_schema
+
+    cfg = get_fortify_config()
+    vr = SchemaValidator(sessions_index_schema, strict=cfg.json_strict).validate(data)
+    if not vr.is_valid:
+        from core.error_handler import record_error
+
+        record_error("validation-error", vr.error_message, "sessions_index")
+        if cfg.json_strict:
+            return None
+    return data
 
 
 def get_agent_sessions_path(agent_id: str) -> Optional[Path]:
@@ -125,12 +222,9 @@ def get_recent_messages(agent_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         line = line.strip()
         if not line:
             continue
-        try:
-            data = json.loads(line)
-            if data.get('type') == 'message':
-                messages.append(data.get('message', {}))
-        except json.JSONDecodeError:
-            continue
+        _, msg = parse_session_jsonl_line(line)
+        if msg is not None:
+            messages.append(msg)
     # 必须取尾部：原先在扫描到 limit 条就 break，会拿到「窗口内较早」的消息而非最新，导致 tool/ thinking 误判
     return messages[-limit:] if len(messages) > limit else messages
 
@@ -214,21 +308,17 @@ def get_session_updated_at(agent_id: str) -> int:
     sessions_index = get_openclaw_root() / "agents" / aid / "sessions" / "sessions.json"
     if not sessions_index.exists():
         return 0
-    
-    try:
-        with open(sessions_index, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return 0
-        index_map = normalize_sessions_index(data)
-        max_ts = 0
-        for entry in index_map.values():
-            ts = entry.get('updatedAt') or entry.get('lastMessageAt') or 0
-            if isinstance(ts, (int, float)) and ts > max_ts:
-                max_ts = int(ts)
-        return max_ts
-    except (json.JSONDecodeError, IOError):
+
+    data = _load_sessions_index_file(sessions_index)
+    if not data:
         return 0
+    index_map = normalize_sessions_index(data)
+    max_ts = 0
+    for entry in index_map.values():
+        ts = entry.get("updatedAt") or entry.get("lastMessageAt") or 0
+        if isinstance(ts, (int, float)) and ts > max_ts:
+            max_ts = int(ts)
+    return max_ts
 
 
 def has_recent_session_activity(agent_id: str, minutes: int = 5) -> bool:
@@ -269,15 +359,12 @@ def get_session_turns(agent_id: str, session_key: Optional[str] = None, limit: i
     session_file: Optional[Path] = None
     sessions_path = get_openclaw_root() / "agents" / aid / "sessions"
     if session_key:
-        try:
-            with open(sessions_index, 'r', encoding='utf-8') as f:
-                index_data = json.load(f)
+        index_data = _load_sessions_index_file(sessions_index)
+        if index_data:
             index_map = normalize_sessions_index(index_data)
             entry = index_map.get(session_key)
             if entry:
                 session_file = resolve_session_jsonl_path(sessions_path, entry)
-        except (json.JSONDecodeError, IOError):
-            pass
     
     if not session_file or not session_file.exists():
         session_file = get_latest_session_file(agent_id)
@@ -290,19 +377,18 @@ def get_session_turns(agent_id: str, session_key: Optional[str] = None, limit: i
     
     with open(session_file, 'r', encoding='utf-8') as f:
         for line in f:
+            envelope, msg = parse_session_jsonl_line(line.strip())
+            if not envelope or envelope.get('type') != 'message' or msg is None:
+                continue
+            role = msg.get('role')
+            if not role:
+                continue
+
             try:
-                data = json.loads(line.strip())
-                if data.get('type') != 'message':
-                    continue
-                msg = data.get('message', {})
-                role = msg.get('role')
-                if not role:
-                    continue
-                
                 turn: Dict[str, Any] = {
                     'turnIndex': turn_index,
                     'role': role,
-                    'timestamp': msg.get('timestamp') or data.get('timestamp'),
+                    'timestamp': msg.get('timestamp') or envelope.get('timestamp'),
                     'content': [],
                     'usage': msg.get('usage'),
                     'stopReason': msg.get('stopReason'),
@@ -350,8 +436,8 @@ def get_session_turns(agent_id: str, session_key: Optional[str] = None, limit: i
                 
                 turns.append(turn)
                 turn_index += 1
-                
-            except (json.JSONDecodeError, KeyError):
+
+            except (KeyError, TypeError):
                 continue
     
     return turns[-limit:] if len(turns) > limit else turns
@@ -471,17 +557,14 @@ def get_recent_messages_with_timestamp(agent_id: str, limit: int = 10) -> List[D
         line = line.strip()
         if not line:
             continue
-        try:
-            data = json.loads(line)
-            if data.get('type') == 'message':
-                msg = data.get('message', {})
-                messages.append({
-                    'message': msg,
-                    'timestamp': msg.get('timestamp', 0),
-                    'data_timestamp': data.get('timestamp', ''),
-                })
-        except json.JSONDecodeError:
+        env, msg = parse_session_jsonl_line(line)
+        if msg is None:
             continue
+        messages.append({
+            'message': msg,
+            'timestamp': msg.get('timestamp', 0),
+            'data_timestamp': (env or {}).get('timestamp', ''),
+        })
 
     return messages[-limit:] if len(messages) > limit else messages
 
@@ -545,3 +628,142 @@ def get_pending_tool_call_with_timestamp(agent_id: str) -> Optional[Dict[str, An
         return tool_calls[last_id]
 
     return None
+
+
+def get_session_validation_report(
+    agent_id: str,
+    *,
+    relative_session_file: Optional[str] = None,
+    auto_repair: Optional[bool] = None,
+    include_details: bool = False,
+    max_lines: int = 1000,
+) -> Dict[str, Any]:
+    """Validate session JSONL for an agent; used by GET /api/data/validate."""
+    from core.config_fortify import get_fortify_config
+
+    aid = normalize_openclaw_agent_id(agent_id)
+    sessions_dir = get_openclaw_root() / "agents" / aid / "sessions"
+    sessions_index_path = sessions_dir / "sessions.json"
+    cfg = get_fortify_config()
+    read_path_policy = {
+        "memory_auto_repair_default": cfg.auto_repair_json,
+        "disk_write_back_enabled": cfg.auto_repair_write_back,
+        "note": "本报告仅校验与统计；读路径不自动写盘，写回仅在显式修复工具中且受 OPENCLAW_AUTO_REPAIR_WB 控制。",
+    }
+
+    session_file: Optional[Path] = None
+    if relative_session_file and relative_session_file.strip():
+        session_file = resolve_validated_session_jsonl(agent_id, relative_session_file)
+        if not session_file:
+            return {
+                "agent_id": agent_id,
+                "validation_passed": False,
+                "sessions_index_path": str(sessions_index_path)
+                if sessions_index_path.exists()
+                else None,
+                "session_file": None,
+                "session_file_query": relative_session_file.strip(),
+                "file_integrity": None,
+                "read_path_policy": read_path_policy,
+                "total_lines": 0,
+                "valid_messages": 0,
+                "repaired_messages": 0,
+                "errors": [
+                    {
+                        "type": "invalid_session_file",
+                        "message": "path not found, not .jsonl, or escapes sessions dir",
+                    }
+                ],
+                "repair_report": {
+                    "repaired_count": 0,
+                    "repair_success_rate": 1.0,
+                    "failed_repairs": [],
+                },
+            }
+    else:
+        session_file = get_latest_session_file(agent_id)
+
+    if not session_file:
+        return {
+            "agent_id": agent_id,
+            "validation_passed": True,
+            "sessions_index_path": str(sessions_index_path)
+            if sessions_index_path.exists()
+            else None,
+            "session_file": None,
+            "session_file_query": None,
+            "file_integrity": None,
+            "read_path_policy": read_path_policy,
+            "total_lines": 0,
+            "valid_messages": 0,
+            "repaired_messages": 0,
+            "errors": [],
+            "repair_report": {"repaired_count": 0, "repair_success_rate": 1.0, "failed_repairs": []},
+        }
+
+    raw_lines = _read_tail_lines(session_file, max_lines)
+    errors: List[Dict[str, Any]] = []
+    valid_messages = 0
+    repaired_messages = 0
+    failed_repairs: List[Dict[str, Any]] = []
+
+    for i, line in enumerate(raw_lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        env_probe, _ = parse_session_jsonl_line(
+            stripped, auto_repair=False, json_strict=False
+        )
+        if env_probe and env_probe.get("type") != "message":
+            continue
+        _env_strict, msg_strict = parse_session_jsonl_line(
+            stripped, auto_repair=False, json_strict=True
+        )
+        if msg_strict is not None:
+            valid_messages += 1
+            continue
+        _env_loose, msg_loose = parse_session_jsonl_line(
+            stripped,
+            auto_repair=auto_repair if auto_repair is not None else True,
+            json_strict=False,
+        )
+        if msg_loose is not None:
+            repaired_messages += 1
+        else:
+            failed_repairs.append({"line_index": i, "reason": "unparseable_or_invalid_schema"})
+            if include_details:
+                errors.append(
+                    {
+                        "type": "validation_failed",
+                        "line_index_in_tail_window": i,
+                        "reason": "unparseable_or_invalid_schema",
+                        "sample": stripped[:200],
+                    }
+                )
+
+    total_non_empty = sum(1 for ln in raw_lines if ln.strip())
+    validation_passed = len(failed_repairs) == 0
+    denom = repaired_messages + valid_messages
+    rate = 1.0 if denom == 0 else repaired_messages / max(denom, 1)
+
+    return {
+        "agent_id": agent_id,
+        "validation_passed": validation_passed,
+        "sessions_index_path": str(sessions_index_path)
+        if sessions_index_path.exists()
+        else None,
+        "session_file": str(session_file.resolve()),
+        "session_file_query": relative_session_file.strip() if relative_session_file else None,
+        "file_integrity": compute_session_file_integrity(session_file),
+        "read_path_policy": read_path_policy,
+        "tail_lines_scanned": max_lines,
+        "total_lines": total_non_empty,
+        "valid_messages": valid_messages,
+        "repaired_messages": repaired_messages,
+        "errors": errors,
+        "repair_report": {
+            "repaired_count": repaired_messages,
+            "repair_success_rate": rate,
+            "failed_repairs": failed_repairs,
+        },
+    }

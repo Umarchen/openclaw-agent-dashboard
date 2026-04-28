@@ -8,7 +8,7 @@ import shutil
 from datetime import datetime
 
 from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id, agent_ids_equal
-from data.session_reader import normalize_sessions_index
+from data.session_reader import normalize_sessions_index, _load_sessions_index_file
 
 
 def _backup_config() -> Optional[Path]:
@@ -230,9 +230,11 @@ def get_agent_full_info(agent_id: str) -> Dict[str, Any]:
 
     if session_file.exists():
         try:
-            with open(session_file, 'r', encoding='utf-8') as f:
-                sessions_data = json.load(f)
-            entries = normalize_sessions_index(sessions_data)
+            sessions_data = _load_sessions_index_file(session_file)
+            if not sessions_data:
+                entries = {}
+            else:
+                entries = normalize_sessions_index(sessions_data)
             if entries:
                 latest = max(entries.values(), key=lambda e: e.get('lastMessageAt', 0))
                 last_active = latest.get('lastMessageAt')

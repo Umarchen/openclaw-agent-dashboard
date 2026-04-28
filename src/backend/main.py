@@ -13,14 +13,35 @@ import asyncio
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时启动文件监听，关闭时停止"""
     loop = asyncio.get_running_loop()
+    probe_stop = None
     try:
         from watchers.file_watcher import start_file_watcher
+        from core.config_fortify import get_fortify_config
+
         start_file_watcher(loop)
+        cfg = get_fortify_config()
+        if cfg.cache_preload:
+            try:
+                from status.status_calculator import get_agents_with_status
+
+                get_agents_with_status()
+            except Exception as e:
+                from core.error_handler import record_error
+
+                record_error("unknown", str(e), "main:cache_preload", exc=e)
+        from status.cache_fp_probe import start_cache_fp_probe_background
+
+        probe_stop = start_cache_fp_probe_background()
     except Exception as e:
-        print(f"[Main] 文件监听启动失败: {e}")
+        from core.error_handler import record_error
+
+        record_error("unknown", str(e), "main:file_watcher_start", exc=e)
     yield
     try:
+        if probe_stop is not None:
+            probe_stop.set()
         from watchers.file_watcher import stop_file_watcher
+
         stop_file_watcher()
     except Exception:
         pass
@@ -47,11 +68,12 @@ app.add_middleware(
 import sys
 sys.path.append(str(Path(__file__).parent))
 
-from api import agents, subagents, websocket, performance, collaboration, agents_config, errors, timeline, chains, agent_config_api, error_analysis, debug_paths, version
+from api import agents, subagents, websocket, performance, collaboration, agents_config, errors, timeline, chains, agent_config_api, error_analysis, debug_paths, version, fortify_routes
 
 # 注册 API 路由
 app.include_router(agents.router, prefix="/api", tags=["agents"])
 app.include_router(errors.router, prefix="/api", tags=["errors"])
+app.include_router(fortify_routes.router, prefix="/api", tags=["fortify"])
 app.include_router(agents_config.router, prefix="/api", tags=["agents-config"])
 app.include_router(subagents.router, prefix="/api", tags=["subagents"])
 app.include_router(websocket.router, tags=["websocket"])

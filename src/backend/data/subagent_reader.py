@@ -6,7 +6,16 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
-from data.session_reader import normalize_sessions_index, resolve_session_jsonl_path
+from data.session_reader import (
+    normalize_sessions_index,
+    resolve_session_jsonl_path,
+    _load_sessions_index_file,
+)
+from core.config_fortify import get_fortify_config
+from core.error_handler import record_error
+from core.schemas.base import SchemaValidator
+from core.schemas.subagent_schema import subagent_runs_root_schema
+from utils.data_repair import parse_session_jsonl_line
 
 
 def load_subagent_runs() -> List[Dict[str, Any]]:
@@ -17,13 +26,35 @@ def load_subagent_runs() -> List[Dict[str, Any]]:
     runs_path = get_openclaw_root() / "subagents" / "runs.json"
     if not runs_path.exists():
         return []
-    
-    with open(runs_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
+
+    try:
+        with open(runs_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        record_error("parsing-error", str(e), "subagent_runs")
+        return []
+
+    if not isinstance(data, dict):
+        return []
+
+    cfg = get_fortify_config()
+    vr = SchemaValidator(subagent_runs_root_schema, strict=cfg.json_strict).validate(data)
+    if not vr.is_valid:
+        record_error("validation-error", vr.error_message, "subagent_runs")
+        if cfg.json_strict:
+            return []
+
     runs = data.get('runs', {})
     if isinstance(runs, dict):
-        return list(runs.values())
+        out: List[Dict[str, Any]] = []
+        for run_id, rec in runs.items():
+            if not isinstance(rec, dict):
+                continue
+            merged = dict(rec)
+            if not merged.get('runId'):
+                merged['runId'] = run_id
+            out.append(merged)
+        return out
     return runs if isinstance(runs, list) else []
 
 
@@ -118,8 +149,9 @@ def get_agent_output_for_run(child_session_key: str, max_chars: int = 10000) -> 
         return None
     
     try:
-        with open(sessions_index, 'r', encoding='utf-8') as f:
-            index_data = json.load(f)
+        index_data = _load_sessions_index_file(sessions_index)
+        if not index_data:
+            return None
         index_map = normalize_sessions_index(index_data)
         entry = index_map.get(child_session_key)
         if not entry:
@@ -132,22 +164,18 @@ def get_agent_output_for_run(child_session_key: str, max_chars: int = 10000) -> 
         last_text = None
         with open(session_path, 'r', encoding='utf-8') as f:
             for line in f:
-                try:
-                    data = json.loads(line)
-                    if data.get('type') != 'message':
-                        continue
-                    msg = data.get('message', {})
-                    if msg.get('role') != 'assistant':
-                        continue
-                    content = msg.get('content', [])
-                    for c in content:
-                        if isinstance(c, dict) and c.get('type') == 'text':
-                            text = c.get('text', '')
-                            if text and text.strip():
-                                last_text = text
-                            break
-                except (json.JSONDecodeError, KeyError):
+                envelope, msg = parse_session_jsonl_line(line)
+                if not envelope or envelope.get('type') != 'message' or msg is None:
                     continue
+                if msg.get('role') != 'assistant':
+                    continue
+                content = msg.get('content', [])
+                for c in content:
+                    if isinstance(c, dict) and c.get('type') == 'text':
+                        text = c.get('text', '')
+                        if text and text.strip():
+                            last_text = text
+                        break
         
         if not last_text or not last_text.strip():
             return None
@@ -155,7 +183,7 @@ def get_agent_output_for_run(child_session_key: str, max_chars: int = 10000) -> 
             return last_text[:max_chars] + '\n\n...(输出已截断)'
         return last_text
     except Exception as e:
-        print(f"get_agent_output_for_run 失败: {e}")
+        record_error("io-error", str(e), "subagent_reader:get_agent_output_for_run", exc=e)
         return None
 
 
@@ -180,8 +208,9 @@ def get_agent_files_for_run(child_session_key: str) -> List[str]:
         return []
     
     try:
-        with open(sessions_index, 'r', encoding='utf-8') as f:
-            index_data = json.load(f)
+        index_data = _load_sessions_index_file(sessions_index)
+        if not index_data:
+            return []
         index_map = normalize_sessions_index(index_data)
         entry = index_map.get(child_session_key)
         if not entry:
@@ -196,31 +225,27 @@ def get_agent_files_for_run(child_session_key: str) -> List[str]:
         
         with open(session_path, 'r', encoding='utf-8') as f:
             for line in f:
-                try:
-                    data = json.loads(line)
-                    if data.get('type') != 'message':
-                        continue
-                    msg = data.get('message', {})
-                    if msg.get('role') != 'assistant':
-                        continue
-                    content = msg.get('content', [])
-                    for c in content:
-                        if not isinstance(c, dict) or c.get('type') != 'toolCall':
-                            continue
-                        name = c.get('name', '')
-                        if name not in file_tools:
-                            continue
-                        args = c.get('arguments', {})
-                        if isinstance(args, str):
-                            try:
-                                args = json.loads(args)
-                            except json.JSONDecodeError:
-                                continue
-                        path = args.get('path') or args.get('file_path')
-                        if path and isinstance(path, str) and path.strip():
-                            file_paths.append(path.strip())
-                except (json.JSONDecodeError, KeyError):
+                envelope, msg = parse_session_jsonl_line(line)
+                if not envelope or envelope.get('type') != 'message' or msg is None:
                     continue
+                if msg.get('role') != 'assistant':
+                    continue
+                content = msg.get('content', [])
+                for c in content:
+                    if not isinstance(c, dict) or c.get('type') != 'toolCall':
+                        continue
+                    name = c.get('name', '')
+                    if name not in file_tools:
+                        continue
+                    args = c.get('arguments', {})
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            continue
+                    path = args.get('path') or args.get('file_path')
+                    if path and isinstance(path, str) and path.strip():
+                        file_paths.append(path.strip())
         
         # 去重并保持顺序
         seen = set()
@@ -231,5 +256,5 @@ def get_agent_files_for_run(child_session_key: str) -> List[str]:
                 result.append(p)
         return result
     except Exception as e:
-        print(f"get_agent_files_for_run 失败: {e}")
+        record_error("io-error", str(e), "subagent_reader:get_agent_files_for_run", exc=e)
         return []

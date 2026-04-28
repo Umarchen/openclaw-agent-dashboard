@@ -10,7 +10,9 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from data.session_reader import normalize_sessions_index
+from data.session_reader import normalize_sessions_index, _load_sessions_index_file
+from core.error_handler import record_error
+from utils.data_repair import parse_session_jsonl_line
 
 # 详情展示使用 Asia/Shanghai 时区
 TZ_DISPLAY = ZoneInfo('Asia/Shanghai')
@@ -103,23 +105,23 @@ def parse_session_file_with_details(session_path: Path, agent_id: str) -> List[D
         with open(session_path, 'r', encoding='utf-8') as f:
             for line in f:
                 try:
-                    data = json.loads(line)
-                    if data.get('type') != 'message':
+                    data, msg = parse_session_jsonl_line(line)
+                    if not data or data.get('type') != 'message' or not msg:
                         continue
-                    msg = data.get('message', {})
-                    if not msg:
-                        continue
-                    
+
                     msg_id = data.get('id', '')
                     id_to_msg[msg_id] = {'data': data, 'msg': msg}
-                    
+
                     if msg.get('role') != 'assistant':
                         continue
                     if 'usage' not in msg:
                         continue
-                    
+
+                    ts_raw = data.get('timestamp')
+                    if not ts_raw:
+                        continue
                     try:
-                        ts = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+                        ts = datetime.fromisoformat(str(ts_raw).replace('Z', '+00:00'))
                     except Exception:
                         continue
                     
@@ -163,7 +165,7 @@ def parse_session_file_with_details(session_path: Path, agent_id: str) -> List[D
                     continue
         return records
     except Exception as e:
-        print(f"解析 session 详情失败 {session_path}: {e}")
+        record_error("io-error", f"{session_path}: {e}", "performance:parse_session_details", exc=e)
         return []
 
 
@@ -180,37 +182,43 @@ def parse_session_file(session_path: Path, range_hours: int = 1) -> List[Dict]:
         with open(session_path, 'r', encoding='utf-8') as f:
             for line in f:
                 try:
-                    data = json.loads(line)
+                    envelope, msg = parse_session_jsonl_line(line)
+                    if (
+                        not envelope
+                        or envelope.get('type') != 'message'
+                        or not msg
+                        or 'usage' not in msg
+                        or not envelope.get('timestamp')
+                    ):
+                        continue
+                    usage = msg['usage']
+                    tokens = usage.get('totalTokens', 0) or 0
+                    is_request = msg.get('role') == 'assistant'
 
-                    # 只处理有 usage 和 timestamp 的消息
-                    if 'message' in data and 'usage' in data['message'] and 'timestamp' in data:
-                        usage = data['message']['usage']
-                        tokens = usage.get('totalTokens', 0) or 0
-                        is_request = data.get('message', {}).get('role') == 'assistant'
+                    try:
+                        timestamp = datetime.fromisoformat(
+                            str(envelope['timestamp']).replace('Z', '+00:00')
+                        )
 
-                        try:
-                            timestamp = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+                        if range_hours > 0:
+                            now = datetime.now(timezone.utc)
+                            time_ago = now - timedelta(hours=range_hours)
+                            if timestamp < time_ago:
+                                continue
 
-                            # 根据 range_hours 过滤时间范围，0 表示不过滤
-                            if range_hours > 0:
-                                now = datetime.now(timezone.utc)
-                                time_ago = now - timedelta(hours=range_hours)
-                                if timestamp < time_ago:
-                                    continue
-
-                            messages.append({
-                                'timestamp': timestamp,
-                                'tokens': tokens,
-                                'is_request': is_request
-                            })
-                        except:
-                            pass
-                except:
+                        messages.append({
+                            'timestamp': timestamp,
+                            'tokens': tokens,
+                            'is_request': is_request
+                        })
+                    except Exception:
+                        pass
+                except Exception:
                     continue
 
         return messages
     except Exception as e:
-        print(f"解析 session 文件失败 {session_path}: {e}")
+        record_error("io-error", f"{session_path}: {e}", "performance:parse_session_file", exc=e)
         return []
 
 
@@ -491,9 +499,7 @@ async def get_minute_details(
             }
         }
     except Exception as e:
-        print(f"获取调用详情失败: {e}")
-        import traceback
-        traceback.print_exc()
+        record_error("unknown", str(e), "performance:get_minute_details", exc=e)
         return {'timeWindow': '', 'calls': [], 'totalCalls': 0, 'totalTokens': 0, 'summary': {'avgTokens': 0}, 'agents': [], 'pagination': {'total': 0, 'limit': limit, 'hasMore': False}}
 
 
@@ -629,19 +635,33 @@ async def get_tokens_analysis(range: str = "all"):
                     with open(session_file, 'r', encoding='utf-8') as f:
                         for line in f:
                             try:
-                                data = json.loads(line)
-                                if data.get('type') != 'message':
+                                envelope, msg = parse_session_jsonl_line(line)
+                                if (
+                                    envelope is None
+                                    or envelope.get('type') != 'message'
+                                    or msg is None
+                                ):
                                     continue
-                                msg = data.get('message', {})
                                 if msg.get('role') != 'assistant' or 'usage' not in msg:
                                     continue
 
-                                try:
-                                    ts = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
-                                except:
-                                    continue
-
-                                if ts < time_ago:
+                                ts_raw = envelope.get('timestamp') or msg.get('timestamp')
+                                ts = None
+                                if isinstance(ts_raw, (int, float)):
+                                    v = float(ts_raw)
+                                    ts = datetime.fromtimestamp(
+                                        (v / 1000.0) if v > 1e12 else v, tz=timezone.utc
+                                    )
+                                elif isinstance(ts_raw, str):
+                                    try:
+                                        ts = datetime.fromisoformat(
+                                            ts_raw.replace('Z', '+00:00')
+                                        )
+                                        if ts.tzinfo is None:
+                                            ts = ts.replace(tzinfo=timezone.utc)
+                                    except ValueError:
+                                        ts = None
+                                if ts is None or ts < time_ago:
                                     continue
 
                                 usage = msg['usage']
@@ -706,9 +726,8 @@ async def get_tokens_analysis(range: str = "all"):
                 continue
 
             try:
-                with open(sessions_index, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                if not isinstance(data, dict):
+                data = _load_sessions_index_file(sessions_index)
+                if not data:
                     continue
 
                 agent_total = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
@@ -739,7 +758,8 @@ async def get_tokens_analysis(range: str = "all"):
                 result["summary"]["output"] += agent_total["output"]
                 result["summary"]["cacheRead"] += agent_total["cacheRead"]
                 result["summary"]["cacheWrite"] += agent_total["cacheWrite"]
-            except Exception:
+            except Exception as e:
+                record_error("unknown", str(e), "performance:tokens_analysis_agent", exc=e)
                 continue
 
     # 计算汇总

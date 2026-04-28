@@ -17,6 +17,8 @@ TZ_DISPLAY = ZoneInfo('Asia/Shanghai')
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+from core.error_handler import record_error
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -261,7 +263,7 @@ def _get_model_mapping() -> Dict[str, str]:
                 if base != short:
                     _model_mapping_cache[base] = model_id
         except Exception as e:
-            logger.warning(f"Failed to build model mapping: {e}")
+            record_error("unknown", str(e), "collaboration:model_mapping", exc=e)
             _model_mapping_cache = {}
     return _model_mapping_cache
 
@@ -372,7 +374,7 @@ def _enrich_main_agent_active_tasks_if_needed(
 
 def _get_agent_error_info(agent_id: str) -> Optional[Dict[str, Any]]:
     """获取 agent 的错误/异常信息"""
-    from session_reader import get_last_error, has_recent_errors
+    from data.session_reader import get_last_error, has_recent_errors
 
     if has_recent_errors(agent_id, minutes=10):
         error = get_last_error(agent_id)
@@ -389,7 +391,7 @@ def _get_agent_error_info(agent_id: str) -> Optional[Dict[str, Any]]:
 def _check_agent_stuck(agent_id: str) -> Optional[Dict[str, Any]]:
     """检查 agent 是否卡顿（长时间无响应但有活跃任务）"""
     import time
-    from session_reader import get_session_updated_at
+    from data.session_reader import get_session_updated_at
     from data.subagent_reader import is_agent_working, get_active_runs
 
     if not is_agent_working(agent_id):
@@ -763,14 +765,13 @@ async def get_collaboration():
             active_path.extend([main_agent_id, agent_id_canon, task_id])
 
     except Exception as e:
-        print(f"Error building collaboration data: {e}")
-        import traceback
-        traceback.print_exc()
+        record_error("unknown", str(e), "collaboration:build_flow", exc=e)
 
     if not nodes:
         try:
             main_agent_id = get_main_agent_id()
-        except Exception:
+        except Exception as e:
+            record_error("unknown", str(e), "collaboration:fallback_main_id", exc=e)
             main_agent_id = 'main'
         nodes = [
             CollaborationNode(id=main_agent_id, type="agent", name="主 Agent", status="idle"),
@@ -905,7 +906,7 @@ async def get_collaboration_dynamic():
                     alert=dyn_status['alert']
                 )
             except Exception as e:
-                logger.warning(f"Failed to get display status for {aid}: {e}")
+                record_error("unknown", str(e), f"collaboration:display_status:{aid}", exc=e)
 
         # PM：覆盖为与连线同源的状态；并修正 dynamic 文案，避免 calculate_agent_status 的 solo 与卡片矛盾
         main_collab = _main_agent_status_for_collaboration(main_agent_id)
@@ -933,7 +934,7 @@ async def get_collaboration_dynamic():
             if requester_id and requester_id != agent_id:
                 active_path.extend([requester_id])
     except Exception as e:
-        logger.error(f"Error building collaboration dynamic: {e}")
+        record_error("unknown", str(e), "collaboration:dynamic", exc=e)
 
     recent_calls_raw = _get_recent_model_calls(30)
     model_calls = [

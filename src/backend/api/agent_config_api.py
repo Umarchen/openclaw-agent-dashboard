@@ -2,13 +2,21 @@
 Agent 配置 API - 提供配置读取和修改接口
 """
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import List, Optional
+try:
+    from pydantic import field_validator
+except ImportError:
+    from pydantic import validator as field_validator
 from typing import List, Optional
 import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+from api.input_safety import require_safe_agent_id
+from core.error_handler import record_error
+from core.safe_api_error import safe_api_error_detail, safe_client_string
 from data.agent_config_manager import (
     get_agent_full_info,
     get_all_agents_info,
@@ -21,8 +29,15 @@ router = APIRouter()
 
 
 class UpdateModelRequest(BaseModel):
-    primary: Optional[str] = None
-    fallbacks: Optional[List[str]] = None
+    primary: Optional[str] = Field(None, max_length=256)
+    fallbacks: Optional[List[str]] = Field(None, max_length=32)
+
+    @field_validator("fallbacks")
+    @classmethod
+    def _fallback_items_len(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v and any(len(str(x)) > 256 for x in v):
+            raise ValueError("fallback model id too long")
+        return v
 
 
 @router.get("/agent-config")
@@ -35,12 +50,14 @@ async def list_agent_configs():
             'total': len(agents),
         }
     except Exception as e:
-        return {'agents': [], 'total': 0, 'error': str(e)}
+        record_error("unknown", str(e), "api:agent_config:list", exc=e)
+        return {'agents': [], 'total': 0, 'error': safe_client_string(str(e))}
 
 
 @router.get("/agent-config/{agent_id}")
 async def get_agent_config(agent_id: str):
     """获取单个 Agent 的详细配置"""
+    require_safe_agent_id(agent_id)
     try:
         info = get_agent_full_info(agent_id)
         if not info.get('found'):
@@ -49,12 +66,14 @@ async def get_agent_config(agent_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        record_error("unknown", str(e), "api:agent_config:get_one", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e))
 
 
 @router.put("/agent-config/{agent_id}/model")
 async def update_agent_model_config(agent_id: str, request: UpdateModelRequest):
     """更新 Agent 的模型配置"""
+    require_safe_agent_id(agent_id)
     try:
         result = update_agent_model(
             agent_id,
@@ -74,7 +93,8 @@ async def update_agent_model_config(agent_id: str, request: UpdateModelRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        record_error("unknown", str(e), "api:agent_config:put_model", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e))
 
 
 @router.get("/available-models")
@@ -87,4 +107,5 @@ async def list_available_models():
             'total': len(models),
         }
     except Exception as e:
-        return {'models': [], 'total': 0, 'error': str(e)}
+        record_error("unknown", str(e), "api:agent_config:models", exc=e)
+        return {'models': [], 'total': 0, 'error': safe_client_string(str(e))}

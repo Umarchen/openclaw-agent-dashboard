@@ -17,7 +17,14 @@ from data.subagent_reader import (
     get_agent_files_for_run
 )
 from data.task_history import merge_with_history
-from data.session_reader import normalize_sessions_index, resolve_session_jsonl_path
+from data.session_reader import (
+    normalize_sessions_index,
+    resolve_session_jsonl_path,
+    _load_sessions_index_file,
+)
+from utils.data_repair import parse_session_jsonl_line
+from core.error_handler import record_error
+from core.safe_api_error import safe_client_string
 import time
 
 router = APIRouter()
@@ -108,9 +115,7 @@ async def get_subagents():
 
         return result
     except Exception as e:
-        print(f"Error in get_subagents: {e}")
-        import traceback
-        traceback.print_exc()
+        record_error("unknown", str(e), "api:subagents:get_subagents", exc=e)
         return []
 
 
@@ -139,7 +144,7 @@ async def get_active_subagents():
 
         return result
     except Exception as e:
-        print(f"Error in get_active_subagents: {e}")
+        record_error("unknown", str(e), "api:subagents:get_active_subagents", exc=e)
         return []
 
 
@@ -149,7 +154,8 @@ def _get_agent_name(agent_id: str) -> str:
         from data.config_reader import get_agent_config
         config = get_agent_config(agent_id)
         return config.get('name', agent_id) if config else agent_id
-    except Exception:
+    except Exception as e:
+        record_error("unknown", str(e), "api:subagents:agent_name", exc=e)
         return agent_id
 
 
@@ -161,7 +167,8 @@ def _get_agent_workspace(agent_id: str) -> Optional[str]:
         from data.config_reader import get_agent_config
         config = get_agent_config(agent_id)
         return config.get('workspace') if config else None
-    except Exception:
+    except Exception as e:
+        record_error("unknown", str(e), "api:subagents:workspace", exc=e)
         return None
 
 
@@ -269,8 +276,9 @@ def _get_session_message_count(child_session_key: str) -> int:
         if not sessions_index.exists():
             return 0
 
-        with open(sessions_index, 'r', encoding='utf-8') as f:
-            index_data = json.load(f)
+        index_data = _load_sessions_index_file(sessions_index)
+        if not index_data:
+            return 0
         index_map = normalize_sessions_index(index_data)
         entry = index_map.get(child_session_key)
         if not entry:
@@ -283,15 +291,12 @@ def _get_session_message_count(child_session_key: str) -> int:
         count = 0
         with open(session_path, 'r', encoding='utf-8') as f:
             for line in f:
-                try:
-                    data = json.loads(line)
-                    if data.get('type') == 'message':
-                        count += 1
-                except json.JSONDecodeError:
-                    continue
+                envelope, msg = parse_session_jsonl_line(line)
+                if envelope and envelope.get('type') == 'message' and msg is not None:
+                    count += 1
         return count
     except Exception as e:
-        print(f"_get_session_message_count 失败: {e}")
+        record_error("io-error", str(e), "api:subagents:session_message_count", exc=e)
         return 0
 
 
@@ -360,8 +365,9 @@ def _extract_subtasks_from_session(child_session_key: str) -> List[Dict[str, Any
         if not sessions_index.exists():
             return []
 
-        with open(sessions_index, 'r', encoding='utf-8') as f:
-            index_data = json.load(f)
+        index_data = _load_sessions_index_file(sessions_index)
+        if not index_data:
+            return []
         index_map = normalize_sessions_index(index_data)
         entry = index_map.get(child_session_key)
         if not entry:
@@ -377,10 +383,9 @@ def _extract_subtasks_from_session(child_session_key: str) -> List[Dict[str, Any
         with open(session_path, 'r', encoding='utf-8') as f:
             for line in f:
                 try:
-                    data = json.loads(line)
-                    if data.get('type') != 'message':
+                    envelope, msg = parse_session_jsonl_line(line)
+                    if not envelope or envelope.get('type') != 'message' or not msg:
                         continue
-                    msg = data.get('message', {})
                     if msg.get('role') != 'assistant':
                         continue
                     content = msg.get('content', [])
@@ -396,7 +401,6 @@ def _extract_subtasks_from_session(child_session_key: str) -> List[Dict[str, Any
                                 args = json.loads(args)
                             except json.JSONDecodeError:
                                 continue
-                        # 提取子任务信息
                         task_desc = args.get('task') or args.get('prompt') or args.get('instruction', '')
                         sub_agent_id = args.get('agentId') or args.get('agent') or args.get('agent_id', '')
                         if task_desc and task_desc not in seen_tasks:
@@ -404,14 +408,14 @@ def _extract_subtasks_from_session(child_session_key: str) -> List[Dict[str, Any
                             subtasks.append({
                                 'task': task_desc[:200] if len(task_desc) > 200 else task_desc,
                                 'agentId': sub_agent_id,
-                                'status': 'unknown'  # 无法从 session 确定状态
+                                'status': 'unknown'
                             })
-                except (json.JSONDecodeError, KeyError):
+                except (KeyError, TypeError):
                     continue
 
         return subtasks[:5]  # 最多返回 5 个子任务
     except Exception as e:
-        print(f"_extract_subtasks_from_session 失败: {e}")
+        record_error("io-error", str(e), "api:subagents:extract_subtasks", exc=e)
         return []
 
 
@@ -490,9 +494,7 @@ async def get_tasks():
                 t['agentWorkspace'] = _get_agent_workspace(t['agentId'])
         return {'tasks': tasks}
     except Exception as e:
-        print(f"Error in get_tasks: {e}")
-        import traceback
-        traceback.print_exc()
+        record_error("unknown", str(e), "api:subagents:get_tasks", exc=e)
         return {'tasks': []}
 
 
@@ -521,8 +523,9 @@ def _extract_timeline_from_session(child_session_key: str) -> List[Dict[str, Any
         if not sessions_index.exists():
             return []
 
-        with open(sessions_index, 'r', encoding='utf-8') as f:
-            index_data = json.load(f)
+        index_data = _load_sessions_index_file(sessions_index)
+        if not index_data:
+            return []
         index_map = normalize_sessions_index(index_data)
         entry = index_map.get(child_session_key)
         if not entry:
@@ -541,16 +544,15 @@ def _extract_timeline_from_session(child_session_key: str) -> List[Dict[str, Any
                 if event_count >= max_events:
                     break
                 try:
-                    data = json.loads(line)
-                    ts = data.get('timestamp')
-                    # 确保 ts 是整数毫秒时间戳
+                    envelope, msg = parse_session_jsonl_line(line)
+                    if not envelope or envelope.get('type') != 'message' or not msg:
+                        continue
+                    ts = envelope.get('timestamp')
                     if isinstance(ts, str):
-                        # ISO 格式转毫秒时间戳
                         try:
-                            from datetime import datetime
-                            # 处理 ISO 格式：2026-03-07T04:07:25.262Z
+                            from datetime import datetime as _dt
                             if 'T' in ts:
-                                dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                                dt = _dt.fromisoformat(ts.replace('Z', '+00:00'))
                                 ts = int(dt.timestamp() * 1000)
                             else:
                                 ts = int(ts)
@@ -561,68 +563,61 @@ def _extract_timeline_from_session(child_session_key: str) -> List[Dict[str, Any
                     else:
                         ts = 0
 
-                    if data.get('type') == 'message':
-                        msg = data.get('message', {})
-                        role = msg.get('role', '')
-                        content = msg.get('content', [])
+                    role = msg.get('role', '')
+                    content = msg.get('content', [])
 
-                        if role == 'user':
-                            # 用户消息（任务开始）
-                            for c in content:
-                                if isinstance(c, dict) and c.get('type') == 'text':
-                                    text = c.get('text', '')[:100]
-                                    timeline.append({
-                                        'time': ts,
-                                        'type': 'start',
-                                        'description': f'收到任务: {text}...' if len(c.get('text', '')) > 100 else f'收到任务: {text}'
-                                    })
-                                    event_count += 1
-                                    break
+                    if role == 'user':
+                        for c in content:
+                            if isinstance(c, dict) and c.get('type') == 'text':
+                                text = c.get('text', '')[:100]
+                                timeline.append({
+                                    'time': ts,
+                                    'type': 'start',
+                                    'description': f'收到任务: {text}...' if len(c.get('text', '')) > 100 else f'收到任务: {text}'
+                                })
+                                event_count += 1
+                                break
 
-                        elif role == 'assistant':
-                            # 助手响应中的工具调用
-                            for c in content:
-                                if not isinstance(c, dict):
-                                    continue
-                                if c.get('type') == 'toolCall':
-                                    tool_name = c.get('name', 'unknown')
-                                    args = c.get('arguments', {})
-                                    if isinstance(args, str):
-                                        try:
-                                            args = json.loads(args)
-                                        except json.JSONDecodeError:
-                                            args = {}
+                    elif role == 'assistant':
+                        for c in content:
+                            if not isinstance(c, dict):
+                                continue
+                            if c.get('type') == 'toolCall':
+                                tool_name = c.get('name', 'unknown')
+                                args = c.get('arguments', {})
+                                if isinstance(args, str):
+                                    try:
+                                        args = json.loads(args)
+                                    except json.JSONDecodeError:
+                                        args = {}
 
-                                    # 生成描述
-                                    desc = _describe_tool_call(tool_name, args)
-                                    timeline.append({
-                                        'time': ts,
-                                        'type': 'tool',
-                                        'tool': tool_name,
-                                        'description': desc
-                                    })
-                                    event_count += 1
+                                desc = _describe_tool_call(tool_name, args)
+                                timeline.append({
+                                    'time': ts,
+                                    'type': 'tool',
+                                    'tool': tool_name,
+                                    'description': desc
+                                })
+                                event_count += 1
 
-                                elif c.get('type') == 'text':
-                                    # 文本响应（可能是最终答案）
-                                    text = c.get('text', '')
-                                    if text.strip() and len(text) > 50:
-                                        # 简单判断是否是最终答案
-                                        keywords = ['完成', '成功', 'finished', 'done', 'result', '总结']
-                                        if any(kw in text.lower() for kw in keywords):
-                                            timeline.append({
-                                                'time': ts,
-                                                'type': 'response',
-                                                'description': f'输出结果 ({len(text)} 字符)'
-                                            })
-                                            event_count += 1
+                            elif c.get('type') == 'text':
+                                text = c.get('text', '')
+                                if text.strip() and len(text) > 50:
+                                    keywords = ['完成', '成功', 'finished', 'done', 'result', '总结']
+                                    if any(kw in text.lower() for kw in keywords):
+                                        timeline.append({
+                                            'time': ts,
+                                            'type': 'response',
+                                            'description': f'输出结果 ({len(text)} 字符)'
+                                        })
+                                        event_count += 1
 
-                except (json.JSONDecodeError, KeyError):
+                except (KeyError, TypeError, ValueError):
                     continue
 
         return timeline
     except Exception as e:
-        print(f"_extract_timeline_from_session 失败: {e}")
+        record_error("io-error", str(e), "api:subagents:extract_timeline", exc=e)
         return []
 
 
@@ -674,6 +669,9 @@ async def get_task_timeline(run_id: str):
     Returns:
         时间线事件列表
     """
+    from api.input_safety import require_safe_run_or_chain_id
+
+    require_safe_run_or_chain_id(run_id, name="run_id")
     try:
         # 从 runs.json 查找对应的 session key
         all_runs = load_subagent_runs()
@@ -750,7 +748,5 @@ async def get_task_timeline(run_id: str):
 
         return {'timeline': timeline, 'runId': run_id}
     except Exception as e:
-        print(f"Error in get_task_timeline: {e}")
-        import traceback
-        traceback.print_exc()
-        return {'timeline': [], 'error': str(e)}
+        record_error("unknown", str(e), "api:subagents:get_task_timeline", exc=e)
+        return {'timeline': [], 'error': safe_client_string(str(e))}

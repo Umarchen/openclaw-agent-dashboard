@@ -28,6 +28,8 @@ from data.config_reader import get_openclaw_root
 
 def _get_agents_config() -> Dict[str, Any]:
     """获取 agents 配置"""
+    from core.error_handler import record_error
+
     config_file = get_openclaw_root() / "openclaw.json"
     if not config_file.exists():
         return {}
@@ -35,7 +37,8 @@ def _get_agents_config() -> Dict[str, Any]:
     try:
         with open(config_file, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except:
+    except (json.JSONDecodeError, OSError) as e:
+        record_error("parsing-error", str(e), "chain_reader:openclaw.json", exc=e)
         return {}
 
 
@@ -68,16 +71,15 @@ def _parse_session_key(session_key: str) -> Dict[str, str]:
 
 
 def _load_runs() -> Dict[str, Any]:
-    """加载 runs.json"""
-    runs_file = get_openclaw_root() / "subagents" / "runs.json"
-    if not runs_file.exists():
-        return {"version": 2, "runs": {}}
+    """加载 runs.json（经 subagent_reader：schema + record_error 与全仓读路径一致）"""
+    from data.subagent_reader import load_subagent_runs
 
-    try:
-        with open(runs_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return {"version": 2, "runs": {}}
+    runs: Dict[str, Any] = {}
+    for rec in load_subagent_runs():
+        rid = rec.get("runId") or ""
+        if rid:
+            runs[rid] = rec
+    return {"version": 2, "runs": runs}
 
 
 def _get_workflow_state(project_id: str) -> Dict[str, Any]:
@@ -88,13 +90,15 @@ def _get_workflow_state(project_id: str) -> Dict[str, Any]:
         Path.home() / "vrt-projects" / "projects" / project_id / ".staging" / "workflow_state.json",
     ]
 
+    from core.error_handler import record_error
+
     for path in possible_paths:
         if path.exists():
             try:
                 with open(path, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
-                pass
+            except (json.JSONDecodeError, OSError) as e:
+                record_error("parsing-error", str(e), "chain_reader:workflow_state", exc=e)
 
     return {}
 

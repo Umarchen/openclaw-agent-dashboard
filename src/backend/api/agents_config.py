@@ -5,6 +5,9 @@ Agent 配置 API - 直接从 openclaw.json 读取
 from fastapi import APIRouter
 from typing import List, Dict, Any
 
+from core.error_handler import record_error
+from core.safe_api_error import safe_client_string
+
 router = APIRouter()
 
 
@@ -62,6 +65,7 @@ async def get_agents_config():
             'lastUpdate': int(__import__('time').time() * 1000),
         }
     except Exception as e:
+        record_error("unknown", str(e), "api:agents_config:get", exc=e)
         return {
             'nodes': [],
             'edges': [],
@@ -71,5 +75,5 @@ async def get_agents_config():
             'models': [],
             'recentCalls': [],
             'lastUpdate': 0,
-            '_error': str(e),
+            '_error': safe_client_string(str(e)),
         }

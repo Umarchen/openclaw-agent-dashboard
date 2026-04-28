@@ -4,6 +4,9 @@
 """
 from fastapi import APIRouter
 
+from core.error_handler import record_error
+from core.safe_api_error import safe_client_string
+
 router = APIRouter()
 
 
@@ -17,9 +20,10 @@ async def get_debug_paths():
         from data.config_reader import get_openclaw_root
         root = get_openclaw_root()
     except Exception as e:
+        record_error("unknown", str(e), "api:debug_paths", exc=e)
         return {
             "success": False,
-            "error": str(e),
+            "error": safe_client_string(str(e)),
             "openclawRoot": None,
             "openclawJsonExists": False,
             "agentsDirExists": False,

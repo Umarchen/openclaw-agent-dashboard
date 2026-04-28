@@ -1,6 +1,6 @@
 {
   "name": "openclaw-agent-dashboard",
-  "version": "1.0.39",
+  "version": "1.0.40",
   "description": "多 Agent 可视化看板 - 开发仓库（发布请使用 npm run publish:npm）",
   "scripts": {
     "pack": "node scripts/build-plugin.js",
@@ -26,6 +26,6 @@
     "openclaw-agent-dashboard": "scripts/install.js"
   },
   "dependencies": {
-    "openclaw-agent-dashboard": "^1.0.39"
+    "openclaw-agent-dashboard": "^1.0.40"
   }
 }

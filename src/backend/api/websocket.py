@@ -11,6 +11,8 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+from core.error_handler import record_error
+
 router = APIRouter()
 
 # 活跃的 WebSocket 连接
@@ -33,7 +35,7 @@ async def _periodic_broadcast_loop():
                 if changed_agents:
                     await broadcast_state_update(changed_agents)
             except Exception as e:
-                print(f"[WebSocket] 周期性推送失败: {e}")
+                record_error("unknown", str(e), "websocket:periodic_broadcast", exc=e)
 
 
 def _ensure_broadcast_task():
@@ -110,26 +112,26 @@ async def send_initial_state(websocket: WebSocket):
             collab = await get_collaboration()
             data['collaboration'] = collab.model_dump() if hasattr(collab, "model_dump") else collab
         except Exception as e:
-            print(f"[WebSocket] collaboration 获取失败: {e}")
+            record_error("unknown", str(e), "websocket:initial_collaboration", exc=e)
         try:
             tasks_result = await get_tasks()
             data['tasks'] = tasks_result.get("tasks", []) if isinstance(tasks_result, dict) else []
         except Exception as e:
-            print(f"[WebSocket] tasks 获取失败: {e}")
+            record_error("unknown", str(e), "websocket:initial_tasks", exc=e)
         try:
             from .performance import get_real_stats
             data['performance'] = await get_real_stats()
         except Exception as e:
-            print(f"[WebSocket] performance 获取失败: {e}")
+            record_error("unknown", str(e), "websocket:initial_performance", exc=e)
         try:
             from .workflow import list_workflows
             data['workflows'] = await list_workflows()
         except Exception as e:
-            print(f"[WebSocket] workflows 获取失败: {e}")
+            record_error("unknown", str(e), "websocket:initial_workflows", exc=e)
 
         await websocket.send_json({'type': 'full_state', 'data': data})
     except Exception as e:
-        print(f"发送初始状态失败: {e}")
+        record_error("unknown", str(e), "websocket:send_initial_state", exc=e)
 
 
 async def broadcast_agent_update(agent_id: str, status: str):
@@ -250,7 +252,7 @@ async def broadcast_full_state():
             },
         })
     except Exception as e:
-        print(f"[WebSocket] broadcast_full_state 失败: {e}")
+        record_error("unknown", str(e), "websocket:broadcast_full_state", exc=e)
 
 
 async def broadcast_state_update(changed_agents: List[Dict[str, Any]]) -> None:

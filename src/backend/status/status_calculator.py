@@ -77,48 +77,68 @@ def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus
         cached = cache.get(agent_id)
         if cached and 'status' in cached:
             return cached['status']
-    
-    # 重新计算
-    # 检查异常
-    if has_recent_errors(agent_id, minutes=5):
-        status = 'down'
-    # 检查工作中：subagent run 未结束（与连线 activePath 同源）
-    elif is_agent_working(agent_id):
-        status = 'working'
-    elif _main_agent_solo_processing(agent_id):
-        status = 'working'
-    else:
-        # 默认空闲
-        status = 'idle'
-    
+
+    try:
+        # 重新计算
+        if has_recent_errors(agent_id, minutes=5):
+            status = 'down'
+        elif is_agent_working(agent_id):
+            status = 'working'
+        elif _main_agent_solo_processing(agent_id):
+            status = 'working'
+        else:
+            status = 'idle'
+    except OSError as e:
+        from core.error_handler import classify_exception, record_error
+        from core.fallback_manager import run_fallback
+
+        cat = classify_exception(e)
+        record_error(cat, str(e), f"status_calculator:calculate:{agent_id}", exc=e)
+        fb = run_fallback(cat, agent_id=agent_id)
+        if fb is not None:
+            return fb  # type: ignore[return-value]
+        return 'idle'
+
     # 更新缓存（只缓存状态）
     if use_cache:
         cache = get_cache()
         cache.set(agent_id, {'status': status})
-    
+
     return status
 
 
 def get_agents_with_status() -> list:
     """获取所有 Agent 及其状态"""
-    agents = get_agents_list()
+    try:
+        agents = get_agents_list()
+    except OSError as e:
+        from core.error_handler import classify_exception, record_error
+
+        record_error(classify_exception(e), str(e), "get_agents_with_status:list", exc=e)
+        return []
+
     result = []
-    
+
     for agent in agents:
         agent_id = agent.get('id')
-        status = calculate_agent_status(agent_id)
-        
-        # 获取当前任务（仅工作中展示；空闲时不应残留已结束 run 的文案）
-        current_task = get_current_task(agent_id)
-        if status == 'idle':
+        try:
+            status = calculate_agent_status(agent_id)
+            current_task = get_current_task(agent_id)
+            if status == 'idle':
+                current_task = ''
+            last_active = get_last_active_time(agent_id)
+            last_error = get_last_error(agent_id) if status == 'down' else None
+        except OSError as e:
+            from core.error_handler import classify_exception, record_error
+            from core.fallback_manager import run_fallback
+
+            cat = classify_exception(e)
+            record_error(cat, str(e), f"get_agents_with_status:{agent_id}", exc=e)
+            status = run_fallback(cat, agent_id=agent_id) or 'idle'
             current_task = ''
-        
-        # 获取最后活跃时间
-        last_active = get_last_active_time(agent_id)
-        
-        # 获取错误信息
-        last_error = get_last_error(agent_id) if status == 'down' else None
-        
+            last_active = 0
+            last_error = None
+
         result.append({
             'id': agent_id,
             'name': agent.get('name'),
@@ -128,7 +148,7 @@ def get_agents_with_status() -> list:
             'lastActiveAt': last_active,
             'error': last_error
         })
-    
+
     return result
 
 

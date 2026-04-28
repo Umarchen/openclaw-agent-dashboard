@@ -7,7 +7,7 @@ from typing import Dict, Any, List
 
 
 from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
-from data.session_reader import normalize_sessions_index
+from data.session_reader import normalize_sessions_index, _load_sessions_index_file
 
 
 def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
@@ -30,9 +30,8 @@ def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
         return result
     
     try:
-        with open(sessions_index, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
+        data = _load_sessions_index_file(sessions_index)
+        if not data:
             return result
         
         # 取最新 session 的机制信息（兼容 sessions.json 顶层或 entries 嵌套）
@@ -129,6 +128,6 @@ def get_agent_mechanisms(agent_id: str) -> Dict[str, Any]:
 
 def get_all_agents_mechanisms() -> List[Dict[str, Any]]:
     """获取所有 Agent 的机制使用情况"""
-    from .config_reader import get_agents_list
+    from data.config_reader import get_agents_list
     agents = get_agents_list()
     return [get_agent_mechanisms(a.get('id', '')) for a in agents if a.get('id')]

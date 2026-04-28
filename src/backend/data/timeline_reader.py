@@ -1,7 +1,6 @@
 """
 时序数据读取器 - 将 session jsonl 解析为可视化时序步骤
 """
-import json
 import logging
 import os
 from functools import lru_cache
@@ -92,7 +91,13 @@ class TimelineStep:
 
 
 from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id, agent_ids_equal
-from data.session_reader import normalize_sessions_index, resolve_session_jsonl_path
+from data.session_reader import (
+    normalize_sessions_index,
+    resolve_session_jsonl_path,
+    _load_sessions_index_file,
+)
+from data.subagent_reader import load_subagent_runs
+from utils.data_repair import parse_session_jsonl_line
 
 
 def _read_session_header_timestamp(path: Path) -> Optional[int]:
@@ -102,10 +107,10 @@ def _read_session_header_timestamp(path: Path) -> Optional[int]:
             first = f.readline()
         if not first.strip():
             return None
-        data = json.loads(first.strip())
-        if data.get('type') == 'session':
-            return _parse_timestamp(data.get('timestamp', 0))
-    except (json.JSONDecodeError, OSError, IOError):
+        envelope, _ = parse_session_jsonl_line(first.strip())
+        if envelope and envelope.get('type') == 'session':
+            return _parse_timestamp(envelope.get('timestamp', 0))
+    except (OSError, IOError):
         pass
     return None
 
@@ -260,17 +265,11 @@ def get_subagent_runs() -> Dict[str, List[Dict]]:
 
 @lru_cache(maxsize=16)
 def _get_subagent_runs_cached(mtime: float) -> Dict[str, List[Dict]]:
-    runs_file = get_openclaw_root() / "subagents" / "runs.json"
-    try:
-        with open(runs_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, IOError, OSError):
-        return {}
     runs_by_agent: Dict[str, List[Dict]] = {}
-    runs = data.get('runs', {})
-    for run_id, run_info in runs.items():
+    for run_info in load_subagent_runs():
         if not isinstance(run_info, dict):
             continue
+        run_id = str(run_info.get('runId', ''))
         child_key = run_info.get('childSessionKey', '')
         if ':' in child_key:
             parts = child_key.split(':')
@@ -297,9 +296,11 @@ def _get_requester_info_for_session(agent_id: str, session_key: Optional[str]) -
     sessions_index = get_openclaw_root() / f"agents/{state_id}/sessions/sessions.json"
     if sessions_index.exists():
         try:
-            with open(sessions_index, 'r', encoding='utf-8') as f:
-                index_data = json.load(f)
-            index_map = normalize_sessions_index(index_data)
+            index_data = _load_sessions_index_file(sessions_index)
+            if not index_data:
+                index_map = {}
+            else:
+                index_map = normalize_sessions_index(index_data)
             if not session_key:
                 entries = list(index_map.items())
                 if entries:
@@ -328,14 +329,8 @@ def _get_requester_info_for_session(agent_id: str, session_key: Optional[str]) -
             session_key = runs[0].get('childSessionKey')
     if not session_key:
         return {}
-    runs_file = get_openclaw_root() / "subagents" / "runs.json"
-    if not runs_file.exists():
-        return {}
     try:
-        with open(runs_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        runs = data.get('runs', {})
-        for run_id, run_info in runs.items():
+        for run_info in load_subagent_runs():
             if not isinstance(run_info, dict):
                 continue
             child_key = run_info.get('childSessionKey', '')
@@ -612,10 +607,10 @@ def resolve_agent_session_jsonl(
     index_path = sessions_path / "sessions.json"
     index_map: Dict[str, Dict[str, Any]] = {}
     if index_path.exists():
-        try:
-            with open(index_path, 'r', encoding='utf-8') as f:
-                index_map = normalize_sessions_index(json.load(f))
-        except (json.JSONDecodeError, IOError):
+        raw = _load_sessions_index_file(index_path)
+        if raw:
+            index_map = normalize_sessions_index(raw)
+        else:
             index_map = {}
 
     prefix = f"agent:{state_id}:"
@@ -895,17 +890,13 @@ def _extract_subagent_steps_from_main_lines(
     for line in lines:
         if '"type":"message"' not in line and '"type": "message"' not in line:
             continue
-        try:
-            data = json.loads(line.strip())
-        except json.JSONDecodeError:
+        envelope, msg = parse_session_jsonl_line(line)
+        if envelope is None or envelope.get('type') != 'message' or msg is None:
             continue
-        if data.get('type') != 'message':
-            continue
-        msg = data.get('message', {})
         role = msg.get('role')
         if not role:
             continue
-        timestamp = _parse_timestamp(msg.get('timestamp') or data.get('timestamp', 0))
+        timestamp = _parse_timestamp(msg.get('timestamp') or envelope.get('timestamp', 0))
         duration = 0
         if last_timestamp and timestamp:
             duration = timestamp - last_timestamp
@@ -1112,21 +1103,19 @@ def _parse_session_lines(
     sender_id = requester_info.get('senderId') if requester_info else None
     sender_name = requester_info.get('senderName') if requester_info else None
     for line in lines:
-        try:
-            data = json.loads(line.strip())
-        except json.JSONDecodeError:
+        envelope, msg = parse_session_jsonl_line(line)
+        if envelope is None:
             continue
-        msg_type = data.get('type')
+        msg_type = envelope.get('type')
         if msg_type == 'session':
-            started_at = _parse_timestamp(data.get('timestamp', 0))
+            started_at = _parse_timestamp(envelope.get('timestamp', 0))
             continue
-        if msg_type != 'message':
+        if msg_type != 'message' or msg is None:
             continue
-        msg = data.get('message', {})
         role = msg.get('role')
         if not role:
             continue
-        timestamp = _parse_timestamp(msg.get('timestamp') or data.get('timestamp', 0))
+        timestamp = _parse_timestamp(msg.get('timestamp') or envelope.get('timestamp', 0))
         duration = 0
         if last_timestamp and timestamp:
             duration = timestamp - last_timestamp
@@ -1295,13 +1284,10 @@ def _line_index_of_first_user_message(path: Path) -> Optional[int]:
             for i, line in enumerate(f):
                 if '"role"' not in line or 'user' not in line:
                     continue
-                try:
-                    d = json.loads(line.strip())
-                except json.JSONDecodeError:
+                env, msg = parse_session_jsonl_line(line)
+                if env is None or env.get('type') != 'message' or msg is None:
                     continue
-                if d.get('type') != 'message':
-                    continue
-                if (d.get('message') or {}).get('role') == 'user':
+                if msg.get('role') == 'user':
                     return i
     except (OSError, IOError):
         pass

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 # 导入版本信息读取器
+from core.error_handler import record_error
 from data.version_info_reader import get_version_reader
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ async def get_version_info() -> VersionInfo:
         version_data = reader.read_version_info()
         return VersionInfo(**version_data)
     except Exception as e:
+        record_error("unknown", str(e), "api:version", exc=e)
         logger.exception("get_version_info 异常，返回降级数据: %s", e)
         return VersionInfo(
             version="unknown",

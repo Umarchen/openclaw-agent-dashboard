@@ -12,6 +12,9 @@ from pathlib import Path
 LOG = logging.getLogger(__name__)
 sys.path.append(str(Path(__file__).parent.parent))
 
+from api.input_safety import require_safe_agent_id, require_safe_session_key
+from core.error_handler import record_error
+from core.safe_api_error import safe_api_error_detail
 from data.timeline_reader import get_timeline_steps, StepType, StepStatus
 from data.config_reader import get_agent_config
 
@@ -70,12 +73,18 @@ async def get_timeline(
     - 工具调用及结果
     - 错误信息
     """
+    require_safe_agent_id(agent_id)
+    session_key = require_safe_session_key(session_key)
     agent_info = get_agent_config(agent_id)
     if not agent_info:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     t0 = time.perf_counter()
-    result = get_timeline_steps(agent_id, session_key, limit)
+    try:
+        result = get_timeline_steps(agent_id, session_key, limit)
+    except Exception as e:
+        record_error("unknown", str(e), "api:timeline:get", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
     elapsed_ms = (time.perf_counter() - t0) * 1000
     if elapsed_ms >= 200.0:
         LOG.info(
@@ -111,10 +120,16 @@ async def get_timeline_steps_only(
 
     可按步骤类型过滤
     """
+    require_safe_agent_id(agent_id)
+    session_key = require_safe_session_key(session_key)
     if not get_agent_config(agent_id):
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    result = get_timeline_steps(agent_id, session_key, limit)
+    try:
+        result = get_timeline_steps(agent_id, session_key, limit)
+    except Exception as e:
+        record_error("unknown", str(e), "api:timeline:steps", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
     steps = result.get('steps', [])
 
     # 类型过滤
@@ -131,10 +146,16 @@ async def get_timeline_summary(agent_id: str, session_key: Optional[str] = Query
 
     快速查看会话概览，不返回详细步骤
     """
+    require_safe_agent_id(agent_id)
+    session_key = require_safe_session_key(session_key)
     if not get_agent_config(agent_id):
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    result = get_timeline_steps(agent_id, session_key, limit=10)  # 只需基本信息
+    try:
+        result = get_timeline_steps(agent_id, session_key, limit=10)  # 只需基本信息
+    except Exception as e:
+        record_error("unknown", str(e), "api:timeline:summary", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
 
     # 统计各类型步骤数量
     steps = result.get('steps', [])

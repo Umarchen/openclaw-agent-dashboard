@@ -8,6 +8,9 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from api.input_safety import require_safe_run_or_chain_id
+from core.error_handler import record_error
+from core.safe_api_error import safe_api_error_detail
 from data.chain_reader import (
     build_task_chains,
     get_task_chain,
@@ -79,8 +82,12 @@ async def list_chains(
     - 节点间的派发关系
     - 各节点的状态和进度
     """
-    chains = build_task_chains(limit=limit)
-    active = get_active_chain()
+    try:
+        chains = build_task_chains(limit=limit)
+        active = get_active_chain()
+    except Exception as e:
+        record_error("unknown", str(e), "api:chains:list", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
 
     return {
         "chains": chains,
@@ -95,7 +102,11 @@ async def get_summary():
 
     快速查看所有链路的状态分布
     """
-    return get_chains_summary()
+    try:
+        return get_chains_summary()
+    except Exception as e:
+        record_error("unknown", str(e), "api:chains:summary", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
 
 
 @router.get("/chains/active")
@@ -105,7 +116,11 @@ async def get_active():
 
     返回正在执行的任务链
     """
-    chain = get_active_chain()
+    try:
+        chain = get_active_chain()
+    except Exception as e:
+        record_error("unknown", str(e), "api:chains:active", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
     if not chain:
         return {"activeChain": None, "message": "当前没有正在执行的任务链"}
 
@@ -119,7 +134,12 @@ async def get_chain(chain_id: str):
 
     返回完整的链路信息，包括所有节点和边
     """
-    chain = get_task_chain(chain_id)
+    require_safe_run_or_chain_id(chain_id, name="chain_id")
+    try:
+        chain = get_task_chain(chain_id)
+    except Exception as e:
+        record_error("unknown", str(e), "api:chains:detail", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
     if not chain:
         raise HTTPException(status_code=404, detail=f"Chain {chain_id} not found")
 

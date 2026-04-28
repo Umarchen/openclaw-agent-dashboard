@@ -2,7 +2,7 @@
 错误中心 API - 聚合 Session 错误、Model Failures、API 状态
 支持统计、筛选、趋势分析
 """
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import sys
@@ -11,6 +11,9 @@ import time
 from collections import defaultdict
 
 sys.path.append(str(Path(__file__).parent.parent))
+
+from core.error_handler import get_framework_error_stats_for_client, record_error
+from core.safe_api_error import safe_api_error_detail
 
 router = APIRouter()
 
@@ -232,8 +235,12 @@ async def get_errors(
     获取错误中心数据
     支持按 Agent、类型、模型筛选
     """
-    session_errors = get_session_errors(limit, agent, type)
-    model_failures = get_model_failures(limit, model, type)
+    try:
+        session_errors = get_session_errors(limit, agent, type)
+        model_failures = get_model_failures(limit, model, type)
+    except Exception as e:
+        record_error("unknown", str(e), "api:errors:list", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
 
     return {
         "sessionErrors": session_errors,
@@ -247,10 +254,15 @@ async def get_errors_stats():
     获取错误统计数据
     包括：总数、按类型分布、按 Agent 分布、时间趋势
     """
-    session_errors = get_session_errors(200)
-    model_failures = get_model_failures(200)
-
-    return get_error_stats(session_errors, model_failures)
+    try:
+        session_errors = get_session_errors(200)
+        model_failures = get_model_failures(200)
+        out = get_error_stats(session_errors, model_failures)
+        out["framework"] = get_framework_error_stats_for_client()
+        return out
+    except Exception as e:
+        record_error("unknown", str(e), "api:errors:stats", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
 
 
 @router.get("/errors/api-status")
@@ -268,10 +280,14 @@ async def get_errors_summary():
     获取错误中心完整数据（一次请求获取所有）
     包括：错误列表、统计、API 状态
     """
-    session_errors = get_session_errors(100)
-    model_failures = get_model_failures(100)
-    api_status = get_api_status()
-    stats = get_error_stats(session_errors, model_failures)
+    try:
+        session_errors = get_session_errors(100)
+        model_failures = get_model_failures(100)
+        api_status = get_api_status()
+        stats = get_error_stats(session_errors, model_failures)
+    except Exception as e:
+        record_error("unknown", str(e), "api:errors:summary", exc=e)
+        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
 
     return {
         "sessionErrors": session_errors,

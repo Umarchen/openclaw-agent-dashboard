@@ -1,7 +1,6 @@
 """
 错误分析器 - 分析 Agent 执行错误，追溯根因
 """
-import json
 import os
 import re
 from pathlib import Path
@@ -32,6 +31,7 @@ class ErrorSeverity(Enum):
 
 
 from data.config_reader import get_openclaw_root, normalize_openclaw_agent_id
+from utils.data_repair import parse_session_jsonl_line
 
 
 # 错误模式匹配规则
@@ -187,11 +187,13 @@ def parse_session_for_errors(session_path: Path) -> List[Dict[str, Any]]:
             turn_index = 0
             for line in f:
                 try:
-                    data = json.loads(line.strip())
-                    if data.get('type') != 'message':
+                    envelope, msg = parse_session_jsonl_line(line)
+                    if (
+                        envelope is None
+                        or envelope.get('type') != 'message'
+                        or msg is None
+                    ):
                         continue
-
-                    msg = data.get('message', {})
                     role = msg.get('role')
                     timestamp = msg.get('timestamp')
                     stop_reason = msg.get('stopReason')
@@ -254,7 +256,7 @@ def parse_session_for_errors(session_path: Path) -> List[Dict[str, Any]]:
 
                     turn_index += 1
 
-                except (json.JSONDecodeError, KeyError):
+                except (KeyError, TypeError, AttributeError):
                     continue
 
     except Exception as e:
@@ -279,11 +281,13 @@ def get_tool_call_chain(session_path: Path, before_turn: int, limit: int = 10) -
                     if turn_index >= before_turn:
                         break
 
-                    data = json.loads(line.strip())
-                    if data.get('type') != 'message':
+                    envelope, msg = parse_session_jsonl_line(line)
+                    if (
+                        envelope is None
+                        or envelope.get('type') != 'message'
+                        or msg is None
+                    ):
                         continue
-
-                    msg = data.get('message', {})
                     role = msg.get('role')
                     timestamp = msg.get('timestamp')
 
@@ -301,7 +305,7 @@ def get_tool_call_chain(session_path: Path, before_turn: int, limit: int = 10) -
 
                     turn_index += 1
 
-                except (json.JSONDecodeError, KeyError):
+                except (KeyError, TypeError, AttributeError):
                     continue
 
     except Exception:

@@ -152,22 +152,32 @@ def get_models_configured_by_agents() -> List[str]:
     """
     从配置中收集「各 Agent 实际配置使用」的模型 ID（仅 primary + fallbacks）。
     用于协作流程右侧模型面板：只显示有 Agent 配置的模型，不含白名单中未使用的。
+
+    策略：仅包含作为 primary 使用、或被某 agent 配置过的模型。
+    不包含 defaults.model.fallbacks 中没有任何 agent 当 primary 使用的模型。
     """
     agents = get_agents_list()
-    model_ids = set()
-    defaults = get_default_config()
-    default_model = defaults.get('model', {})
-    if default_model.get('primary'):
-        model_ids.add(default_model['primary'])
-    for fb in default_model.get('fallbacks') or []:
-        model_ids.add(fb)
+    # Step 1: 收集所有 primary 模型（用于判断 fallback 是否被实际使用）
+    primaries: List[str] = []
     for agent in agents:
         cfg = get_agent_models(agent.get('id', ''))
         if cfg.get('primary'):
-            model_ids.add(cfg['primary'])
+            primaries.append(cfg['primary'])
+    primary_set = set(primaries)
+
+    # Step 2: 收集所有 primary
+    model_ids: List[str] = list(dict.fromkeys(primaries))  # 保持顺序去重
+
+    # Step 3: 只添加被某 agent 实际配置过的 fallback（不被 primary_set 包含的不添加）
+    seen = set(primary_set)
+    for agent in agents:
+        cfg = get_agent_models(agent.get('id', ''))
         for fb in cfg.get('fallbacks', []):
-            model_ids.add(fb)
-    return sorted(model_ids)
+            if fb and fb not in seen:
+                model_ids.append(fb)
+                seen.add(fb)
+
+    return model_ids
 
 
 def get_all_models_from_agents() -> List[str]:
@@ -185,6 +195,23 @@ def get_all_models_from_agents() -> List[str]:
             if mid and isinstance(mid, str):
                 model_ids.add(mid)
     return sorted(model_ids)
+
+
+def get_default_models_from_defaults() -> List[str]:
+    """
+    仅返回 agents.defaults.model.primary + fallbacks 中的模型。
+    用于协作流程右侧模型面板：当没有任何 Agent 实际配置某模型时，
+    不应因白名单而显示该模型（避免「配置未使用但显示在右侧」）。
+    """
+    defaults = get_default_config()
+    default_model = defaults.get('model', {})
+    result = []
+    if default_model.get('primary'):
+        result.append(default_model['primary'])
+    for fb in default_model.get('fallbacks') or []:
+        if fb not in result:
+            result.append(fb)
+    return result
 
 
 def get_model_display_name(model_id: str) -> str:

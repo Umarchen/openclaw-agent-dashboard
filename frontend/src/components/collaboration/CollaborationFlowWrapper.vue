@@ -5,18 +5,18 @@
       <span class="collaboration-hint">展示主 Agent 与子 Agents 的协作关系</span>
     </div>
     <div class="collaboration-box-body">
+      <div v-if="capturedError" class="collaboration-error-fallback">
+        <p class="fallback-title">协作流程加载失败</p>
+        <p class="fallback-reason">{{ capturedError }}</p>
+        <button @click="capturedError = null">重试</button>
+      </div>
       <CollaborationFlowSection
-        v-show="!capturedError"
+        v-else
         :main-agent="mainAgent"
         :sub-agents="subAgents"
         :main-agent-id="mainAgentId"
         @agent-click="$emit('agent-click', $event)"
       />
-      <div v-show="capturedError" class="collaboration-error-fallback">
-        <p class="fallback-title">协作流程加载失败</p>
-        <p class="fallback-reason">{{ capturedError }}</p>
-        <button @click="capturedError = null">重试</button>
-      </div>
     </div>
   </div>
 </template>

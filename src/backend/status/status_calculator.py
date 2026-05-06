@@ -30,6 +30,28 @@ MAIN_AGENT_SOLO_STREAM_GRACE_SEC = 20
 
 AgentStatus = Literal['idle', 'working', 'down']
 
+# 最近多久内的 error run 应视为 down 状态（分钟）
+_RECENT_ERROR_RUN_WINDOW_MINUTES = 5
+
+
+def _has_recent_error_run(agent_id: str, minutes: int = _RECENT_ERROR_RUN_WINDOW_MINUTES) -> bool:
+    """
+    检查 runs.json 中是否有最近结束且 outcome.status == 'error' 的 run。
+    用于补充 session stopReason=error：Gateway 重启等原因导致的 run 中断
+    会写入 runs.json 但不一定会话落 stopReason=error。
+    """
+    import time
+    runs = get_agent_runs(agent_id, limit=20)
+    cutoff = int(time.time() * 1000) - minutes * 60 * 1000
+    for run in runs:
+        ended = run.get('endedAt')
+        if not ended or ended < cutoff:
+            continue
+        outcome = run.get('outcome')
+        if isinstance(outcome, dict) and outcome.get('status') == 'error':
+            return True
+    return False
+
 
 def _main_agent_solo_processing(agent_id: str) -> bool:
     """
@@ -58,16 +80,16 @@ def _main_agent_solo_processing(agent_id: str) -> bool:
 def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus:
     """
     计算 Agent 状态（基于 runs.json + sessions.json）
-    
+
     优先级:
-    1. 异常 (down) - 最近5分钟有 stopReason=error
+    1. 异常 (down) - 最近5分钟有 stopReason=error，或有最近结束的 error run
     2. 工作中 (working) - 有活跃 subagent run；或主 Agent 且无 run 时 thinking / 未完成工具 / 短窗内会话写入
     3. 空闲 (idle) - 其余情况（子 Agent 无 run 即空闲，与协作图 activePath 一致）
-    
+
     Args:
         agent_id: Agent ID
         use_cache: 是否使用缓存（默认 True）
-    
+
     Returns:
         Agent 状态
     """
@@ -81,6 +103,8 @@ def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus
     try:
         # 重新计算
         if has_recent_errors(agent_id, minutes=5):
+            status = 'down'
+        elif _has_recent_error_run(agent_id, minutes=5):
             status = 'down'
         elif is_agent_working(agent_id):
             status = 'working'
@@ -124,7 +148,8 @@ def get_agents_with_status() -> list:
         try:
             status = calculate_agent_status(agent_id)
             current_task = get_current_task(agent_id)
-            if status == 'idle':
+            # idle 且无已结束 run 任务时才清空 currentTask
+            if status == 'idle' and not current_task:
                 current_task = ''
             last_active = get_last_active_time(agent_id)
             last_error = get_last_error(agent_id) if status == 'down' else None
@@ -155,16 +180,32 @@ def get_agents_with_status() -> list:
 def get_current_task(agent_id: str) -> str:
     """
     获取 Agent 当前任务描述。
-    仅从未结束的 run（endedAt 为空）读取；已结束的 run 只代表历史，不应在空闲时仍当「当前任务」展示。
+
+    优先级：
+    1. 活跃 run（endedAt 为空）—— 代表正在执行的任务
+    2. 最近结束的 run——即使已结束也要展示（run 失败中断后仍需可见）
     """
     runs = get_agent_runs(agent_id, limit=40)
+
+    # 优先级1：未结束的 run
+    for run in runs:
+        if run.get('endedAt') is None:
+            task = run.get('task', '') or ''
+            if len(task) > 60:
+                task = task[:57] + '...'
+            return task
+
+    # 优先级2：最近的已结束 run（确保失败中断的任务也能在 Dashboard 上看到）
     for run in runs:
         if run.get('endedAt') is not None:
-            continue
-        task = run.get('task', '') or ''
-        if len(task) > 60:
-            task = task[:57] + '...'
-        return task
+            task = run.get('task', '') or ''
+            if task:
+                outcome = run.get('outcome', {})
+                status = outcome.get('status') if isinstance(outcome, dict) else None
+                prefix = '[失败] ' if status == 'error' else '[已结束] '
+                if len(task) > 57:
+                    task = task[:57] + '...'
+                return prefix + task
 
     return ''
 

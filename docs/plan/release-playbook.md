@@ -1,6 +1,6 @@
 # openclaw-agent-dashboard 发布流程
 
-> 版本号需同时修改两个文件：根 `package.json` 和 `plugin/package.json`
+> 版本号需同时修改三个文件：根 `package.json`、`plugin/package.json` 和 `plugin/openclaw.plugin.json`
 
 ## 发布步骤
 
@@ -8,13 +8,15 @@
 ```bash
 cd /home/umarchen/openclaw-agent-dashboard-new
 
-# 修改版本号（两个文件）
+# 修改版本号（三个文件）
 sed -i 's/"version": "{OLD_VERSION}"/"version": "{NEW_VERSION}"/' package.json
 sed -i 's/"version": "{OLD_VERSION}"/"version": "{NEW_VERSION}"/' plugin/package.json
+sed -i 's/"version": "{OLD_VERSION}"/"version": "{NEW_VERSION}"/' plugin/openclaw.plugin.json
 
 # 确认
 grep '"version"' package.json | head -1
 grep '"version"' plugin/package.json | head -1
+grep '"version"' plugin/openclaw.plugin.json
 
 # 提交（commit message 根据实际改动内容编写）
 git add -A

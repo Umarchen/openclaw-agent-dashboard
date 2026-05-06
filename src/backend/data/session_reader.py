@@ -269,9 +269,12 @@ def has_recent_errors(agent_id: str, minutes: int = 5) -> bool:
 
 
 def get_last_error(agent_id: str) -> Optional[Dict[str, Any]]:
-    """获取最近的错误信息"""
+    """
+    获取最近的错误信息，优先从 session stopReason=error 获取，
+    若无则从 runs.json 中最近结束的 error run 兜底。
+    """
     messages = get_recent_messages(agent_id, limit=100)
-    
+
     for msg in reversed(messages):
         if msg.get('stopReason') == 'error':
             return {
@@ -279,7 +282,39 @@ def get_last_error(agent_id: str) -> Optional[Dict[str, Any]]:
                 'message': msg.get('errorMessage', ''),
                 'timestamp': msg.get('timestamp', 0)
             }
-    
+
+    # 兜底：检查 runs.json 中最近结束的 error run
+    run_error = _get_last_run_error(agent_id)
+    if run_error:
+        return run_error
+
+    return None
+
+
+def _get_last_run_error(agent_id: str) -> Optional[Dict[str, Any]]:
+    """
+    从 runs.json 获取最近结束的 error run 的错误信息。
+    用于补充 session 中未落 stopReason=error 的 Gateway 中断等场景。
+    """
+    import time
+    from data.subagent_reader import get_agent_runs
+
+    runs = get_agent_runs(agent_id, limit=20)
+    cutoff = int(time.time() * 1000) - 5 * 60 * 1000
+    for run in runs:
+        ended = run.get('endedAt')
+        if not ended or ended < cutoff:
+            continue
+        outcome = run.get('outcome')
+        if not isinstance(outcome, dict) or outcome.get('status') != 'error':
+            continue
+        error_msg = outcome.get('error', '') or ''
+        return {
+            'type': detect_error_type(error_msg),
+            'message': error_msg,
+            'timestamp': ended,
+            'source': 'run'  # 标记来源，便于调试
+        }
     return None
 
 

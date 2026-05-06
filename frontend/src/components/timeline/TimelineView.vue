@@ -154,12 +154,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRealtime } from '../../composables'
 import type { TimelineResponse, TimelineStep } from './types'
 import TimelineStepItem from './TimelineStep.vue'
 import TimelineConnector from './TimelineConnector.vue'
 import TimelineRound from './TimelineRound.vue'
 import TimelineToolLink from './TimelineToolLink.vue'
+
+const { subscribe } = useRealtime()
 
 const props = defineProps<{
   agentId: string
@@ -174,6 +177,26 @@ const error = ref<string | null>(null)
 
 // 高亮配对状态
 const highlightedPair = ref<{ callId: string; resultId: string } | null>(null)
+
+// WebSocket 实时更新订阅
+let unsubAgentsUpdate: (() => void) | null = null
+let unsubFullState: (() => void) | null = null
+
+function handleStateUpdate(agents: Array<{ id: string }>) {
+  // 如果更新的 agent 包含当前 agent，刷新 timeline
+  if (props.agentId && agents.some(a => a.id === props.agentId)) {
+    refresh()
+  }
+}
+
+function handleFullStateUpdate(data: { agents?: Array<{ id: string }> }) {
+  // full_state 包含 agents 列表
+  if (data?.agents && props.agentId) {
+    if (data.agents.some(a => a.id === props.agentId)) {
+      refresh()
+    }
+  }
+}
 
 const statusClass = computed(() => {
   if (!data.value) return 'empty'
@@ -314,7 +337,24 @@ function formatNumber(n: number): string {
 }
 
 // 初始加载
-onMounted(refresh)
+onMounted(() => {
+  refresh()
+  // 订阅 WebSocket 实时更新
+  unsubAgentsUpdate = subscribe('agents_update', handleStateUpdate)
+  unsubFullState = subscribe('full_state', handleFullStateUpdate)
+})
+
+// 组件卸载时取消订阅
+onUnmounted(() => {
+  if (unsubAgentsUpdate) {
+    unsubAgentsUpdate()
+    unsubAgentsUpdate = null
+  }
+  if (unsubFullState) {
+    unsubFullState()
+    unsubFullState = null
+  }
+})
 
 // 监听 agentId 变化
 watch(() => props.agentId, refresh)

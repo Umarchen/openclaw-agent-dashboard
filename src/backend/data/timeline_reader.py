@@ -666,22 +666,9 @@ def resolve_agent_session_jsonl(
         if isinstance(index_map.get(k), dict) and str(k).startswith(prefix)
     ]
 
-    # 1) 与当前子任务最一致：runs.json 中该 agent 最近一次 run 的 childSessionKey
-    runs = get_subagent_runs().get(state_id, [])
-    if runs:
-        runs.sort(key=lambda x: x.get('startedAt', 0), reverse=True)
-        preferred_key = runs[0].get('childSessionKey')
-        if preferred_key and preferred_key in index_map:
-            ent = index_map[preferred_key]
-            if isinstance(ent, dict):
-                p = resolve_session_jsonl_path(sessions_path, ent)
-                if p and p.is_file():
-                    sid = ent.get('sessionId') or preferred_key
-                    return p, sid, preferred_key
-
-    # 2) 按 sessions.json 的 updatedAt/lastMessageAt 选最近会话（在 glob mtime 之前）
-    #    OpenClaw 在任务结束后可能从 runs.json 移除 run，此处仍可定位「最近活跃」子会话 jsonl。
-    #    多文件时比仅凭 *.jsonl 的 mtime 更稳，且与 4/24 当晚最晚更新 session 一致。
+    # 直接按 sessions.json 的 updatedAt 选最新会话。
+    # runs.json 中的 run 即使已结束也仍保留在列表中，用它优先会错误选中旧 session；
+    # 而 updatedAt 由 OpenClaw 维护，能准确反映会话的实际最后活跃时间。
     if agent_keys:
         agent_keys.sort(
             key=lambda k: (index_map[k].get('updatedAt') or index_map[k].get('lastMessageAt') or 0),

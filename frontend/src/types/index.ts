@@ -13,8 +13,17 @@ export interface ConnectionState {
 }
 
 export interface WebSocketMessage {
-  type: 'update' | 'ping' | 'pong' | 'error'
-  channel?: 'collaboration' | 'tasks' | 'performance'
+  type:
+    | 'update'
+    | 'ping'
+    | 'pong'
+    | 'error'
+    | 'full_state'
+    | 'state_update'
+    | 'agent_update'
+    | 'subagent_update'
+    | 'api_status_update'
+  channel?: 'agents' | 'subagents' | 'collaboration' | 'tasks' | 'performance'
   data?: unknown
-  timestamp: number
+  timestamp?: number
 }

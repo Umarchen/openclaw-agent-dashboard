@@ -42,16 +42,22 @@ export class RealtimeDataManager {
    * 建立 WebSocket 连接
    */
   connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (
+      this.ws?.readyState === WebSocket.CONNECTING ||
+      this.ws?.readyState === WebSocket.OPEN ||
+      this.ws?.readyState === WebSocket.CLOSING
+    ) {
       return
     }
 
     this.updateConnectionState({ status: 'connecting', reconnectAttempts: this.connectionState.reconnectAttempts })
 
     try {
-      this.ws = new WebSocket(this.options.wsUrl)
+      const socket = new WebSocket(this.options.wsUrl)
+      this.ws = socket
       
-      this.ws.onopen = () => {
+      socket.onopen = () => {
+        if (this.ws !== socket) return
         this.updateConnectionState({
           status: 'connected',
           lastConnected: Date.now(),
@@ -61,22 +67,26 @@ export class RealtimeDataManager {
         this.stopPolling()
       }
 
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        if (this.ws !== socket) return
+        this.ws = null
         this.stopHeartbeat()
         this.handleDisconnect()
       }
 
-      this.ws.onerror = (error) => {
+      socket.onerror = (error) => {
+        if (this.ws !== socket) return
         console.error('WebSocket error:', error)
         this.updateConnectionState({
           status: 'error',
           errorMessage: 'WebSocket connection failed'
         })
-        // 连接失败时触发重连或 HTTP 轮询回退
-        this.handleDisconnect()
+        // 让 close 事件统一处理重连/轮询，避免 error + close 双重调度。
+        socket.close()
       }
 
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (this.ws !== socket) return
         try {
           const message: WebSocketMessage = JSON.parse(event.data)
           this.handleMessage(message)
@@ -151,10 +161,10 @@ export class RealtimeDataManager {
   async fetchInitialData(): Promise<void> {
     try {
       const [collaboration, tasks, performance, agents] = await Promise.all([
-        fetch('/api/collaboration').then(r => r.json()).catch(() => null),
-        fetch('/api/tasks').then(r => r.json()).catch(() => null),
-        fetch('/api/performance?range=20m').then(r => r.json()).catch(() => null),
-        fetch('/api/agents').then(r => r.json()).catch(() => null)
+        this.fetchJson('/api/collaboration'),
+        this.fetchJson('/api/tasks'),
+        this.fetchJson('/api/performance?range=20m'),
+        this.fetchJson('/api/agents')
       ])
 
       if (collaboration) this.emit('collaboration', collaboration)
@@ -174,6 +184,7 @@ export class RealtimeDataManager {
 
     if (message.type === 'full_state' && message.data) {
       const data = message.data as Record<string, unknown>
+      this.emit('full_state', data)
       if (data.agents) this.emit('agents', data.agents)
       if (data.subagents) this.emit('subagents', data.subagents)
       if (data.collaboration) this.emit('collaboration', data.collaboration)
@@ -195,6 +206,19 @@ export class RealtimeDataManager {
 
     if (message.channel && message.data) {
       this.emit(message.channel, message.data)
+    }
+  }
+
+  private async fetchJson(url: string): Promise<unknown | null> {
+    try {
+      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`)
+      }
+      return await response.json()
+    } catch (error) {
+      console.error(`Failed to fetch ${url}:`, error)
+      return null
     }
   }
 

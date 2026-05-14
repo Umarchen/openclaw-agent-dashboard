@@ -126,6 +126,9 @@ async function refreshData() {
       fetch('/api/agents'),
       fetch('/api/config').catch(() => null)
     ])
+    if (!agentsRes.ok) {
+      throw new Error(`Failed to fetch agents: ${agentsRes.status} ${agentsRes.statusText}`)
+    }
     const agentsData = await agentsRes.json()
     agents.value = Array.isArray(agentsData) ? agentsData : []
     if (configRes?.ok) {
@@ -195,6 +198,8 @@ onMounted(() => {
         if (index >= 0) {
           // 合并更新（保留未变化的字段）
           agents.value[index] = { ...agents.value[index], ...updatedAgent }
+        } else {
+          agents.value.push(updatedAgent)
         }
       })
       // 更新主 Agent 和子 Agents

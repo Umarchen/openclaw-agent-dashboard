@@ -1,5 +1,8 @@
 {
   "id": "openclaw-agent-dashboard",
+  "activation": {
+    "onStartup": true
+  },
   "name": "OpenClaw Agent Dashboard",
   "description": "多 Agent 可视化看板 - 状态、任务、API、工作流、协作流程",
   "version": "1.0.44",

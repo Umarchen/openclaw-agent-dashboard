@@ -30,6 +30,21 @@ FULL_STATE_MIN_INTERVAL_SEC = 2.0
 _last_full_state_monotonic: float = 0.0
 
 
+async def _get_api_status_list() -> List[Dict[str, Any]]:
+    """API status lives in api.errors; keep WS push independent from removed legacy modules."""
+    try:
+        from .errors import get_api_status
+        return await asyncio.to_thread(get_api_status)
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:api_status", exc=e)
+        return []
+
+
+async def _list_workflows() -> List[Dict[str, Any]]:
+    """Workflow API is not present in this plugin version; preserve the WS field as an empty list."""
+    return []
+
+
 async def _periodic_broadcast_loop():
     """周期性广播状态更新（增量）；连续无变更则拉长睡眠间隔，上限 30s。"""
     global _broadcast_sleep_sec, _broadcast_idle_streak
@@ -107,12 +122,11 @@ async def send_initial_state(websocket: WebSocket):
     try:
         from .agents import get_agents as get_agents_list
         from .subagents import get_subagents, get_tasks
-        from .api_status import get_api_status_list
         from status.status_calculator import format_last_active
 
         agents = await get_agents_list()
         subagents = await get_subagents()
-        api_status = await get_api_status_list()
+        api_status = await _get_api_status_list()
 
         for agent in agents:
             if agent.get("lastActiveAt"):
@@ -140,11 +154,7 @@ async def send_initial_state(websocket: WebSocket):
             data['performance'] = await get_real_stats()
         except Exception as e:
             record_error("unknown", str(e), "websocket:initial_performance", exc=e)
-        try:
-            from .workflow import list_workflows
-            data['workflows'] = await list_workflows()
-        except Exception as e:
-            record_error("unknown", str(e), "websocket:initial_workflows", exc=e)
+        data['workflows'] = await _list_workflows()
 
         await websocket.send_json({'type': 'full_state', 'data': data})
     except Exception as e:
@@ -239,17 +249,15 @@ async def broadcast_full_state():
     try:
         from .agents import get_agents as get_agents_list
         from .subagents import get_subagents
-        from .api_status import get_api_status_list
         from .collaboration import get_collaboration_dynamic  # 使用动态接口
         from .performance import get_real_stats
-        from .workflow import list_workflows
 
         agents = await get_agents_list()
         subagents = await get_subagents()
-        api_status = await get_api_status_list()
+        api_status = await _get_api_status_list()
         collaboration_dynamic = await get_collaboration_dynamic()  # 动态数据
         performance = await get_real_stats()
-        workflows = await list_workflows()
+        workflows = await _list_workflows()
 
         # tasks 来自 subagents 的 get_tasks
         from .subagents import get_tasks

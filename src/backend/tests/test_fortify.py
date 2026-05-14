@@ -304,6 +304,112 @@ def test_performance_parse_session_file_uses_fortify_parser(tmp_path):
     assert msgs[0]["is_request"] is True
 
 
+def test_performance_parse_session_file_accepts_naive_timestamp(tmp_path):
+    """无时区 ISO 时间戳按 UTC 处理，避免窗口比较 TypeError 后整行被跳过。"""
+    import json
+    from datetime import datetime, timezone
+
+    from api.performance import parse_session_file
+
+    line_obj = {
+        "type": "message",
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "message": {
+            "role": "assistant",
+            "model": "test-model",
+            "usage": {"totalTokens": 7, "input": 3, "output": 4},
+            "content": [],
+        },
+    }
+    p = tmp_path / "naive.jsonl"
+    p.write_text(json.dumps(line_obj, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    msgs = parse_session_file(p, range_hours=1)
+    assert len(msgs) == 1
+    assert msgs[0]["tokens"] == 7
+
+
+def test_tokens_analysis_time_range_uses_builtin_range(monkeypatch, tmp_path):
+    """/tokens/analysis?range=20m 不应因参数名 range 遮蔽内置 range() 而 500。"""
+    import asyncio
+    import json
+    from datetime import datetime, timezone
+
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(tmp_path))
+    sessions = tmp_path / "agents" / "main" / "sessions"
+    sessions.mkdir(parents=True)
+    line_obj = {
+        "type": "message",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "message": {
+            "role": "assistant",
+            "model": "test-model",
+            "usage": {"totalTokens": 10, "input": 4, "output": 6, "cacheRead": 2, "cacheWrite": 1},
+            "content": [],
+        },
+    }
+    (sessions / "current.jsonl").write_text(json.dumps(line_obj, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    from api.performance import get_tokens_analysis
+
+    async def _run():
+        result = await get_tokens_analysis(range="20m")
+        assert result["summary"]["input"] == 4
+        assert result["summary"]["output"] == 6
+        assert result["trend"] is not None
+        assert len(result["trend"]["timestamps"]) == 20
+
+    asyncio.run(_run())
+
+
+def test_websocket_initial_state_sends_without_legacy_modules(monkeypatch, tmp_path):
+    """WebSocket 初始状态不依赖已不存在的 api_status/workflow 模块。"""
+    import asyncio
+    import json
+
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(tmp_path))
+    (tmp_path / "agents" / "main" / "sessions").mkdir(parents=True)
+    (tmp_path / "subagents").mkdir(parents=True)
+    (tmp_path / "openclaw.json").write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "list": [
+                        {
+                            "id": "main",
+                            "name": "Main",
+                            "role": "main",
+                            "model": "test-model",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from api.websocket import send_initial_state
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.messages = []
+
+        async def send_json(self, payload):
+            self.messages.append(payload)
+
+    fake = FakeWebSocket()
+
+    async def _run():
+        await send_initial_state(fake)
+
+    asyncio.run(_run())
+    assert fake.messages
+    payload = fake.messages[0]
+    assert payload["type"] == "full_state"
+    assert isinstance(payload["data"]["apiStatus"], list)
+    assert payload["data"]["workflows"] == []
+
+
 def test_sessions_index_strict_invalid_returns_zero(monkeypatch, tmp_path):
     """sessions.json 根非 object 时，严格模式下 get_session_updated_at 返回 0。"""
     import data.session_reader as session_reader

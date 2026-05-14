@@ -4,6 +4,7 @@
 """
 from fastapi import APIRouter
 from typing import List, Dict, Any, Optional, Tuple
+import builtins
 import copy
 import json
 import re
@@ -39,9 +40,17 @@ def _quick_envelope_timestamp_utc(line: str) -> Optional[datetime]:
     if not m:
         return None
     try:
-        return datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+        return _as_utc(ts)
     except ValueError:
         return None
+
+
+def _as_utc(ts: datetime) -> datetime:
+    """Session timestamps may be naive; treat them as UTC for consistent window comparisons."""
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
 
 
 def _perf_cache_key(range_minutes: int, range_hours: int, granularity: str) -> str:
@@ -150,6 +159,7 @@ def parse_session_file_with_details(session_path: Path, agent_id: str) -> List[D
                         continue
                     try:
                         ts = datetime.fromisoformat(str(ts_raw).replace('Z', '+00:00'))
+                        ts = _as_utc(ts)
                     except Exception:
                         continue
                     
@@ -241,6 +251,7 @@ def parse_session_file(session_path: Path, range_hours: int = 1) -> List[Dict]:
                         timestamp = datetime.fromisoformat(
                             str(envelope['timestamp']).replace('Z', '+00:00')
                         )
+                        timestamp = _as_utc(timestamp)
 
                         if time_ago is not None and timestamp < time_ago:
                             continue
@@ -692,7 +703,7 @@ async def get_tokens_analysis(range: str = "all"):
 
         # 初始化时间槽数据
         slot_stats = {}
-        for i in range(num_slots):
+        for i in builtins.range(num_slots):
             if granularity == 'hour':
                 slot_time = now - timedelta(hours=(num_slots - i - 1))
                 slot_key = slot_time.strftime('%Y-%m-%d %H:00')

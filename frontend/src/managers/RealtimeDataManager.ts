@@ -174,6 +174,7 @@ export class RealtimeDataManager {
 
     if (message.type === 'full_state' && message.data) {
       const data = message.data as Record<string, unknown>
+      this.emit('full_state', data)
       if (data.agents) this.emit('agents', data.agents)
       if (data.subagents) this.emit('subagents', data.subagents)
       if (data.collaboration) this.emit('collaboration', data.collaboration)

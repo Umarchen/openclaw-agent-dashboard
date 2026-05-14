@@ -100,13 +100,6 @@
             </button>
             <button
               class="tab-btn"
-              :class="{ active: activeView === 'chain' }"
-              @click="activeView = 'chain'"
-            >
-              🔗 链路视图
-            </button>
-            <button
-              class="tab-btn"
               :class="{ active: activeView === 'advanced' }"
               @click="activeView = 'advanced'"
             >
@@ -123,13 +116,8 @@
             />
           </div>
 
-          <!-- 链路视图 -->
-          <div v-else-if="activeView === 'chain'" class="chain-container">
-            <TaskChainView :autoRefresh="true" :refreshInterval="10" />
-          </div>
-
           <!-- 高级视图（配置 + 错误分析） -->
-          <div v-else-if="activeView === 'advanced'" class="advanced-container">
+          <div v-else class="advanced-container">
             <div class="advanced-section">
               <h4>⚙️ 配置</h4>
               <AgentConfigPanel :agentId="agent.id" />
@@ -148,7 +136,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { TimelineView } from './timeline'
-import { TaskChainView } from './chain'
 import AgentConfigPanel from './AgentConfigPanel.vue'
 import ErrorAnalysisView from './ErrorAnalysisView.vue'
 
@@ -182,7 +169,7 @@ defineEmits<{
   close: []
 }>()
 
-const activeView = ref<'timeline' | 'chain' | 'advanced'>('timeline')
+const activeView = ref<'timeline' | 'advanced'>('timeline')
 const subagentRun = ref<SubagentRun | null>(null)
 const currentTime = ref(Date.now())
 let timeUpdateInterval: ReturnType<typeof setInterval> | null = null
@@ -549,8 +536,7 @@ onUnmounted(() => {
   border-color: #3b82f6;
 }
 
-.timeline-container,
-.chain-container {
+.timeline-container {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   overflow: hidden;

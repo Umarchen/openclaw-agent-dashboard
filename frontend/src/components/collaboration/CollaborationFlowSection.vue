@@ -89,7 +89,8 @@
             </defs>
             <g v-for="edge in delegateEdges" :key="edge.id">
               <path
-                :d="getEdgePath(edge)"
+                :id="`edge-${edge.id}`"
+                :d="edgePathMap[edge.id] || ''"
                 class="edge-path"
                 :class="{ active: isActiveEdge(edge) }"
                 stroke="#4a9eff"
@@ -176,12 +177,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { useRealtime } from '../../composables'
+import { useRealtime, useThrottle } from '../../composables'
 import AgentCard from '../AgentCard.vue'
 import type { CollaborationNode, CollaborationEdge, CollaborationFlow, CollaborationDynamic, ModelCall, AgentDisplayStatus, ActiveTask } from '../../types'
 
-/** 与后端 WS 周期（约 1s）同量级，状态与 activePath 更快对齐 */
-const DYNAMIC_POLL_INTERVAL_MS = 1500
+/** HTTP 轮询：未连接 WS 时略密；已连接时依赖 WS + 较大间隔即可，减轻布局与主线程压力 */
+const DYNAMIC_POLL_INTERVAL_MS_DISCONNECTED = 3000
+const DYNAMIC_POLL_INTERVAL_MS_CONNECTED = 8000
 
 interface AgentForCard {
   name: string
@@ -208,6 +210,10 @@ const emit = defineEmits<{
 }>()
 
 const { connectionState, subscribe } = useRealtime()
+
+/** 连线几何：避免在每次渲染/响应式更新时对每条边调用 getBoundingClientRect（典型布局抖动来源） */
+const edgePathMap = ref<Record<string, string>>({})
+let edgeLayoutRaf = 0
 
 const nodes = ref<CollaborationNode[]>([])
 const edges = ref<CollaborationEdge[]>([])
@@ -400,36 +406,46 @@ function isActiveEdge(edge: CollaborationEdge): boolean {
   return has(edge.source) && has(edge.target)
 }
 
-// 计算连线路径
-function getEdgePath(edge: CollaborationEdge): string {
-  const sourceEl = agentRefs.value[edge.source]
-  const targetEl = agentRefs.value[edge.target]
+function flushEdgeLayout(): void {
   const areaEl = agentAreaRef.value
-
-  if (!sourceEl || !targetEl || !areaEl) return ''
+  const svgEl = edgesSvgRef.value
+  if (!areaEl || !svgEl) return
 
   const areaRect = areaEl.getBoundingClientRect()
-  const sourceRect = sourceEl.getBoundingClientRect()
-  const targetRect = targetEl.getBoundingClientRect()
+  svgEl.setAttribute('width', String(areaRect.width))
+  svgEl.setAttribute('height', String(areaRect.height))
 
-  // 相对于 agent-area 的坐标
-  const x1 = sourceRect.left - areaRect.left + sourceRect.width / 2
-  const y1 = sourceRect.top - areaRect.top + sourceRect.height
-  const x2 = targetRect.left - areaRect.left + targetRect.width / 2
-  const y2 = targetRect.top - areaRect.top
+  const paths: Record<string, string> = {}
+  for (const edge of delegateEdges.value) {
+    const sourceEl = agentRefs.value[edge.source]
+    const targetEl = agentRefs.value[edge.target]
+    if (!sourceEl || !targetEl) continue
 
-  const cy = (y1 + y2) / 2
-  return `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`
+    const sourceRect = sourceEl.getBoundingClientRect()
+    const targetRect = targetEl.getBoundingClientRect()
+    const x1 = sourceRect.left - areaRect.left + sourceRect.width / 2
+    const y1 = sourceRect.top - areaRect.top + sourceRect.height
+    const x2 = targetRect.left - areaRect.left + targetRect.width / 2
+    const y2 = targetRect.top - areaRect.top
+    const cy = (y1 + y2) / 2
+    paths[edge.id] = `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`
+  }
+  edgePathMap.value = paths
 }
 
-// 更新 SVG 尺寸和连线
-function updateEdges() {
-  nextTick(() => {
-    if (!agentAreaRef.value || !edgesSvgRef.value) return
-    const rect = agentAreaRef.value.getBoundingClientRect()
-    edgesSvgRef.value.setAttribute('width', String(rect.width))
-    edgesSvgRef.value.setAttribute('height', String(rect.height))
+function queueEdgeLayoutInRaf(): void {
+  if (edgeLayoutRaf) cancelAnimationFrame(edgeLayoutRaf)
+  edgeLayoutRaf = requestAnimationFrame(() => {
+    edgeLayoutRaf = 0
+    flushEdgeLayout()
   })
+}
+
+const { throttledFn: throttledQueueEdgeLayout } = useThrottle(queueEdgeLayoutInRaf, 450)
+
+/** 合并同一帧内多次触发；节流限制高频 WS / dynamic 更新时的布局读频率 */
+function scheduleEdgeLayout(): void {
+  throttledQueueEdgeLayout()
 }
 
 // 模型相关
@@ -470,7 +486,7 @@ async function fetchData(): Promise<void> {
     if (data.mainAgentId) backendMainAgentId.value = data.mainAgentId
     if (data.agentActiveTasks) agentActiveTasks.value = data.agentActiveTasks
 
-    nextTick(updateEdges)
+    nextTick(() => scheduleEdgeLayout())
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -493,7 +509,7 @@ function handleCollaborationUpdate(data: unknown): void {
   if (flow.depths) depths.value = flow.depths
   if (flow.mainAgentId) backendMainAgentId.value = flow.mainAgentId
   if (flow.agentActiveTasks) agentActiveTasks.value = flow.agentActiveTasks
-  nextTick(updateEdges)
+  nextTick(() => scheduleEdgeLayout())
 }
 
 function handleCollaborationDynamicUpdate(dyn: CollaborationDynamic): void {
@@ -550,7 +566,7 @@ function handleCollaborationDynamicUpdate(dyn: CollaborationDynamic): void {
     const delegateEdgesLocal = edges.value.filter(e => e.type === 'delegates')
     nodes.value = [...agentNodesLocal, ...(dyn.taskNodes || []), ...modelNodesLocal]
     edges.value = [...delegateEdgesLocal, ...(dyn.taskEdges || [])]
-    nextTick(updateEdges)
+    nextTick(() => scheduleEdgeLayout())
   } else {
     const taskNodeMap = new Map((dyn.taskNodes || []).map(n => [n.id, n]))
     for (const t of nodes.value.filter(n => n.type === 'task')) {
@@ -578,22 +594,46 @@ async function fetchDynamicData(): Promise<void> {
 
 let unsubscribe: (() => void) | null = null
 let dynamicPollTimer: ReturnType<typeof setInterval> | null = null
+let agentAreaResizeObs: ResizeObserver | null = null
 
-watch([agentNodes, modelPanelExpanded], () => {
-  nextTick(updateEdges)
+watch(agentAreaRef, (el) => {
+  if (agentAreaResizeObs) {
+    agentAreaResizeObs.disconnect()
+    agentAreaResizeObs = null
+  }
+  if (el) {
+    agentAreaResizeObs = new ResizeObserver(() => scheduleEdgeLayout())
+    agentAreaResizeObs.observe(el)
+  }
+})
+
+function restartDynamicPoll(): void {
+  if (dynamicPollTimer) clearInterval(dynamicPollTimer)
+  const ms =
+    connectionState.value.status === 'connected'
+      ? DYNAMIC_POLL_INTERVAL_MS_CONNECTED
+      : DYNAMIC_POLL_INTERVAL_MS_DISCONNECTED
+  dynamicPollTimer = setInterval(fetchDynamicData, ms)
+}
+
+watch(connectionState, () => {
+  restartDynamicPoll()
 })
 
 onMounted(() => {
   fetchData()
   unsubscribe = subscribe('collaboration', handleCollaborationUpdate)
-  dynamicPollTimer = setInterval(fetchDynamicData, DYNAMIC_POLL_INTERVAL_MS)
-  window.addEventListener('resize', updateEdges)
+  restartDynamicPoll()
 })
 
 onUnmounted(() => {
   if (unsubscribe) unsubscribe()
   if (dynamicPollTimer) clearInterval(dynamicPollTimer)
-  window.removeEventListener('resize', updateEdges)
+  if (edgeLayoutRaf) cancelAnimationFrame(edgeLayoutRaf)
+  if (agentAreaResizeObs) {
+    agentAreaResizeObs.disconnect()
+    agentAreaResizeObs = null
+  }
 })
 </script>
 

@@ -155,7 +155,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRealtime } from '../../composables'
+import { useRealtime, useThrottle } from '../../composables'
 import type { TimelineResponse, TimelineStep } from './types'
 import TimelineStepItem from './TimelineStep.vue'
 import TimelineConnector from './TimelineConnector.vue'
@@ -163,6 +163,11 @@ import TimelineRound from './TimelineRound.vue'
 import TimelineToolLink from './TimelineToolLink.vue'
 
 const { subscribe } = useRealtime()
+
+/** WS 增量推送可能很密，合并时间线拉取，避免主线程与后端重复解析 jsonl */
+const { throttledFn: throttledRefreshFromRealtime } = useThrottle(() => {
+  void refresh()
+}, 750)
 
 const props = defineProps<{
   agentId: string
@@ -183,17 +188,15 @@ let unsubAgentsUpdate: (() => void) | null = null
 let unsubFullState: (() => void) | null = null
 
 function handleStateUpdate(agents: Array<{ id: string }>) {
-  // 如果更新的 agent 包含当前 agent，刷新 timeline
   if (props.agentId && agents.some(a => a.id === props.agentId)) {
-    refresh()
+    throttledRefreshFromRealtime()
   }
 }
 
 function handleFullStateUpdate(data: { agents?: Array<{ id: string }> }) {
-  // full_state 包含 agents 列表
   if (data?.agents && props.agentId) {
     if (data.agents.some(a => a.id === props.agentId)) {
-      refresh()
+      throttledRefreshFromRealtime()
     }
   }
 }
@@ -277,7 +280,7 @@ async function refresh() {
   error.value = null
 
   try {
-    let url = `/api/timeline/${props.agentId}?limit=500`
+    let url = `/api/timeline/${props.agentId}?limit=100`
     if (props.sessionKey) {
       url += `&session_key=${encodeURIComponent(props.sessionKey)}`
     }

@@ -17,6 +17,15 @@ from core.schemas.session_schema import session_envelope_schema, session_message
 
 _audit_log = logging.getLogger("openclaw.fortify.audit")
 
+# 模块级复用：避免每条 JSONL 构造 Draft202012Validator（CPU 大户）。实例线程安全见 SchemaValidator.validate。
+_MSG_SCHEMA_OPTIONAL = dict(session_message_schema)
+_MSG_SCHEMA_OPTIONAL.pop("required", None)
+_ENVELOPE_STRICT = SchemaValidator(session_envelope_schema, strict=True)
+_ENVELOPE_LOOSE = SchemaValidator(session_envelope_schema, strict=False)
+_MSG_STRICT_FULL = SchemaValidator(session_message_schema, strict=True)
+_MSG_LOOSE_OPTIONAL = SchemaValidator(_MSG_SCHEMA_OPTIONAL, strict=False)
+_RELAXED_MESSAGE = SchemaValidator(_MSG_SCHEMA_OPTIONAL, strict=False)
+
 
 def _ensure_audit_logging() -> None:
     if _audit_log.handlers:
@@ -123,7 +132,7 @@ def parse_session_jsonl_line(
         record_error("parsing-error", "json_decode session line", "session_jsonl")
         return None, None
 
-    env_validator = SchemaValidator(session_envelope_schema, strict=strict)
+    env_validator = _ENVELOPE_STRICT if strict else _ENVELOPE_LOOSE
     env_res = env_validator.validate(data)
     if not env_res.is_valid:
         from core.error_handler import record_error
@@ -144,11 +153,7 @@ def parse_session_jsonl_line(
         else:
             return data, None
 
-    msg_schema = dict(session_message_schema)
-    if not strict:
-        msg_schema = dict(msg_schema)
-        msg_schema.pop("required", None)
-    mv = SchemaValidator(msg_schema, strict=strict)
+    mv = _MSG_STRICT_FULL if strict else _MSG_LOOSE_OPTIONAL
     mv_res = mv.validate(msg)
     if mv_res.is_valid:
         return data, msg
@@ -157,10 +162,7 @@ def parse_session_jsonl_line(
         repaired_msg = dict(msg)
         if "role" not in repaired_msg:
             repaired_msg["role"] = "assistant"
-        relaxed = dict(msg_schema)
-        relaxed.pop("required", None)
-        mv2 = SchemaValidator(relaxed, strict=False)
-        if mv2.validate(repaired_msg).is_valid:
+        if _RELAXED_MESSAGE.validate(repaired_msg).is_valid:
             audit_repair("message_schema_repair", json.dumps(msg), json.dumps(repaired_msg))
             return data, repaired_msg
 
@@ -174,10 +176,7 @@ def parse_session_jsonl_line(
 
 def validate_message_dict(msg: Dict[str, Any]) -> Tuple[bool, List[str]]:
     cfg = get_fortify_config()
-    msg_schema = dict(session_message_schema)
-    if not cfg.json_strict:
-        msg_schema.pop("required", None)
-    mv = SchemaValidator(msg_schema, strict=cfg.json_strict)
+    mv = _MSG_STRICT_FULL if cfg.json_strict else _MSG_LOOSE_OPTIONAL
     r = mv.validate(msg)
     return r.is_valid, r.errors
 

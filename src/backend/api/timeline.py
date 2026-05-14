@@ -1,11 +1,13 @@
 """
 Timeline API 路由 - 实时执行时序图
 """
+import asyncio
+import copy
 import logging
 import time
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import sys
 from pathlib import Path
 
@@ -19,6 +21,14 @@ from data.timeline_reader import get_timeline_steps, StepType, StepStatus
 from data.config_reader import get_agent_config
 
 router = APIRouter()
+
+# 切换 agent / 轮询重复命中时减轻重复读盘解析（短时 stale 可接受）
+_timeline_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_TIMELINE_CACHE_TTL_SEC = 5.0
+
+
+def _timeline_cache_key(agent_id: str, session_key: Optional[str], limit: int) -> str:
+    return f"{agent_id}\x00{session_key or ''}\x00{limit}"
 
 
 class TimelineStats(BaseModel):
@@ -80,11 +90,18 @@ async def get_timeline(
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     t0 = time.perf_counter()
-    try:
-        result = get_timeline_steps(agent_id, session_key, limit)
-    except Exception as e:
-        record_error("unknown", str(e), "api:timeline:get", exc=e)
-        raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
+    cache_key = _timeline_cache_key(agent_id, session_key, limit)
+    now_mono = time.monotonic()
+    hit = _timeline_cache.get(cache_key)
+    if hit is not None and (now_mono - hit[0]) < _TIMELINE_CACHE_TTL_SEC:
+        result = copy.deepcopy(hit[1])
+    else:
+        try:
+            result = await asyncio.to_thread(get_timeline_steps, agent_id, session_key, limit)
+        except Exception as e:
+            record_error("unknown", str(e), "api:timeline:get", exc=e)
+            raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
+        _timeline_cache[cache_key] = (now_mono, copy.deepcopy(result))
     elapsed_ms = (time.perf_counter() - t0) * 1000
     steps_count = len(result.get("steps", []))
     if elapsed_ms >= 100.0:
@@ -127,7 +144,7 @@ async def get_timeline_steps_only(
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     try:
-        result = get_timeline_steps(agent_id, session_key, limit)
+        result = await asyncio.to_thread(get_timeline_steps, agent_id, session_key, limit)
     except Exception as e:
         record_error("unknown", str(e), "api:timeline:steps", exc=e)
         raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e
@@ -153,7 +170,7 @@ async def get_timeline_summary(agent_id: str, session_key: Optional[str] = Query
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     try:
-        result = get_timeline_steps(agent_id, session_key, limit=10)  # 只需基本信息
+        result = await asyncio.to_thread(get_timeline_steps, agent_id, session_key, 10)  # 只需基本信息
     except Exception as e:
         record_error("unknown", str(e), "api:timeline:summary", exc=e)
         raise HTTPException(status_code=500, detail=safe_api_error_detail(e)) from e

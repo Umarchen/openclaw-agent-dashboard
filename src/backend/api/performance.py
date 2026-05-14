@@ -3,9 +3,12 @@
 支持按分钟查看调用详情，便于分析调用瓶颈
 """
 from fastapi import APIRouter
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
+import copy
 import json
 import re
+import asyncio
+import time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -18,6 +21,31 @@ from utils.data_repair import parse_session_jsonl_line
 TZ_DISPLAY = ZoneInfo('Asia/Shanghai')
 
 router = APIRouter()
+
+# 聚合统计多次并发请求（WS + 轮询 + 多标签）共用；TTL 短以保证大致实时
+_perf_stats_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_PERF_STATS_CACHE_TTL_SEC = 12.0
+
+# 柱体钻取：多次点击 / 并发标签共用短缓存
+_perf_details_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_PERF_DETAILS_CACHE_TTL_SEC = 12.0
+
+# 轻量解析 envelope ISO 时间，便于跳过明显早于查询窗口的行（避免 json.loads + schema）
+_QUICK_ENV_TS_RE = re.compile(r'"timestamp"\s*:\s*"([^"]+)"')
+
+
+def _quick_envelope_timestamp_utc(line: str) -> Optional[datetime]:
+    m = _QUICK_ENV_TS_RE.search(line)
+    if not m:
+        return None
+    try:
+        return datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _perf_cache_key(range_minutes: int, range_hours: int, granularity: str) -> str:
+    return f"{range_minutes}:{range_hours}:{granularity}"
 
 
 def _extract_trigger_text(msg: Dict) -> str:
@@ -177,11 +205,25 @@ def parse_session_file(session_path: Path, range_hours: int = 1) -> List[Dict]:
         range_hours: 时间范围（小时），0 表示不限制
     """
     messages = []
+    now = datetime.now(timezone.utc)
+    time_ago = now - timedelta(hours=range_hours) if range_hours > 0 else None
+
+    # 启发式：窗口内若有 assistant usage，文件通常在窗口内有过写入；过久未修改则可跳过整文件
+    if time_ago is not None:
+        try:
+            if session_path.stat().st_mtime < time_ago.timestamp():
+                return []
+        except OSError:
+            return []
 
     try:
         with open(session_path, 'r', encoding='utf-8') as f:
             for line in f:
                 try:
+                    if time_ago is not None:
+                        qt = _quick_envelope_timestamp_utc(line)
+                        if qt is not None and qt < time_ago:
+                            continue
                     envelope, msg = parse_session_jsonl_line(line)
                     if (
                         not envelope
@@ -200,11 +242,8 @@ def parse_session_file(session_path: Path, range_hours: int = 1) -> List[Dict]:
                             str(envelope['timestamp']).replace('Z', '+00:00')
                         )
 
-                        if range_hours > 0:
-                            now = datetime.now(timezone.utc)
-                            time_ago = now - timedelta(hours=range_hours)
-                            if timestamp < time_ago:
-                                continue
+                        if time_ago is not None and timestamp < time_ago:
+                            continue
 
                         messages.append({
                             'timestamp': timestamp,
@@ -240,14 +279,8 @@ async def get_performance_stats(range: str = "20m"):
     return stats
 
 
-async def get_real_stats(range_minutes: int = 20, range_hours: int = 1, granularity: str = "minute") -> Dict:
-    """获取真实的 TPM/RPM 统计
-
-    Args:
-        range_minutes: 时间范围（分钟）
-        range_hours: 用于解析 session 的时间范围（小时）
-        granularity: 聚合粒度 (minute, hour)
-    """
+def _compute_real_stats_sync(range_minutes: int = 20, range_hours: int = 1, granularity: str = "minute") -> Dict:
+    """同步聚合 TPM/RPM（在线程池中运行，避免阻塞事件循环）。"""
     stats = {
         'current': {
             'tpm': 0,
@@ -381,24 +414,38 @@ async def get_real_stats(range_minutes: int = 20, range_hours: int = 1, granular
     return stats
 
 
-async def get_minute_details(
+async def get_real_stats(range_minutes: int = 20, range_hours: int = 1, granularity: str = "minute") -> Dict:
+    """获取真实的 TPM/RPM 统计（线程池计算 + 短时缓存，减轻重复扫盘）。"""
+    key = _perf_cache_key(range_minutes, range_hours, granularity)
+    now = time.monotonic()
+    hit = _perf_stats_cache.get(key)
+    if hit is not None and (now - hit[0]) < _PERF_STATS_CACHE_TTL_SEC:
+        return hit[1]
+    data = await asyncio.to_thread(_compute_real_stats_sync, range_minutes, range_hours, granularity)
+    _perf_stats_cache[key] = (now, data)
+    return data
+
+
+def _perf_details_cache_key(
+    timestamp_ms: int,
+    granularity: str,
+    agent: str,
+    search: str,
+    sort: str,
+    limit: int,
+) -> str:
+    return f"{timestamp_ms}:{granularity}:{agent}:{search}:{sort}:{limit}"
+
+
+def _compute_minute_details_sync(
     timestamp_ms: int,
     granularity: str = "minute",
     agent: Optional[str] = None,
     search: Optional[str] = None,
     sort: str = "tokens_desc",
-    limit: int = 50
+    limit: int = 50,
 ) -> Dict[str, Any]:
-    """获取指定时间窗口的调用详情，用于柱体点击钻取。时间展示使用 Asia/Shanghai 时区
-
-    Args:
-        timestamp_ms: Unix 毫秒时间戳
-        granularity: 粒度 (minute, hour)
-        agent: 筛选指定 Agent
-        search: 搜索触发内容
-        sort: 排序方式 (tokens_desc, tokens_asc, time_asc, time_desc)
-        limit: 返回数量限制
-    """
+    """同步聚合柱体钻取数据（线程池 + 短 TTL 缓存）。"""
     try:
         ts = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
         ts_local = ts.astimezone(TZ_DISPLAY)
@@ -419,6 +466,7 @@ async def get_minute_details(
 
         all_calls = []
         agent_set = set()
+        window_start_ts = time_start.timestamp()
 
         for agent_dir in agents_path.iterdir():
             if not agent_dir.is_dir():
@@ -436,6 +484,12 @@ async def get_minute_details(
 
             for session_file in sessions_path.glob('*.jsonl'):
                 if 'lock' in session_file.name or 'deleted' in session_file.name:
+                    continue
+                try:
+                    # 与 parse_session_file 相同启发式：窗口开始后未修改的文件不可能含该窗内的 assistant 记录
+                    if session_file.stat().st_mtime < window_start_ts:
+                        continue
+                except OSError:
                     continue
                 records = parse_session_file_with_details(session_file, agent_id)
                 for r in records:
@@ -501,6 +555,44 @@ async def get_minute_details(
     except Exception as e:
         record_error("unknown", str(e), "performance:get_minute_details", exc=e)
         return {'timeWindow': '', 'calls': [], 'totalCalls': 0, 'totalTokens': 0, 'summary': {'avgTokens': 0}, 'agents': [], 'pagination': {'total': 0, 'limit': limit, 'hasMore': False}}
+
+
+async def get_minute_details(
+    timestamp_ms: int,
+    granularity: str = "minute",
+    agent: Optional[str] = None,
+    search: Optional[str] = None,
+    sort: str = "tokens_desc",
+    limit: int = 50
+) -> Dict[str, Any]:
+    """获取指定时间窗口的调用详情，用于柱体点击钻取。时间展示使用 Asia/Shanghai 时区
+
+    Args:
+        timestamp_ms: Unix 毫秒时间戳
+        granularity: 粒度 (minute, hour)
+        agent: 筛选指定 Agent
+        search: 搜索触发内容
+        sort: 排序方式 (tokens_desc, tokens_asc, time_asc, time_desc)
+        limit: 返回数量限制
+    """
+    ag = agent or ""
+    sr = search or ""
+    key = _perf_details_cache_key(timestamp_ms, granularity, ag, sr, sort, limit)
+    now = time.monotonic()
+    hit = _perf_details_cache.get(key)
+    if hit is not None and (now - hit[0]) < _PERF_DETAILS_CACHE_TTL_SEC:
+        return copy.deepcopy(hit[1])
+    data = await asyncio.to_thread(
+        _compute_minute_details_sync,
+        timestamp_ms,
+        granularity,
+        agent,
+        search,
+        sort,
+        limit,
+    )
+    _perf_details_cache[key] = (now, copy.deepcopy(data))
+    return data
 
 
 @router.get("/performance/details")

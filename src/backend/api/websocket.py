@@ -7,6 +7,7 @@ from typing import Set, List, Dict, Any
 import json
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -18,30 +19,46 @@ router = APIRouter()
 # 活跃的 WebSocket 连接
 active_connections: Set[WebSocket] = set()
 
-# 周期性推送间隔（秒）- 优化：从 3 秒缩短到 1 秒
-BROADCAST_INTERVAL_SEC = 1
+# 周期性增量检查基准间隔（秒）；空闲时会自动退避拉长（见 _periodic_broadcast_loop）
+BROADCAST_INTERVAL_SEC = 5
 _broadcast_task: asyncio.Task | None = None
+_broadcast_sleep_sec: float = float(BROADCAST_INTERVAL_SEC)
+_broadcast_idle_streak: int = 0
+
+# 文件监听等高频触发下合并 full_state，降低前端解析与重绘压力
+FULL_STATE_MIN_INTERVAL_SEC = 2.0
+_last_full_state_monotonic: float = 0.0
 
 
 async def _periodic_broadcast_loop():
-    """周期性广播状态更新（增量），确保无文件变更时也有更新"""
+    """周期性广播状态更新（增量）；连续无变更则拉长睡眠间隔，上限 30s。"""
+    global _broadcast_sleep_sec, _broadcast_idle_streak
     while True:
-        await asyncio.sleep(BROADCAST_INTERVAL_SEC)
+        await asyncio.sleep(_broadcast_sleep_sec)
         if active_connections:
-            # 只推送状态变化的 Agent
             try:
                 from status.status_calculator import get_changed_agents
                 changed_agents = await get_changed_agents()
                 if changed_agents:
+                    _broadcast_idle_streak = 0
+                    _broadcast_sleep_sec = float(BROADCAST_INTERVAL_SEC)
                     await broadcast_state_update(changed_agents)
+                else:
+                    _broadcast_idle_streak += 1
+                    if _broadcast_idle_streak >= 3:
+                        _broadcast_sleep_sec = min(_broadcast_sleep_sec * 2.0, 30.0)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 record_error("unknown", str(e), "websocket:periodic_broadcast", exc=e)
 
 
 def _ensure_broadcast_task():
     """有连接时启动周期性推送"""
-    global _broadcast_task
+    global _broadcast_task, _broadcast_sleep_sec, _broadcast_idle_streak
     if active_connections and (_broadcast_task is None or _broadcast_task.done()):
+        _broadcast_sleep_sec = float(BROADCAST_INTERVAL_SEC)
+        _broadcast_idle_streak = 0
         _broadcast_task = asyncio.create_task(_periodic_broadcast_loop())
 
 
@@ -210,9 +227,15 @@ async def broadcast_full_state():
     优化点：
     1. 使用 get_collaboration_dynamic() 代替 get_collaboration()
     2. 只推送动态数据，减少数据量
+    3. 短时间重复调用节流，避免监听线程连震时频繁全量推送
     """
+    global _last_full_state_monotonic
     if not active_connections:
         return
+    now = time.monotonic()
+    if now - _last_full_state_monotonic < FULL_STATE_MIN_INTERVAL_SEC:
+        return
+    _last_full_state_monotonic = now
     try:
         from .agents import get_agents as get_agents_list
         from .subagents import get_subagents

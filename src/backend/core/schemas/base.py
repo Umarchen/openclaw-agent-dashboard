@@ -25,19 +25,20 @@ class SchemaValidator:
         self.schema = schema
         self.strict = strict
         self._validator = Draft202012Validator(schema)
-        self._last_errors: List[str] = []
 
     def validate(self, data: Any) -> ValidationResult:
-        self._last_errors = []
+        """线程安全：校验结果仅通过返回值给出，实例上不保留最后一次错误（避免并发覆盖）。"""
+        errors: List[str] = []
         if not isinstance(data, (dict, list)) and self.schema.get("type") == "object":
-            self._last_errors.append("expected object")
-            return ValidationResult(False, list(self._last_errors))
+            errors.append("expected object")
+            return ValidationResult(False, errors)
         try:
             self._validator.validate(data)
             return ValidationResult(True, [])
         except jsonschema.ValidationError as e:
-            self._last_errors.append(e.message)
-            return ValidationResult(False, list(self._last_errors))
+            errors.append(e.message)
+            return ValidationResult(False, errors)
 
     def get_error_details(self) -> Dict[str, Any]:
-        return {"errors": list(self._last_errors)}
+        """兼容旧接口；共享校验器实例时不代表「最后一次校验」。请使用 validate() 的返回值。"""
+        return {"errors": []}

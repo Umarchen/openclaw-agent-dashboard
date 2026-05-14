@@ -17,7 +17,7 @@ _LOG = logging.getLogger("openclaw.fortify.watcher")
 from core.config_fortify import get_fortify_config
 from core.error_handler import record_error, record_watcher_failure, record_watcher_recovery
 
-DEBOUNCE_SECONDS = 0.3
+DEBOUNCE_SECONDS = 1.5
 
 
 def _extract_agent_id_from_path(filepath: str) -> Optional[str]:
@@ -260,8 +260,8 @@ def _on_file_changed(filepath: Optional[str] = None) -> None:
 
         loop = _event_loop
         if loop and broadcast_full_state:
-            future = asyncio.run_coroutine_threadsafe(broadcast_full_state(), loop)
-            future.result(timeout=10)
+            # fire-and-forget：避免阻塞 watchdog 线程；节流由 websocket.broadcast_full_state 负责
+            asyncio.run_coroutine_threadsafe(broadcast_full_state(), loop)
     except Exception as e:
         _last_error = str(e)
         record_error("unknown", str(e), "file_watcher_push")

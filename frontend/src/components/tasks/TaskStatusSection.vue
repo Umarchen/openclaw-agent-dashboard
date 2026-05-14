@@ -25,7 +25,7 @@
     <div class="filters-row">
       <div class="search-box">
         <input
-          v-model="searchQuery"
+          v-model="rawSearchQuery"
           type="text"
           placeholder="搜索任务..."
           class="search-input"
@@ -56,7 +56,7 @@
 
     <div v-else-if="filteredTasks.length === 0" class="empty-state">
       <span class="empty-icon">📭</span>
-      <span>{{ searchQuery ? '无匹配任务' : '暂无任务数据' }}</span>
+      <span>{{ debouncedSearchQuery ? '无匹配任务' : '暂无任务数据' }}</span>
     </div>
 
     <div v-else class="task-list-container" ref="containerRef">
@@ -70,11 +70,18 @@
           <span class="task-status-icon" :class="task.status">
             {{ getStatusIcon(task.status) }}
           </span>
+          <span
+            v-if="task.agentName || task.agentId"
+            class="task-agent"
+            :title="task.agentName || task.agentId"
+          >{{ task.agentName || task.agentId }}</span>
+          <div class="task-times-outer">
+            <span class="task-datetime-line">{{ formatTaskStartShort(task) }}</span>
+            <span v-if="normalizeTaskTimestamp(task.startTime) != null" class="task-elapsed-line">{{ formatDuration(task) }}</span>
+          </div>
           <div class="task-main">
             <div class="task-name-short">{{ getShortTaskName(task) }}</div>
           </div>
-          <span class="task-agent" v-if="task.agentName">{{ task.agentName }}</span>
-          <span class="task-time" v-if="task.startTime">{{ formatDuration(task) }}</span>
           <span class="task-detail-hint">详情 ›</span>
         </div>
       </div>
@@ -111,7 +118,15 @@
             <span class="detail-label">Agent 工作区路径</span>
             <span class="detail-value path-value">{{ selectedTask.agentWorkspace }}</span>
           </div>
-          <div v-if="selectedTask.startTime" class="detail-row">
+          <div v-if="normalizeTaskTimestamp(selectedTask.startTime) != null" class="detail-row">
+            <span class="detail-label">开始时间</span>
+            <span class="detail-value">{{ formatTaskStartFull(selectedTask) }}</span>
+          </div>
+          <div v-if="normalizeTaskTimestamp(selectedTask.endTime) != null" class="detail-row">
+            <span class="detail-label">结束时间</span>
+            <span class="detail-value">{{ formatTaskEndFull(selectedTask) }}</span>
+          </div>
+          <div v-if="normalizeTaskTimestamp(selectedTask.startTime) != null" class="detail-row">
             <span class="detail-label">耗时</span>
             <span class="detail-value">{{ formatDuration(selectedTask) }}</span>
           </div>
@@ -176,7 +191,9 @@ const { connectionState, subscribe } = useRealtime()
 const tasks = ref<Task[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
-const searchQuery = ref('')
+const rawSearchQuery = ref('')
+/** 实际参与过滤的查询（防抖），避免每键入一字触发全列表重算 */
+const debouncedSearchQuery = ref('')
 const activeFilters = ref<TaskStatusType[]>([])
 const selectedTask = ref<Task | null>(null)
 const containerRef = ref<HTMLElement | null>(null)
@@ -191,11 +208,11 @@ const statusFilters = [
   { value: 'pending', label: '待分配' }
 ]
 
-// 防抖搜索
-const { debouncedFn: debouncedSearch } = useDebounce((query: string) => {
-  // 触发重新计算
-  void query
+const { debouncedFn: commitDebouncedSearch } = useDebounce(() => {
+  debouncedSearchQuery.value = rawSearchQuery.value
 }, 300)
+
+watch(rawSearchQuery, () => commitDebouncedSearch())
 
 // 过滤后的任务
 const filteredTasks = computed(() => {
@@ -206,10 +223,10 @@ const filteredTasks = computed(() => {
     result = result.filter(t => activeFilters.value.includes(t.status))
   }
 
-  // 搜索过滤
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(t => 
+  // 搜索过滤（防抖后的关键词）
+  if (debouncedSearchQuery.value) {
+    const query = debouncedSearchQuery.value.toLowerCase()
+    result = result.filter(t =>
       t.name.toLowerCase().includes(query) ||
       t.agentName?.toLowerCase().includes(query)
     )
@@ -268,13 +285,70 @@ function sanitizeTaskDisplay(text: string | undefined): string {
     .replace(/`([^`]+)`/g, '$1')
 }
 
+/** 统一毫秒时间戳：兼容 ISO 字符串、秒级/毫秒级数字 */
+function normalizeTaskTimestamp(ts: number | string | undefined): number | null {
+  if (ts === undefined || ts === null || ts === '') return null
+  if (typeof ts === 'string') {
+    const parsed = Date.parse(ts)
+    return Number.isNaN(parsed) ? null : parsed
+  }
+  const n = Number(ts)
+  if (!Number.isFinite(n)) return null
+  return n < 1e12 ? Math.round(n * 1000) : Math.round(n)
+}
+
+function formatTaskStartShort(task: Task): string {
+  const ms = normalizeTaskTimestamp(task.startTime)
+  if (ms === null) return '—'
+  const d = new Date(ms)
+  return d.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+}
+
+function formatTaskStartFull(task: Task): string {
+  const ms = normalizeTaskTimestamp(task.startTime)
+  if (ms === null) return ''
+  const d = new Date(ms)
+  return d.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  })
+}
+
+function formatTaskEndFull(task: Task): string {
+  const ms = normalizeTaskTimestamp(task.endTime)
+  if (ms === null) return ''
+  const d = new Date(ms)
+  return d.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  })
+}
+
 function formatDuration(task: Task): string {
-  if (!task.startTime) return ''
-  
-  const start = new Date(task.startTime).getTime()
-  const end = task.endTime ? new Date(task.endTime).getTime() : Date.now()
+  const start = normalizeTaskTimestamp(task.startTime)
+  if (start === null) return ''
+
+  const endRaw = normalizeTaskTimestamp(task.endTime)
+  const end = endRaw ?? Date.now()
   const duration = Math.floor((end - start) / 1000)
-  
+  if (duration < 0) return '0s'
+
   if (duration < 60) return `${duration}s`
   if (duration < 3600) return `${Math.floor(duration / 60)}m ${duration % 60}s`
   return `${Math.floor(duration / 3600)}h ${Math.floor((duration % 3600) / 60)}m`
@@ -630,6 +704,29 @@ onUnmounted(() => {
   transition: background 0.15s;
 }
 
+/* 列表最外层：左侧固定宽度展示开始时间与耗时，避免被标题挤没 */
+.task-times-outer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 6.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-datetime-line {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+  line-height: 1.2;
+}
+
+.task-elapsed-line {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  line-height: 1.2;
+}
+
 .task-item:hover {
   background: #f8fafc;
 }
@@ -680,16 +777,16 @@ onUnmounted(() => {
 }
 
 .task-agent {
+  flex-shrink: 0;
+  max-width: 8rem;
   font-size: 0.8rem;
   color: #6b7280;
   background: #f1f5f9;
   padding: 0.125rem 0.5rem;
   border-radius: 4px;
-}
-
-.task-time {
-  font-size: 0.8rem;
-  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 详情弹窗 */
@@ -965,9 +1062,23 @@ onUnmounted(() => {
     width: 100%;
     justify-content: flex-start;
   }
-  
+
   .task-agent {
-    display: none;
+    max-width: 5rem;
+    font-size: 0.72rem;
+    padding: 0.1rem 0.35rem;
+  }
+
+  .task-times-outer {
+    min-width: 5.25rem;
+  }
+
+  .task-datetime-line {
+    font-size: 0.68rem;
+  }
+
+  .task-elapsed-line {
+    font-size: 0.65rem;
   }
 }
 </style>

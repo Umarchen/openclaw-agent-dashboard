@@ -285,6 +285,8 @@ async function loadSubagentRun() {
     subagentRun.value = null
     return
   }
+
+  let nextRun: SubagentRun | null = null
   try {
     const res = await fetch('/api/chains?limit=10')
     if (res.ok) {
@@ -292,10 +294,15 @@ async function loadSubagentRun() {
       // 查找当前 agent 的运行
       const activeChain = data.activeChain
       if (activeChain?.nodes) {
-        const node = activeChain.nodes.find((n: { agentId: string }) => n.agentId === props.agent.id)
+        const node = activeChain.nodes.find((n: {
+          agentId: string
+          status?: string
+          startedAt?: number
+          runId?: string
+        }) => n.agentId === props.agent.id)
         if (node && node.status === 'running') {
-          subagentRun.value = {
-            runId: activeChain.chainId,
+          nextRun = {
+            runId: node.runId || activeChain.chainId,
             status: 'running',
             startedAt: node.startedAt,
             archiveAtMs: activeChain.archiveAtMs
@@ -306,6 +313,7 @@ async function loadSubagentRun() {
   } catch {
     // ignore
   }
+  subagentRun.value = nextRun
 }
 
 // 取消运行

@@ -48,6 +48,7 @@ class TaskChain(BaseModel):
     projectId: Optional[str] = None
     rootTask: str
     startedAt: Optional[int] = None
+    archiveAtMs: Optional[int] = None
     status: str
     nodes: List[ChainNode]
     edges: List[Dict[str, str]]

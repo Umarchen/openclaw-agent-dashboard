@@ -1,6 +1,7 @@
 """CA-001 / CA-002 / CA-003：核心 API 与数据校验响应结构契约（轻量回归）。"""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -218,6 +219,43 @@ async def test_contract_chains_list_shape(monkeypatch, tmp_path):
         assert "activeChain" in j
         assert isinstance(j["chains"], list)
         assert j["activeChain"] is None or isinstance(j["activeChain"], dict)
+
+
+@pytest.mark.asyncio
+async def test_contract_chains_preserves_archive_timeout(monkeypatch, tmp_path):
+    """CA-002：GET /chains 保留 archiveAtMs，供前端超时倒计时使用。"""
+    import httpx
+    import data.chain_reader as chain_reader
+    import data.subagent_reader as subagent_reader
+
+    _stub_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(chain_reader, "get_openclaw_root", lambda: tmp_path)
+    monkeypatch.setattr(subagent_reader, "get_openclaw_root", lambda: tmp_path)
+
+    runs_dir = tmp_path / "subagents"
+    runs_dir.mkdir()
+    archive_at_ms = 1746000600000
+    runs_file = runs_dir / "runs.json"
+    runs_file.write_text(json.dumps({
+        "version": 2,
+        "runs": {
+            "run-archive-timeout": {
+                "requesterSessionKey": "agent:main:main",
+                "childSessionKey": "agent:worker:subagent:child-001",
+                "startedAt": 1746000000000,
+                "archiveAtMs": archive_at_ms,
+                "task": "verify timeout propagation",
+            }
+        },
+    }))
+
+    from main import app
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get("/api/chains")
+        assert r.status_code == 200
+        j = r.json()
+        assert j["activeChain"] is not None
+        assert j["activeChain"]["archiveAtMs"] == archive_at_ms
 
 
 @pytest.mark.asyncio

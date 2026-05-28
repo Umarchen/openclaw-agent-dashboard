@@ -203,6 +203,9 @@ onMounted(() => {
       subAgents.value = agents.value.filter(a => a.id !== mainAgentId.value)
     }
   })
+
+  // C0: 单个 Agent 状态变更（EventBus → WS）已由 RealtimeDataManager
+  // 映射到 agents_update 事件，此处无需额外订阅。
 })
 
 onUnmounted(() => {

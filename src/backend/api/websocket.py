@@ -1,6 +1,8 @@
 """
 WebSocket 路由
-支持增量状态推送，优化实时性能
+C0 改造: 移除 _periodic_broadcast_loop 和 broadcast_full_state，
+新增 EventBus subscriber 监听 agent_state_changed 进行增量 WS 推送。
+bootstrap（send_initial_state）保留，仍推 type:"full_state" 旧格式。
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Set, List, Dict, Any
@@ -13,61 +15,57 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.error_handler import record_error
+from core.event_types import BaseEvent, AgentStateChangedEvent
 
 router = APIRouter()
 
 # 活跃的 WebSocket 连接
 active_connections: Set[WebSocket] = set()
 
-# 周期性增量检查基准间隔（秒）；空闲时会自动退避拉长（见 _periodic_broadcast_loop）
-BROADCAST_INTERVAL_SEC = 5
-_broadcast_task: asyncio.Task | None = None
-_broadcast_sleep_sec: float = float(BROADCAST_INTERVAL_SEC)
-_broadcast_idle_streak: int = 0
-
-# 文件监听等高频触发下合并 full_state，降低前端解析与重绘压力
-FULL_STATE_MIN_INTERVAL_SEC = 2.0
-_last_full_state_monotonic: float = 0.0
+# C0: EventBus subscriber 控制标志
+_event_bus_subscribed = False
 
 
-async def _periodic_broadcast_loop():
-    """周期性广播状态更新（增量）；连续无变更则拉长睡眠间隔，上限 30s。"""
-    global _broadcast_sleep_sec, _broadcast_idle_streak
-    while True:
-        await asyncio.sleep(_broadcast_sleep_sec)
-        if active_connections:
-            try:
-                from status.status_calculator import get_changed_agents
-                changed_agents = await get_changed_agents()
-                if changed_agents:
-                    _broadcast_idle_streak = 0
-                    _broadcast_sleep_sec = float(BROADCAST_INTERVAL_SEC)
-                    await broadcast_state_update(changed_agents)
-                else:
-                    _broadcast_idle_streak += 1
-                    if _broadcast_idle_streak >= 3:
-                        _broadcast_sleep_sec = min(_broadcast_sleep_sec * 2.0, 30.0)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                record_error("unknown", str(e), "websocket:periodic_broadcast", exc=e)
+def _ensure_event_bus_subscriber() -> None:
+    """确保 EventBus subscriber 已注册（仅注册一次）"""
+    global _event_bus_subscribed
+    if _event_bus_subscribed:
+        return
+    try:
+        from core.event_bus import get_event_bus, TOPIC_AGENT_STATE_CHANGED
+
+        bus = get_event_bus()
+        bus.subscribe(TOPIC_AGENT_STATE_CHANGED, _on_agent_state_changed)
+        _event_bus_subscribed = True
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:event_bus_subscribe", exc=e)
 
 
-def _ensure_broadcast_task():
-    """有连接时启动周期性推送"""
-    global _broadcast_task, _broadcast_sleep_sec, _broadcast_idle_streak
-    if active_connections and (_broadcast_task is None or _broadcast_task.done()):
-        _broadcast_sleep_sec = float(BROADCAST_INTERVAL_SEC)
-        _broadcast_idle_streak = 0
-        _broadcast_task = asyncio.create_task(_periodic_broadcast_loop())
+def _on_agent_state_changed(event: BaseEvent) -> None:
+    """EventBus 回调: AgentStateChangedEvent → WS 增量推送
+
+    This runs in the publisher's thread (EventBus uses synchronous dispatch).
+    We use asyncio.run_coroutine_threadsafe to schedule the WS push on the event loop.
+    """
+    if not isinstance(event, AgentStateChangedEvent):
+        return
+
+    if not active_connections:
+        return
+
+    payload = event.to_ws_payload()
+
+    # Schedule WS push on the event loop
+    loop = _get_event_loop()
+    if loop and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_do_broadcast(payload), loop)
 
 
-def _cancel_broadcast_task():
-    """无连接时停止周期性推送"""
-    global _broadcast_task
-    if not active_connections and _broadcast_task and not _broadcast_task.done():
-        _broadcast_task.cancel()
-        _broadcast_task = None
+def _get_event_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 @router.websocket("/ws")
@@ -75,12 +73,14 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 端点"""
     await websocket.accept()
     active_connections.add(websocket)
-    _ensure_broadcast_task()
-    
+
+    # C0: 确保 EventBus subscriber 已注册
+    _ensure_event_bus_subscriber()
+
     try:
-        # 发送初始状态
+        # 发送初始状态（bootstrap，保留 type:"full_state"）
         await send_initial_state(websocket)
-        
+
         # 保持连接
         while True:
             # 心跳检测（同时支持纯文本 ping 和 JSON 格式）
@@ -99,11 +99,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({'type': 'pong', 'timestamp': int(asyncio.get_event_loop().time() * 1000)})
     except WebSocketDisconnect:
         active_connections.discard(websocket)
-        _cancel_broadcast_task()
 
 
 async def send_initial_state(websocket: WebSocket):
-    """发送初始状态（含 collaboration，避免前端协作流程空白）"""
+    """发送初始状态（bootstrap，保留 type:"full_state"）"""
     try:
         from .agents import get_agents as get_agents_list
         from .subagents import get_subagents, get_tasks
@@ -152,10 +151,10 @@ async def send_initial_state(websocket: WebSocket):
 
 
 async def broadcast_agent_update(agent_id: str, status: str):
-    """广播 Agent 状态更新"""
+    """广播 Agent 状态更新（兼容旧接口）"""
     if not active_connections:
         return
-    
+
     message = {
         'type': 'agent_update',
         'data': {
@@ -164,15 +163,15 @@ async def broadcast_agent_update(agent_id: str, status: str):
             'timestamp': int(asyncio.get_event_loop().time() * 1000)
         }
     }
-    
-    await broadcast_message(message)
+
+    await _do_broadcast(message)
 
 
 async def broadcast_subagent_update(run_id: str, agent_id: str, outcome: str):
     """广播子代理状态更新"""
     if not active_connections:
         return
-    
+
     message = {
         'type': 'subagent_update',
         'data': {
@@ -182,15 +181,15 @@ async def broadcast_subagent_update(run_id: str, agent_id: str, outcome: str):
             'timestamp': int(asyncio.get_event_loop().time() * 1000)
         }
     }
-    
-    await broadcast_message(message)
+
+    await _do_broadcast(message)
 
 
 async def broadcast_api_status(provider: str, model: str, status: str):
     """广播 API 状态更新"""
     if not active_connections:
         return
-    
+
     message = {
         'type': 'api_status_update',
         'data': {
@@ -200,105 +199,23 @@ async def broadcast_api_status(provider: str, model: str, status: str):
             'timestamp': int(asyncio.get_event_loop().time() * 1000)
         }
     }
-    
-    await broadcast_message(message)
+
+    await _do_broadcast(message)
 
 
-async def broadcast_message(message: dict):
-    """广播消息到所有连接"""
+async def _do_broadcast(message: dict):
+    """广播消息到所有连接（内部方法）"""
     disconnected = set()
-    
+
     for connection in active_connections:
         try:
             await connection.send_json(message)
         except:
             disconnected.add(connection)
-    
+
     # 清理断开的连接
     for connection in disconnected:
         active_connections.discard(connection)
-    if not active_connections:
-        _cancel_broadcast_task()
-
-
-async def broadcast_full_state():
-    """文件变更时广播完整状态（使用动态接口优化）
-    
-    优化点：
-    1. 使用 get_collaboration_dynamic() 代替 get_collaboration()
-    2. 只推送动态数据，减少数据量
-    3. 短时间重复调用节流，避免监听线程连震时频繁全量推送
-    """
-    global _last_full_state_monotonic
-    if not active_connections:
-        return
-    now = time.monotonic()
-    if now - _last_full_state_monotonic < FULL_STATE_MIN_INTERVAL_SEC:
-        return
-    _last_full_state_monotonic = now
-    try:
-        from .agents import get_agents as get_agents_list
-        from .subagents import get_subagents
-        from .api_status import get_api_status_list
-        from .collaboration import get_collaboration_dynamic  # 使用动态接口
-        from .performance import get_real_stats
-        from .workflow import list_workflows
-
-        agents = await get_agents_list()
-        subagents = await get_subagents()
-        api_status = await get_api_status_list()
-        collaboration_dynamic = await get_collaboration_dynamic()  # 动态数据
-        performance = await get_real_stats()
-        workflows = await list_workflows()
-
-        # tasks 来自 subagents 的 get_tasks
-        from .subagents import get_tasks
-        tasks_result = await get_tasks()
-        tasks = tasks_result.get("tasks", []) if isinstance(tasks_result, dict) else []
-
-        # 格式化 agents 的 lastActiveFormatted
-        from status.status_calculator import format_last_active
-        for agent in agents:
-            if agent.get("lastActiveAt"):
-                agent["lastActiveFormatted"] = format_last_active(agent["lastActiveAt"])
-
-        await broadcast_message({
-            "type": "full_state",
-            "data": {
-                "agents": agents,
-                "subagents": subagents,
-                "apiStatus": api_status,
-                "collaboration": collaboration_dynamic.model_dump() if hasattr(collaboration_dynamic, "model_dump") else collaboration_dynamic,
-                "tasks": tasks,
-                "performance": performance,
-                "workflows": workflows,
-            },
-        })
-    except Exception as e:
-        record_error("unknown", str(e), "websocket:broadcast_full_state", exc=e)
-
-
-async def broadcast_state_update(changed_agents: List[Dict[str, Any]]) -> None:
-    """
-    广播增量状态更新
-    
-    只推送状态发生变化的 Agent，减少数据传输量
-    
-    Args:
-        changed_agents: 变化的 Agent 状态列表
-    """
-    if not active_connections or not changed_agents:
-        return
-    
-    message = {
-        'type': 'state_update',
-        'data': {
-            'agents': changed_agents,
-            'timestamp': int(asyncio.get_event_loop().time() * 1000)
-        }
-    }
-    
-    await broadcast_message(message)
 
 
 def get_active_connections_count() -> int:

@@ -85,6 +85,15 @@ class FortifyConfig:
     log_file_path: str | None
     log_compression: bool
 
+    # C0 ECS event-driven architecture
+    ecs_debounce_ms: int          # file change debounce (milliseconds)
+    ecs_ingest_batch_size: int    # max agents per ingest cycle
+    ecs_max_state_store_size: int # max agents in StateStore
+    ecs_watchdog_resume_ticks: int # polling ticks before watchdog resume attempt
+    ecs_metrics_enabled: bool      # enable metrics collection
+    ecs_heartbeat_topic: str       # EventBus topic for heartbeat ticks
+    ecs_state_topic: str          # EventBus topic for agent state changes
+
 
 @lru_cache(maxsize=1)
 def get_fortify_config() -> FortifyConfig:
@@ -117,6 +126,14 @@ def get_fortify_config() -> FortifyConfig:
         log_backup_count=_env_int("OPENCLAW_LOG_BACKUP_COUNT", 5, min_v=1, max_v=50),
         log_file_path=os.environ.get("OPENCLAW_LOG_FILE_PATH") or None,
         log_compression=_env_bool("OPENCLAW_LOG_COMPRESSION", True),
+        # C0 ECS event-driven architecture
+        ecs_debounce_ms=_env_int("OPENCLAW_ECS_DEBOUNCE_MS", 1500, min_v=100, max_v=10000),
+        ecs_ingest_batch_size=_env_int("OPENCLAW_ECS_INGEST_BATCH_SIZE", 50, min_v=1, max_v=1000),
+        ecs_max_state_store_size=_env_int("OPENCLAW_ECS_MAX_STATE_STORE_SIZE", 200, min_v=1, max_v=10000),
+        ecs_watchdog_resume_ticks=_env_int("OPENCLAW_ECS_WATCHDOG_RESUME_TICKS", 12, min_v=1, max_v=100),
+        ecs_metrics_enabled=_env_bool("OPENCLAW_ECS_METRICS_ENABLED", True),
+        ecs_heartbeat_topic=_env_str("OPENCLAW_ECS_HEARTBEAT_TOPIC", "heartbeat"),
+        ecs_state_topic=_env_str("OPENCLAW_ECS_STATE_TOPIC", "agent_state_changed"),
     )
 
 

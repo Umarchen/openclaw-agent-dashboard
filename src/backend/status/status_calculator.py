@@ -461,3 +461,27 @@ async def get_changed_agents() -> List[Dict[str, Any]]:
     tracker.clear_changes()
     
     return changed_agents
+
+
+def get_agent_status_snapshot(agent_id: str) -> dict | None:
+    """Convenience wrapper for Ingestor fallback: full status snapshot for one agent.
+
+    Returns a dict with: status, currentTask, lastActiveAt, error.
+    Uses calculate_agent_status() with use_cache=False for fresh data.
+    """
+    try:
+        status = calculate_agent_status(agent_id, use_cache=False)
+        current_task = get_current_task(agent_id)
+        if status == "idle" and not current_task:
+            current_task = ""
+        last_active = get_last_active_time(agent_id)
+        error = get_last_error(agent_id) if status == "down" else None
+
+        return {
+            "status": status,
+            "currentTask": current_task,
+            "lastActiveAt": last_active,
+            "error": error,
+        }
+    except Exception:
+        return None

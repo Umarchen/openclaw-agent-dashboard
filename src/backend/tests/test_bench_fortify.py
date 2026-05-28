@@ -113,16 +113,32 @@ def test_nfr_p001_resume_watchdog_full_resync(monkeypatch, tmp_path):
     monkeypatch.setattr(sr, "get_openclaw_root", lambda: tmp_path)
     monkeypatch.setattr(fw, "_watcher_mode", "polling")
     monkeypatch.setattr(fw, "_monitor_stop", threading.Event())
-    fake_calls = []
-    def fake_on_file_changed(_):
-        fake_calls.append(1)
-    monkeypatch.setattr(fw, "_on_file_changed", fake_on_file_changed)
     monkeypatch.setattr(fw, "_persist_watcher_state", lambda: None)
+
+    # C0: _full_resync_cache_and_push now publishes via EventBus
+    fake_events = []
+    def fake_publish(topic, event):
+        fake_events.append((topic, event))
+    monkeypatch.setattr(fw, "_event_loop", None)  # no async loop needed
+
+    # Mock EventBus
+    import core.event_bus as eb
+    original_bus = eb.get_event_bus()
+    mock_bus = eb.EventBus()
+    monkeypatch.setattr(eb, "get_event_bus", lambda: mock_bus)
+
+    # Track publishes
+    published = []
+    original_publish = mock_bus.publish
+    def track_publish(topic, event):
+        published.append((topic, event))
+        return original_publish(topic, event)
+    mock_bus.publish = track_publish
 
     t0 = time.perf_counter()
     fw._full_resync_cache_and_push()
     elapsed_ms = (time.perf_counter() - t0) * 1000
-    assert len(fake_calls) == 1, "full resync should trigger one _on_file_changed"
+    assert len(published) == 1, "full resync should publish one FileChangeEvent"
     assert elapsed_ms < 1000.0, f"_full_resync_cache_and_push took {elapsed_ms:.1f}ms (target <1000ms)"
 
 

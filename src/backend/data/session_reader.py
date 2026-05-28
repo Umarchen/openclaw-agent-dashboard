@@ -18,6 +18,100 @@ _MAX_FULL_HASH_BYTES = 4 * 1024 * 1024
 _TAIL_HASH_BYTES = 512 * 1024
 
 
+def tail_read_session(agent_id: str, max_lines: int = 50) -> Optional[Dict[str, Any]]:
+    """Public tail-read interface: extract state summary from latest session.
+
+    Returns a dict with keys extracted from the session tail:
+    - last_message_role: str (role of the most recent message)
+    - last_message_timestamp: int
+    - has_thinking: bool (last assistant message has an uncompleted thinking block)
+    - pending_tool_call: Optional[dict] (name, id, hasResult)
+    - stop_reason: Optional[str]
+    - error_message: Optional[str]
+    - is_active: bool (recent activity within 30s)
+
+    Returns None if no session file exists.
+    """
+    import time as _time
+
+    session_file = get_latest_session_file(agent_id)
+    if not session_file:
+        return None
+
+    raw_lines = _read_tail_lines(session_file, max_lines=max(max_lines, 10))
+    messages = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        _, msg = parse_session_jsonl_line(line)
+        if msg is not None:
+            messages.append(msg)
+
+    if not messages:
+        return None
+
+    last = messages[-1]
+    last_role = last.get('role', '')
+    last_ts = last.get('timestamp', 0)
+    stop_reason = last.get('stopReason')
+    error_message = last.get('errorMessage')
+
+    # has_thinking: last assistant message without stopReason contains thinking block
+    has_thinking = False
+    if last_role == 'assistant' and not stop_reason:
+        content = last.get('content', [])
+        if isinstance(content, list):
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'thinking':
+                    has_thinking = True
+                    break
+
+    # pending_tool_call: scan all recent messages for toolCall without toolResult
+    pending_tool_call = None
+    tool_calls = {}  # id -> {name, hasResult}
+    tool_results = set()
+    for msg in messages:
+        role = msg.get('role')
+        if role == 'assistant':
+            content = msg.get('content', [])
+            if isinstance(content, str):
+                content = [{'type': 'text', 'text': content}]
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'toolCall':
+                    tool_id = c.get('id')
+                    if tool_id:
+                        tool_calls[tool_id] = {'name': c.get('name', ''), 'id': tool_id, 'hasResult': False}
+        elif role == 'toolResult':
+            tc_id = msg.get('toolCallId') or msg.get('tool_call_id')
+            if tc_id:
+                tool_results.add(tc_id)
+    for tid in tool_calls:
+        if tid in tool_results:
+            tool_calls[tid]['hasResult'] = True
+    # Return the last pending tool call (if any)
+    for tid in reversed(list(tool_calls.keys())):
+        if not tool_calls[tid]['hasResult']:
+            pending_tool_call = tool_calls[tid]
+            break
+
+    # is_active: session updated within 30 seconds
+    now_ms = int(_time.time() * 1000)
+    is_active = False
+    if last_ts and now_ms - last_ts < 30_000:
+        is_active = True
+
+    return {
+        'last_message_role': last_role,
+        'last_message_timestamp': last_ts,
+        'has_thinking': has_thinking,
+        'pending_tool_call': pending_tool_call,
+        'stop_reason': stop_reason,
+        'error_message': error_message,
+        'is_active': is_active,
+    }
+
+
 def compute_session_file_integrity(path: Path) -> Dict[str, Any]:
     """文件级完整性元数据：size、mtime、sha256（全文件或尾部窗口）。"""
     try:

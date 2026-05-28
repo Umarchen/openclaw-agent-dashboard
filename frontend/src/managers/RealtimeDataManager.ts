@@ -184,12 +184,26 @@ export class RealtimeDataManager {
       return
     }
 
-    // 新增：增量状态更新
+    // 新增：增量状态更新（periodic broadcast legacy, C0 后端仍可能发）
     if (message.type === 'state_update' && message.data) {
       const data = message.data as Record<string, unknown>
       if (data.agents) {
         this.emit('agents_update', data.agents)  // 新增事件
       }
+      return
+    }
+
+    // C0: 单个 Agent 状态变更（EventBus → WS subscriber）
+    // 包装为 agents_update 数组，复用现有增量 merge 逻辑
+    if (message.type === 'agent_state_changed' && message.data) {
+      const d = message.data as Record<string, unknown>
+      // 将 agentId → id 映射，与 agents_update 的 Agent 接口对齐
+      const agentPatch: Record<string, unknown> = { id: d.agentId }
+      if (d.status !== undefined) agentPatch.status = d.status
+      if (d.currentTask !== undefined) agentPatch.currentTask = d.currentTask
+      if (d.lastActiveAt !== undefined) agentPatch.lastActiveAt = d.lastActiveAt
+      if (d.error !== undefined) agentPatch.error = d.error
+      this.emit('agents_update', [agentPatch])
       return
     }
 

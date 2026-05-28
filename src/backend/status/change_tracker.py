@@ -19,7 +19,7 @@ class ChangeTracker:
     """
     
     # 保留的最大状态快照数
-    MAX_SNAPSHOTS = 10
+    MAX_SNAPSHOTS = 50
     
     def __init__(self):
         """初始化跟踪器"""

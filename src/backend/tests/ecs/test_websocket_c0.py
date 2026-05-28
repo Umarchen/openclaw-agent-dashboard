@@ -4,11 +4,11 @@ Unit tests for websocket.py C0 modifications.
 C0 Changes:
 - EventBus subscriber for AgentStateChangedEvent → WS push
 - _periodic_broadcast_loop removed
+- broadcast_full_state removed
 - Bootstrap (send_initial_state) still sends type:"full_state" (old format)
-- New WS messages use incremental format
+- New WS messages use incremental format via EventBus
 
 Acceptance Criteria Coverage:
-- C0 AC #1: full_state push = 0/min (bootstrap excluded)
 - C0 AC #3: _periodic_broadcast_loop code removed
 - C0 AC #5: AgentStateChanged → agent card incremental update
 - C0 constraint: bootstrap still uses type:"full_state" (old format)
@@ -61,8 +61,6 @@ class TestWebSocketBootstrap:
             monkeypatch.setattr(agents_mod, "get_agents", fake_get_agents)
             monkeypatch.setattr(subagents_mod, "get_subagents", fake_get_subagents)
             monkeypatch.setattr(subagents_mod, "get_tasks", fake_get_subagents)
-            async def fake_get_api_status():
-                return []
             fake_mod = MagicMock(get_api_status_list=fake_get_api_status)
             sys.modules["api.api_status"] = fake_mod
 
@@ -95,16 +93,15 @@ class TestWebSocketBootstrap:
             assert "agents" in data
 
 
-class TestWebSocketBroadcastMessage:
-    """broadcast_message delivers to all active connections."""
+class TestWebSocketDoBroadcast:
+    """_do_broadcast delivers to all active connections."""
 
     def test_broadcast_to_no_connections(self):
         import api.websocket as ws
-        # Clear any existing connections
         ws.active_connections.clear()
 
         async def _run():
-            await ws.broadcast_message({"type": "test"})
+            await ws._do_broadcast({"type": "test"})
 
         asyncio.run(_run())
         assert len(ws.active_connections) == 0
@@ -128,7 +125,7 @@ class TestWebSocketBroadcastMessage:
         ws.active_connections.add(c2)
 
         async def _run():
-            await ws.broadcast_message({"type": "state_update", "data": {"test": True}})
+            await ws._do_broadcast({"type": "state_update", "data": {"test": True}})
 
         asyncio.run(_run())
         assert 1 in messages_by_conn
@@ -141,17 +138,18 @@ class TestWebSocketBroadcastMessage:
 class TestWebSocketPeriodicBroadcastLoop:
     """C0 AC #3: _periodic_broadcast_loop must be removed."""
 
-    def test_periodic_broadcast_loop_exists_but_should_be_removed(self):
-        """After C0, _periodic_broadcast_loop should not exist or be a no-op."""
+    def test_periodic_broadcast_loop_does_not_exist(self):
+        """After C0, _periodic_broadcast_loop should not exist."""
         import api.websocket as ws
-        # Pre-C0: the function exists and runs a loop
-        # Post-C0: it should be removed
         has_func = hasattr(ws, "_periodic_broadcast_loop")
-        # After C0 implementation, this should be:
-        # assert not has_func, "_periodic_broadcast_loop must be removed per C0 AC #3"
-        if has_func:
-            # Document that it exists and needs removal
-            pass
+        assert not has_func, "_periodic_broadcast_loop must be removed per C0 AC #3"
+
+    def test_no_broadcast_interval_sec_var(self):
+        """C0: BROADCAST_INTERVAL_SEC must not exist as module-level var."""
+        import api.websocket as ws
+        assert not hasattr(ws, "BROADCAST_INTERVAL_SEC"), (
+            "BROADCAST_INTERVAL_SEC must be removed per C0 AC #3"
+        )
 
 
 class TestWebSocketAgentUpdateBroadcast:
@@ -211,7 +209,7 @@ class TestWebSocketAgentUpdateBroadcast:
         async def _run():
             await ws.broadcast_agent_update("main", "working")
             await ws.broadcast_subagent_update("run-1", "main", "success")
-            await ws.broadcast_message({"type": "test"})
+            await ws._do_broadcast({"type": "test"})
 
         asyncio.run(_run())  # Should not raise
 
@@ -253,7 +251,7 @@ class TestWebSocketDisconnectedCleanup:
         ws.active_connections.add(BadWS())
 
         async def _run():
-            await ws.broadcast_message({"type": "test"})
+            await ws._do_broadcast({"type": "test"})
 
         asyncio.run(_run())
         assert len(ws.active_connections) == 1  # BadWS should be removed
@@ -261,50 +259,43 @@ class TestWebSocketDisconnectedCleanup:
         ws.active_connections.clear()
 
 
-class TestWebSocketCancelBroadcastTask:
-    """_cancel_broadcast_task should stop the periodic loop."""
+class TestWebSocketEventBusSubscriber:
+    """C0: EventBus subscriber for agent_state_changed events."""
 
-    def test_cancel_task_when_no_connections(self):
+    def test_event_bus_subscriber_registration(self):
+        """_ensure_event_bus_subscriber should register subscriber on first call."""
         import api.websocket as ws
-        ws.active_connections.clear()
-        ws._cancel_broadcast_task()
-        assert ws._broadcast_task is None
+        from core.event_bus import reset_event_bus_for_tests
 
+        # Reset the subscriber flag
+        ws._event_bus_subscribed = False
+        reset_event_bus_for_tests()
 
-class TestFullStatePushThrottle:
-    """Current broadcast_full_state has throttling — C0 removes this entirely."""
+        ws._ensure_event_bus_subscriber()
+        assert ws._event_bus_subscribed is True
 
-    def test_full_state_throttle_exists(self):
-        """Pre-C0: full_state has a minimum interval throttle."""
+        # Second call should be no-op (already registered)
+        initial = ws._event_bus_subscribed
+        ws._ensure_event_bus_subscriber()
+        assert ws._event_bus_subscribed is initial
+
+        # Cleanup
+        ws._event_bus_subscribed = False
+        reset_event_bus_for_tests()
+
+    def test_no_broadcast_full_state_function(self):
+        """C0: broadcast_full_state must be removed."""
         import api.websocket as ws
-        # _last_full_state_monotonic and FULL_STATE_MIN_INTERVAL_SEC exist
-        assert hasattr(ws, "FULL_STATE_MIN_INTERVAL_SEC")
-        assert hasattr(ws, "_last_full_state_monotonic")
+        assert not hasattr(ws, "broadcast_full_state"), (
+            "broadcast_full_state must be removed per C0"
+        )
 
-    def test_full_state_throttle_prevents_rapid_calls(self):
-        """Two rapid calls to broadcast_full_state should be throttled."""
+    def test_no_full_state_throttle_attributes(self):
+        """C0: throttle attributes for broadcast_full_state must be removed."""
         import api.websocket as ws
-        ws.active_connections.clear()
-        ws._last_full_state_monotonic = time.time()
-        sent_count = [0]
-
-        class FakeWS:
-            async def send_json(self, data):
-                if data.get("type") == "full_state":
-                    sent_count[0] += 1
-
-        ws.active_connections.add(FakeWS())
-
-        async def _run():
-            # First call: throttled (within interval)
-            await ws.broadcast_full_state()
-            assert sent_count[0] == 0
-
-            # Reset throttle
-            ws._last_full_state_monotonic = 0.0
-            await ws.broadcast_full_state()
-            # Second call should succeed (but may fail due to missing deps)
-            # At minimum it shouldn't crash
-
-        asyncio.run(_run())
-        ws.active_connections.clear()
+        assert not hasattr(ws, "FULL_STATE_MIN_INTERVAL_SEC"), (
+            "FULL_STATE_MIN_INTERVAL_SEC must be removed per C0"
+        )
+        assert not hasattr(ws, "_last_full_state_monotonic"), (
+            "_last_full_state_monotonic must be removed per C0"
+        )

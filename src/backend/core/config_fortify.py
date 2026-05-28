@@ -94,6 +94,12 @@ class FortifyConfig:
     ecs_heartbeat_topic: str       # EventBus topic for heartbeat ticks
     ecs_state_topic: str          # EventBus topic for agent state changes
 
+    # C1 JSONL offset + checkpoint (REQ_ECS_008)
+    ecs_checkpoint_dir: str                # checkpoint storage directory
+    ecs_checkpoint_flush_interval_sec: float  # checkpoint flush interval (seconds)
+    ecs_max_agent_parallel: int             # bounded parallelism limit for status computation
+    ecs_full_state_schema_version: int      # WS protocol schema version number
+
 
 @lru_cache(maxsize=1)
 def get_fortify_config() -> FortifyConfig:
@@ -134,6 +140,11 @@ def get_fortify_config() -> FortifyConfig:
         ecs_metrics_enabled=_env_bool("OPENCLAW_ECS_METRICS_ENABLED", True),
         ecs_heartbeat_topic=_env_str("OPENCLAW_ECS_HEARTBEAT_TOPIC", "heartbeat"),
         ecs_state_topic=_env_str("OPENCLAW_ECS_STATE_TOPIC", "agent_state_changed"),
+        # C1 JSONL offset + checkpoint (REQ_ECS_008, REQ_ECS_009, REQ_ECS_012)
+        ecs_checkpoint_dir=_env_str("OPENCLAW_ECS_CHECKPOINT_DIR", "~/.openclaw-agent-dashboard/checkpoints/"),
+        ecs_checkpoint_flush_interval_sec=_env_float("OPENCLAW_ECS_CHECKPOINT_FLUSH_INTERVAL", 10.0),
+        ecs_max_agent_parallel=_env_int("OPENCLAW_ECS_MAX_AGENT_PARALLEL", 8, min_v=1, max_v=32),
+        ecs_full_state_schema_version=_env_int("OPENCLAW_ECS_SCHEMA_VERSION", 2, min_v=1, max_v=99),
     )
 
 

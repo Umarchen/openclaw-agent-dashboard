@@ -13,11 +13,6 @@ from pydantic import BaseModel
 
 from api.input_safety import require_safe_agent_id
 
-from status.status_calculator import (
-    get_agents_with_status,
-    format_last_active
-)
-
 router = APIRouter()
 
 
@@ -32,26 +27,40 @@ class AgentStatus(BaseModel):
     error: Optional[dict] = None
 
 
+async def _load_agents_with_retry(max_retry: int = 2) -> list:
+    """C1: Load agents with retry. get_agents_with_status is now truly async."""
+    from core.error_handler import ErrorHandler
+    from status.status_calculator import get_agents_with_status
+
+    for attempt in range(max_retry + 1):
+        try:
+            return await get_agents_with_status()
+        except OSError as e:
+            from core.error_handler import classify_exception, record_error
+            cat = classify_exception(e)
+            record_error(cat, str(e), f"get_agents_with_status:attempt={attempt}", exc=e)
+            if attempt < max_retry:
+                import time
+                time.sleep(0.5 * (attempt + 1))
+            else:
+                from core.fallback_manager import run_fallback
+                fb = run_fallback(cat)
+                return fb if fb else []
+    return []
+
+
 @router.get("/agents", response_model=List[AgentStatus])
 async def get_agents():
     """获取所有 Agent 列表及状态"""
-    from core.error_handler import ErrorHandler
+    from status.status_calculator import format_last_active
 
-    def _load():
-        h = ErrorHandler(max_retry=2, base_delay=0.5)
-        return h.run_with_retry(
-            lambda: get_agents_with_status(),
-            operation="get_agents_with_status",
-            error_type="io-error",
-        )
+    agents = await _load_agents_with_retry()
 
-    agents = await asyncio.to_thread(_load)
-    
     # 格式化最后活跃时间
     for agent in agents:
         if agent.get('lastActiveAt'):
             agent['lastActiveFormatted'] = format_last_active(agent['lastActiveAt'])
-    
+
     return agents
 
 
@@ -59,26 +68,17 @@ async def get_agents():
 async def get_agent(agent_id: str):
     """获取单个 Agent 详情"""
     require_safe_agent_id(agent_id)
-    from core.error_handler import ErrorHandler
-
-    def _load():
-        h = ErrorHandler(max_retry=2, base_delay=0.5)
-        return h.run_with_retry(
-            lambda: get_agents_with_status(),
-            operation="get_agents_with_status",
-            error_type="io-error",
-        )
-
-    agents = await asyncio.to_thread(_load)
-    
+    from status.status_calculator import format_last_active
     from data.config_reader import agent_ids_equal
+
+    agents = await _load_agents_with_retry()
 
     for agent in agents:
         if agent_ids_equal(agent['id'], agent_id):
             if agent.get('lastActiveAt'):
                 agent['lastActiveFormatted'] = format_last_active(agent['lastActiveAt'])
             return agent
-    
+
     raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
 

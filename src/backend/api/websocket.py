@@ -1,11 +1,14 @@
 """
 WebSocket 路由
-C0 改造: 移除 _periodic_broadcast_loop 和 broadcast_full_state，
+C0: 移除 _periodic_broadcast_loop 和 broadcast_full_state，
 新增 EventBus subscriber 监听 agent_state_changed 进行增量 WS 推送。
 bootstrap（send_initial_state）保留，仍推 type:"full_state" 旧格式。
+
+C1: 新增 schemaVersion 协商和 FullStateSnapshot 支持。
+向后兼容：无 hello 的客户端仍收到 type:"full_state"（旧格式）。
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from typing import Set, List, Dict, Any
+from typing import Set, List, Dict, Any, Optional
 import json
 import asyncio
 import sys
@@ -15,7 +18,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.error_handler import record_error
-from core.event_types import BaseEvent, AgentStateChangedEvent
+from core.event_types import BaseEvent, AgentStateChangedEvent, FullStateSnapshotEvent
 
 router = APIRouter()
 
@@ -24,6 +27,9 @@ active_connections: Set[WebSocket] = set()
 
 # C0: EventBus subscriber 控制标志
 _event_bus_subscribed = False
+
+# C1: schemaVersion negotiation timeout (seconds)
+_HELLO_TIMEOUT_SEC = 3.0
 
 
 def _ensure_event_bus_subscriber() -> None:
@@ -39,6 +45,84 @@ def _ensure_event_bus_subscriber() -> None:
         _event_bus_subscribed = True
     except Exception as e:
         record_error("unknown", str(e), "websocket:event_bus_subscribe", exc=e)
+
+
+def _get_event_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+def _now_iso() -> str:
+    """Return current UTC time as ISO-8601 string."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _get_schema_version() -> int:
+    """Get the server's current schema version from config."""
+    try:
+        from core.config_fortify import get_fortify_config
+        cfg = get_fortify_config()
+        return getattr(cfg, "ecs_full_state_schema_version", 2)
+    except Exception:
+        return 2
+
+
+async def _collect_full_state_data() -> Dict[str, Any]:
+    """Collect all sub-domain data for full state / FullStateSnapshot."""
+    try:
+        from .agents import get_agents as get_agents_list
+        from .subagents import get_subagents, get_tasks
+        from status.status_calculator import format_last_active
+    except ImportError:
+        return {}
+
+    api_status = []
+    try:
+        from .api_status import get_api_status_list
+        api_status = await get_api_status_list()
+    except ImportError:
+        pass
+
+    agents = await get_agents_list()
+    subagents = await get_subagents()
+
+    for agent in agents:
+        if agent.get("lastActiveAt"):
+            agent["lastActiveFormatted"] = format_last_active(agent["lastActiveAt"])
+
+    data: Dict[str, Any] = {
+        'agents': agents,
+        'subagents': subagents,
+        'apiStatus': api_status,
+    }
+
+    # collaboration/tasks/performance 单独获取，失败不影响主数据
+    try:
+        from .collaboration import get_collaboration
+        collab = await get_collaboration()
+        data['collaboration'] = collab.model_dump() if hasattr(collab, "model_dump") else collab
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:initial_collaboration", exc=e)
+    try:
+        tasks_result = await get_tasks()
+        data['tasks'] = tasks_result.get("tasks", []) if isinstance(tasks_result, dict) else []
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:initial_tasks", exc=e)
+    try:
+        from .performance import get_real_stats
+        data['performance'] = await get_real_stats()
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:initial_performance", exc=e)
+    try:
+        from .workflow import list_workflows
+        data['workflows'] = await list_workflows()
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:initial_workflows", exc=e)
+
+    return data
 
 
 def _on_agent_state_changed(event: BaseEvent) -> None:
@@ -61,29 +145,151 @@ def _on_agent_state_changed(event: BaseEvent) -> None:
         asyncio.run_coroutine_threadsafe(_do_broadcast(payload), loop)
 
 
-def _get_event_loop() -> asyncio.AbstractEventLoop | None:
+async def _send_full_state_legacy(websocket: WebSocket) -> None:
+    """Send type:'full_state' (C0 legacy format) for backward compatibility.
+
+    Used when client doesn't send hello within timeout.
+    """
     try:
-        return asyncio.get_running_loop()
-    except RuntimeError:
-        return None
+        data = await _collect_full_state_data()
+        await websocket.send_json({'type': 'full_state', 'data': data})
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:send_full_state_legacy", exc=e)
+
+
+async def _send_full_state_snapshot(websocket: WebSocket, trigger: str = "bootstrap") -> None:
+    """Send type:'FullStateSnapshot' (C1+ new format).
+
+    Used when client sends hello with matching schemaVersion.
+    """
+    try:
+        data = await _collect_full_state_data()
+        schema_ver = _get_schema_version()
+        message = {
+            'type': 'FullStateSnapshot',
+            'payload': data,
+            'schemaVersion': schema_ver,
+            'timestamp': _now_iso(),
+        }
+        # Record metric
+        _record_full_state_metric(trigger)
+        await websocket.send_json(message)
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:send_full_state_snapshot", exc=e)
+
+
+async def _record_full_state_metric(trigger: str) -> None:
+    """Record full_state / FullStateSnapshot push metric."""
+    try:
+        from core.metrics_collector import get_metrics
+        metrics = get_metrics()
+        metrics.increment("dashboard_full_state_total")
+    except Exception:
+        pass
+
+
+async def _send_state_update_to_ws(event: AgentStateChangedEvent) -> None:
+    """Send AgentStateChanged as C1+ type:'AgentStateChanged' with proper frame format."""
+    if not active_connections:
+        return
+
+    message = {
+        'type': 'AgentStateChanged',
+        'payload': {
+            'agent_id': event.agent_id,
+            'diffs': [
+                {'field': field, 'changed': changed}
+                for field, changed in event.changes.items()
+            ],
+            'version': 0,  # placeholder; StateStore version tracked separately in C1
+            'timestamp': _now_iso(),
+        },
+        'timestamp': _now_iso(),
+    }
+
+    # Record metric
+    try:
+        from core.metrics_collector import get_metrics
+        metrics = get_metrics()
+        metrics.increment("dashboard_state_update_total")
+    except Exception:
+        pass
+
+    # Record payload size metric
+    try:
+        payload_bytes = len(json.dumps(message).encode('utf-8'))
+        from core.metrics_collector import get_metrics
+        metrics = get_metrics()
+        metrics.record_latency("dashboard_ws_payload_bytes", float(payload_bytes))
+    except Exception:
+        pass
+
+    await _do_broadcast(message)
 
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket 端点"""
+    """WebSocket 端点 — C1: supports schemaVersion negotiation.
+
+    Handshake flow:
+    1. Accept connection
+    2. Wait up to 3s for client hello message
+    3. If hello received with schemaVersion:
+       - If schemaVersion matches server: send FullStateSnapshot, then ready
+       - If mismatch: send FullStateSnapshot (forces client to re-sync)
+    4. If no hello within timeout: send type:'full_state' (legacy, backward compatible)
+    5. Enter message receive loop
+    """
     await websocket.accept()
     active_connections.add(websocket)
 
     # C0: 确保 EventBus subscriber 已注册
     _ensure_event_bus_subscriber()
 
+    # C1: Register FullStateSnapshot subscriber on EventBus (if not already)
+    _ensure_full_state_snapshot_subscriber()
+
     try:
-        # 发送初始状态（bootstrap，保留 type:"full_state"）
-        await send_initial_state(websocket)
+        # C1: schemaVersion negotiation
+        hello_received = False
+        client_schema_version: Optional[int] = None
+
+        try:
+            # Wait for hello message with timeout
+            raw = await asyncio.wait_for(
+                websocket.receive_text(),
+                timeout=_HELLO_TIMEOUT_SEC,
+            )
+            try:
+                msg = json.loads(raw)
+                if isinstance(msg, dict) and msg.get('type') == 'hello':
+                    hello_received = True
+                    client_schema_version = msg.get('schemaVersion')
+                    _LOG.info(
+                        "Client hello: schemaVersion=%s",
+                        client_schema_version,
+                    )
+            except (json.JSONDecodeError, TypeError):
+                pass
+        except asyncio.TimeoutError:
+            _LOG.debug("No hello received within timeout, using legacy full_state")
+
+        if hello_received and client_schema_version is not None:
+            # C1+: Send FullStateSnapshot (new format)
+            server_version = _get_schema_version()
+            if client_schema_version != server_version:
+                trigger = "schema_mismatch"
+            else:
+                trigger = "bootstrap"
+            await _send_full_state_snapshot(websocket, trigger=trigger)
+        else:
+            # Backward compatible: send type:'full_state' (legacy format)
+            await _send_full_state_legacy(websocket)
+            # Record metric for legacy bootstrap too
+            _record_full_state_metric("bootstrap")
 
         # 保持连接
         while True:
-            # 心跳检测（同时支持纯文本 ping 和 JSON 格式）
             data = await websocket.receive_text()
 
             is_ping = False
@@ -101,58 +307,64 @@ async def websocket_endpoint(websocket: WebSocket):
         active_connections.discard(websocket)
 
 
-async def send_initial_state(websocket: WebSocket):
-    """发送初始状态（bootstrap，保留 type:"full_state"）"""
+# ── FullStateSnapshot EventBus subscriber (C1) ────────────────────
+
+_full_state_snapshot_subscribed = False
+
+
+def _ensure_full_state_snapshot_subscriber() -> None:
+    """Register WS FullStateSnapshot broadcaster on EventBus."""
+    global _full_state_snapshot_subscribed
+    if _full_state_snapshot_subscribed:
+        return
     try:
-        from .agents import get_agents as get_agents_list
-        from .subagents import get_subagents, get_tasks
-        from status.status_calculator import format_last_active
-
-        api_status = []
-        try:
-            from .api_status import get_api_status_list
-            api_status = await get_api_status_list()
-        except ImportError:
-            pass
-
-        agents = await get_agents_list()
-        subagents = await get_subagents()
-
-        for agent in agents:
-            if agent.get("lastActiveAt"):
-                agent["lastActiveFormatted"] = format_last_active(agent["lastActiveAt"])
-
-        data = {
-            'agents': agents,
-            'subagents': subagents,
-            'apiStatus': api_status,
-        }
-        # collaboration/tasks/performance 单独获取，失败不影响主数据
-        try:
-            from .collaboration import get_collaboration
-            collab = await get_collaboration()
-            data['collaboration'] = collab.model_dump() if hasattr(collab, "model_dump") else collab
-        except Exception as e:
-            record_error("unknown", str(e), "websocket:initial_collaboration", exc=e)
-        try:
-            tasks_result = await get_tasks()
-            data['tasks'] = tasks_result.get("tasks", []) if isinstance(tasks_result, dict) else []
-        except Exception as e:
-            record_error("unknown", str(e), "websocket:initial_tasks", exc=e)
-        try:
-            from .performance import get_real_stats
-            data['performance'] = await get_real_stats()
-        except Exception as e:
-            record_error("unknown", str(e), "websocket:initial_performance", exc=e)
-        try:
-            from .workflow import list_workflows
-            data['workflows'] = await list_workflows()
-        except Exception as e:
-            record_error("unknown", str(e), "websocket:initial_workflows", exc=e)
-
-        await websocket.send_json({'type': 'full_state', 'data': data})
+        from core.event_bus import get_event_bus, TOPIC_STATE_UPDATES
+        bus = get_event_bus()
+        bus.subscribe(TOPIC_STATE_UPDATES, _on_full_state_snapshot_event)
+        _full_state_snapshot_subscribed = True
     except Exception as e:
-        record_error("unknown", str(e), "websocket:send_initial_state", exc=e)
+        record_error("unknown", str(e), "websocket:full_snapshot_subscribe", exc=e)
+
+
+def _on_full_state_snapshot_event(event: BaseEvent) -> None:
+    """Handle FullStateSnapshotEvent from EventBus → broadcast to all WS clients."""
+    if not isinstance(event, FullStateSnapshotEvent):
+        return
+
+    if not active_connections:
+        return
+
+    message = {
+        'type': 'FullStateSnapshot',
+        'payload': event.data,
+        'schemaVersion': event.schema_version,
+        'timestamp': _now_iso(),
+    }
+
+    _record_full_state_metric_sync(event.trigger)
+
+    loop = _get_event_loop()
+    if loop and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_do_broadcast(message), loop)
+
+
+def _record_full_state_metric_sync(trigger: str) -> None:
+    """Synchronous version of metric recording (called from EventBus thread)."""
+    try:
+        from core.metrics_collector import get_metrics
+        metrics = get_metrics()
+        metrics.increment("dashboard_full_state_total")
+    except Exception:
+        pass
+
+
+async def send_initial_state(websocket: WebSocket):
+    """发送初始状态 — backward compatible (type:'full_state').
+
+    This function is retained for any code paths that need the legacy format.
+    For new WS connections, websocket_endpoint handles the schemaVersion negotiation.
+    """
+    await _send_full_state_legacy(websocket)
 
 
 async def broadcast_agent_update(agent_id: str, status: str):
@@ -232,3 +444,8 @@ def get_active_connections_count() -> int:
 async def get_connections():
     """获取活跃连接数"""
     return {"count": get_active_connections_count()}
+
+
+# Module-level logger
+import logging
+_LOG = logging.getLogger(__name__)

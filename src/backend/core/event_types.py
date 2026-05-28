@@ -73,3 +73,21 @@ class AgentStateChangedEvent(BaseEvent):
                 "timestamp": self.timestamp,
             },
         }
+
+
+@dataclass
+class FullStateSnapshotEvent(BaseEvent):
+    """C1+ full state snapshot event (replaces full_state for schema-aware clients).
+
+    Used for:
+    - Bootstrap when client sends schemaVersion
+    - Process restart recovery
+    - schemaVersion mismatch
+    """
+    data: Dict[str, Any] = field(default_factory=dict)
+    trigger: str = "bootstrap"  # bootstrap | reconnect | schema_mismatch
+    schema_version: int = 2
+
+    def __post_init__(self) -> None:
+        if not self.type:
+            self.type = "full_state_snapshot"

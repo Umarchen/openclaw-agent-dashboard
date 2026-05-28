@@ -73,6 +73,10 @@ import VersionDisplay from './components/common/VersionDisplay.vue'
 import { getRealtimeManager, getStateManager, getEventDispatcher } from './managers'
 import type { ConnectionState } from './types'
 
+// C3-4: VirtualAgentList (用于子 agent 列表)
+import { VirtualAgentList } from './components/agent-list'
+import AgentCard from './components/AgentCard.vue'
+
 interface Agent {
   id: string
   name: string
@@ -171,47 +175,41 @@ function handleConnectionStateChange(state: ConnectionState) {
 
 let unsubState: (() => void) | null = null
 let unsubAgents: (() => void) | null = null
-let unsubAgentsUpdate: (() => void) | null = null
 
 onMounted(() => {
   refreshData()
   realtimeManager.connect()
+
+  // C3-4: 通过 StateManager 统一管理 agent 数据
+  // 注册 agents entity collection，后续所有 patch 通过 StateManager.applyEvent() 自动更新
+  stateManager.registerEntity('agents', agents)
+
   unsubState = realtimeManager.onStateChange(handleConnectionStateChange)
+
+  // C3-4: 简化 subscribe — 仅订阅 'agents' 用于 bootstrap 全量替换
+  // 增量更新 (agents_update) 由 StateManager.applyEvent() 自动处理，无需手动 subscribe
   unsubAgents = realtimeManager.subscribe('agents', (data: unknown) => {
     if (Array.isArray(data)) {
       agents.value = data as Agent[]
+      // bootstrap 替换后，同步更新 mainAgent/subAgents
       const main = (data as Agent[]).find(a => a.id === mainAgentId.value)
       mainAgent.value = main || null
       subAgents.value = (data as Agent[]).filter(a => a.id !== mainAgentId.value)
     }
   })
-  
-  // 新增：订阅增量状态更新
-  unsubAgentsUpdate = realtimeManager.subscribe('agents_update', (data: unknown) => {
-    if (Array.isArray(data)) {
-      // 增量更新
-      (data as Agent[]).forEach((updatedAgent: Agent) => {
-        const index = agents.value.findIndex(a => a.id === updatedAgent.id)
-        if (index >= 0) {
-          // 合并更新（保留未变化的字段）
-          agents.value[index] = { ...agents.value[index], ...updatedAgent }
-        }
-      })
-      // 更新主 Agent 和子 Agents
-      const main = agents.value.find(a => a.id === mainAgentId.value)
-      if (main) mainAgent.value = main
-      subAgents.value = agents.value.filter(a => a.id !== mainAgentId.value)
-    }
-  })
 
-  // C0: 单个 Agent 状态变更（EventBus → WS）已由 RealtimeDataManager
-  // 映射到 agents_update 事件，此处无需额外订阅。
+  // C3-4: 仍订阅 agents_update 事件用于更新 mainAgent/subAgents 视图
+  // StateManager 已完成 merge，agents.value 已自动更新，这里只同步派生数据
+  realtimeManager.subscribe('agents_update', () => {
+    const main = agents.value.find(a => a.id === mainAgentId.value)
+    if (main) mainAgent.value = main
+    subAgents.value = agents.value.filter(a => a.id !== mainAgentId.value)
+  })
 })
 
 onUnmounted(() => {
   unsubState?.()
   unsubAgents?.()
-  unsubAgentsUpdate?.()
   realtimeManager.disconnect()
 })
 </script>

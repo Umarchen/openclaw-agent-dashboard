@@ -1,8 +1,15 @@
 /**
- * 实时数据管理器
+ * 实时数据管理器 (C3-2 改造)
  * 负责 WebSocket 连接管理和 HTTP 轮询回退
+ *
+ * C3-2 改造要点：
+ * - handleMessage() 统一调用 StateManager.applyEvent() 处理增量事件
+ * - 移除各 case 内的独立 merge 逻辑
+ * - bootstrap 事件（full_state / FullStateSnapshot）走 StateManager.bootstrapReplace()
+ * - 所有 entity merge 由 StateManager 统一管理
  */
 
+import { getStateManager, type PatchEvent, type EntityType } from './StateManager'
 import type { ConnectionState, WebSocketMessage } from '../types'
 
 type EventCallback = (data: unknown) => void
@@ -88,7 +95,6 @@ export class RealtimeDataManager {
           status: 'error',
           errorMessage: 'WebSocket connection failed'
         })
-        // 连接失败时触发重连或 HTTP 轮询回退
         this.handleDisconnect()
       }
 
@@ -138,7 +144,6 @@ export class RealtimeDataManager {
     }
     this.subscribers.get(event)!.add(callback)
 
-    // 返回取消订阅函数
     return () => {
       this.subscribers.get(event)?.delete(callback)
     }
@@ -182,35 +187,29 @@ export class RealtimeDataManager {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  //  handleMessage — 统一事件路由 + StateManager.applyEvent()
+  // ═══════════════════════════════════════════════════════════════════
+
   private handleMessage(message: WebSocketMessage): void {
+    const stateManager = getStateManager()
+
     if (message.type === 'ping') {
       this.send({ type: 'pong', timestamp: Date.now() })
       return
     }
 
-    // C1: FullStateSnapshot (new format) — data is in payload, not data
+    // ─── Bootstrap 事件：全量替换 ────────────────────────────────
+
+    // C1: FullStateSnapshot (new format)
     if (message.type === 'FullStateSnapshot' && message.payload) {
-      const payload = message.payload as Record<string, unknown>
-      if (payload.agents) this.emit('agents', payload.agents)
-      if (payload.subagents) this.emit('subagents', payload.subagents)
-      if (payload.collaboration) this.emit('collaboration', payload.collaboration)
-      const tasksArray = Array.isArray(payload.tasks) ? payload.tasks : []
-      this.emit('tasks', { tasks: tasksArray })
-      if (payload.performance) this.emit('performance', payload.performance)
-      if (payload.workflows) this.emit('workflows', payload.workflows)
-      if (payload.apiStatus) this.emit('api_status', payload.apiStatus)
+      this.handleBootstrap(message.payload as Record<string, unknown>)
       return
     }
 
-    // C0 legacy: full_state (old format) — data is in message.data
+    // C0 legacy: full_state (old format)
     if (message.type === 'full_state' && message.data) {
-      const data = message.data as Record<string, unknown>
-      if (data.agents) this.emit('agents', data.agents)
-      if (data.subagents) this.emit('subagents', data.subagents)
-      if (data.collaboration) this.emit('collaboration', data.collaboration)
-      const tasksArray = Array.isArray(data.tasks) ? data.tasks : []
-      this.emit('tasks', { tasks: tasksArray })
-      if (data.performance) this.emit('performance', data.performance)
+      this.handleBootstrap(message.data as Record<string, unknown>)
       return
     }
 
@@ -219,67 +218,63 @@ export class RealtimeDataManager {
       return
     }
 
-    // 新增：增量状态更新（periodic broadcast legacy, C0 后端仍可能发）
-    if (message.type === 'state_update' && message.data) {
-      const data = message.data as Record<string, unknown>
-      if (data.agents) {
-        this.emit('agents_update', data.agents)  // 新增事件
-      }
-      return
-    }
+    // ─── 增量事件：统一走 StateManager.applyEvent() ───────────────
 
-    // C0: 单个 Agent 状态变更（EventBus → WS subscriber, old format agent_state_changed）
-    // 包装为 agents_update 数组，复用现有增量 merge 逻辑
+    // C0/C1: 单个 Agent 状态变更
     if (message.type === 'agent_state_changed' && message.data) {
-      const d = message.data as Record<string, unknown>
-      const agentPatch: Record<string, unknown> = { id: d.agentId }
-      if (d.status !== undefined) agentPatch.status = d.status
-      if (d.currentTask !== undefined) agentPatch.currentTask = d.currentTask
-      if (d.lastActiveAt !== undefined) agentPatch.lastActiveAt = d.lastActiveAt
-      if (d.error !== undefined) agentPatch.error = d.error
-      this.emit('agents_update', [agentPatch])
+      this.applyAgentPatch(message.data as Record<string, unknown>, message)
       return
     }
 
     // C1: AgentStateChanged (new format, payload-based)
     if (message.type === 'AgentStateChanged' && message.payload) {
-      const payload = message.payload as Record<string, unknown>
-      if (payload.agent_id) {
-        const agentPatch: Record<string, unknown> = { id: payload.agent_id }
-        // diffs is an array of {field, old_value, new_value} or {field, changed}
-        const diffs = payload.diffs as Array<Record<string, unknown>> | undefined
-        if (Array.isArray(diffs)) {
-          for (const diff of diffs) {
-            // Prefer new_value (standard format); fall back to changed (C1 backend format)
-            const val = diff.new_value !== undefined ? diff.new_value : diff.changed
-            if (diff.field && val !== undefined) {
-              // Map snake_case field names to camelCase for frontend Agent interface
-              const fieldMap: Record<string, string> = {
-                status: 'status',
-                current_task: 'currentTask',
-                last_active_at: 'lastActiveAt',
-                error: 'error',
-              }
-              const frontendKey = fieldMap[diff.field as string] || diff.field
-              agentPatch[frontendKey] = val
-            }
-          }
+      this.applyAgentStateChanged(message.payload as Record<string, unknown>, message)
+      return
+    }
+
+    // C0 legacy: state_update
+    if (message.type === 'state_update' && message.data) {
+      const data = message.data as Record<string, unknown>
+      if (data.agents) {
+        const agents = data.agents as Array<Record<string, unknown>>
+        for (const agent of agents) {
+          this.applyAgentPatch(agent, message)
         }
-        this.emit('agents_update', [agentPatch])
       }
       return
     }
 
-    // C2: CollaborationChanged — emit diffs for downstream merge
+    // C2: CollaborationChanged
     if (message.type === 'CollaborationChanged' && message.payload) {
       const payload = message.payload as Record<string, unknown>
+      this.applyPatchEvent({
+        type: message.type,
+        entityType: 'collaboration',
+        patch: payload,
+        version: this.extractVersion(message),
+        timestamp: message.timestamp as string | undefined,
+      })
+      // 同时 emit 给下游（保持向后兼容）
       this.emit('collaboration_update', payload)
       return
     }
 
-    // C2: TaskChanged — add / update / remove a single task
+    // C2: TaskChanged
     if (message.type === 'TaskChanged' && message.payload) {
       const payload = message.payload as Record<string, unknown>
+      const change = payload.change as 'added' | 'updated' | 'removed' | undefined
+      const taskId = payload.task_id as string | undefined
+      if (change && taskId) {
+        this.applyPatchEvent({
+          type: message.type,
+          entityType: 'tasks',
+          entityId: taskId,
+          change,
+          taskData: payload.task_data as Record<string, unknown> | undefined,
+          version: this.extractVersion(message),
+          timestamp: message.timestamp as string | undefined,
+        })
+      }
       this.emit('task_changed', payload)
       return
     }
@@ -287,15 +282,194 @@ export class RealtimeDataManager {
     // C2: PerformanceSnapshot — 30s slow channel, full replacement
     if (message.type === 'PerformanceSnapshot' && message.payload) {
       const payload = message.payload as Record<string, unknown>
-      // Emit as 'performance' so existing performance consumers receive it unchanged
+      this.applyPatchEvent({
+        type: message.type,
+        entityType: 'performance',
+        data: payload,
+        version: this.extractVersion(message),
+        timestamp: message.timestamp as string | undefined,
+      })
       this.emit('performance', payload)
       return
     }
 
+    // Fallback: unknown channel
     if (message.channel && message.data) {
       this.emit(message.channel, message.data)
     }
   }
+
+  // ─── Bootstrap 处理 ──────────────────────────────────────────────
+
+  private handleBootstrap(data: Record<string, unknown>): void {
+    const stateManager = getStateManager()
+
+    // agents
+    if (data.agents && Array.isArray(data.agents)) {
+      stateManager.bootstrapReplace('agents', data.agents as unknown[])
+      this.emit('agents', data.agents)
+    }
+
+    // subagents
+    if (data.subagents && Array.isArray(data.subagents)) {
+      stateManager.bootstrapReplace('subagents', data.subagents as unknown[])
+      this.emit('subagents', data.subagents)
+    }
+
+    // tasks
+    const tasksArray = Array.isArray(data.tasks) ? data.tasks : []
+    stateManager.bootstrapReplace('tasks', tasksArray as unknown[])
+    this.emit('tasks', { tasks: tasksArray })
+
+    // collaboration
+    if (data.collaboration) {
+      stateManager.bootstrapReplace('collaboration', [data.collaboration] as unknown[])
+      this.emit('collaboration', data.collaboration)
+    }
+
+    // performance
+    if (data.performance) {
+      stateManager.bootstrapReplace('performance', [data.performance] as unknown[])
+      this.emit('performance', data.performance)
+    }
+
+    // workflows / apiStatus — 非 entity，仅 emit
+    if (data.workflows) this.emit('workflows', data.workflows)
+    if (data.apiStatus) this.emit('api_status', data.apiStatus)
+  }
+
+  // ─── Agent patch 构建 ──────────────────────────────────────────
+
+  /**
+   * C0: agent_state_changed → 构建 patch
+   */
+  private applyAgentPatch(data: Record<string, unknown>, message: WebSocketMessage): void {
+    const agentId = data.agentId as string | undefined
+    if (!agentId) return
+
+    const patch: Record<string, unknown> = { id: agentId }
+    if (data.status !== undefined) patch.status = data.status
+    if (data.currentTask !== undefined) patch.currentTask = data.currentTask
+    if (data.lastActiveAt !== undefined) patch.lastActiveAt = data.lastActiveAt
+    if (data.error !== undefined) patch.error = data.error
+
+    this.applyPatchEvent({
+      type: message.type,
+      entityType: 'agents',
+      entityId: agentId,
+      patch,
+      version: this.extractVersion(message),
+      timestamp: message.timestamp as string | undefined,
+    })
+  }
+
+  /**
+   * C1: AgentStateChanged (diffs 格式) → 构建 patch
+   */
+  private applyAgentStateChanged(payload: Record<string, unknown>, message: WebSocketMessage): void {
+    const agentId = payload.agent_id as string | undefined
+    if (!agentId) return
+
+    const patch: Record<string, unknown> = { id: agentId }
+
+    // snake_case → camelCase 映射
+    const fieldMap: Record<string, string> = {
+      status: 'status',
+      current_task: 'currentTask',
+      last_active_at: 'lastActiveAt',
+      error: 'error',
+    }
+
+    const diffs = payload.diffs as Array<Record<string, unknown>> | undefined
+    if (Array.isArray(diffs)) {
+      for (const diff of diffs) {
+        // Prefer new_value (standard format); fall back to changed (C1 backend format)
+        const val = diff.new_value !== undefined ? diff.new_value : diff.changed
+        if (diff.field && val !== undefined) {
+          const frontendKey = fieldMap[diff.field as string] || diff.field as string
+          patch[frontendKey] = val
+        }
+      }
+    }
+
+    this.applyPatchEvent({
+      type: message.type,
+      entityType: 'agents',
+      entityId: agentId,
+      patch,
+      diffs: Array.isArray(diffs) ? diffs.map(d => ({
+        field: d.field as string,
+        old_value: d.old_value,
+        new_value: d.new_value !== undefined ? d.new_value : d.changed,
+      })) : undefined,
+      version: this.extractVersion(message),
+      timestamp: message.timestamp as string | undefined,
+    })
+  }
+
+  // ─── 统一 Patch 应用 ──────────────────────────────────────────
+
+  /**
+   * 统一入口：调用 StateManager.applyEvent()
+   */
+  private applyPatchEvent(event: PatchEvent): void {
+    const stateManager = getStateManager()
+    const applied = stateManager.applyEvent(event)
+
+    if (!applied) {
+      // 事件被丢弃（version 重复），静默
+      return
+    }
+
+    // 仍然 emit 给下游消费者（保持向后兼容）
+    // 消费者可以逐步迁移到直接用 StateManager
+    this.emitPatchNotification(event)
+  }
+
+  /**
+   * 向下游 emit patch 通知（保持向后兼容）
+   */
+  private emitPatchNotification(event: PatchEvent): void {
+    switch (event.entityType) {
+      case 'agents': {
+        // 兼容原有的 agents_update 事件格式
+        if (event.patch) {
+          this.emit('agents_update', [event.patch])
+        }
+        break
+      }
+      case 'tasks': {
+        // task_changed 已在 handleMessage 中单独 emit
+        break
+      }
+      case 'subagents': {
+        if (event.patch) {
+          this.emit('subagents_update', [event.patch])
+        }
+        break
+      }
+      // collaboration 和 performance 已在 handleMessage 中单独 emit
+    }
+  }
+
+  /**
+   * 从 WebSocketMessage 中提取 version
+   */
+  private extractVersion(message: WebSocketMessage): number | undefined {
+    // C1 格式：version 在 payload 中
+    if (message.payload && typeof message.payload === 'object') {
+      const payload = message.payload as Record<string, unknown>
+      if (typeof payload.version === 'number') return payload.version
+    }
+    // C0 格式：version 在 data 中
+    if (message.data && typeof message.data === 'object') {
+      const data = message.data as Record<string, unknown>
+      if (typeof data.version === 'number') return data.version
+    }
+    return undefined
+  }
+
+  // ─── 底层通信 ──────────────────────────────────────────────────
 
   private emit(event: string, data: unknown): void {
     const callbacks = this.subscribers.get(event)

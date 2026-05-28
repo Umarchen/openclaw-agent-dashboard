@@ -42,8 +42,8 @@ class TestMetricsCollectorBasic:
         assert lat["min"] == 1.0
         assert lat["max"] == 100.0
         assert lat["p50"] == 50.5
-        assert lat["p95"] == 95.55
-        assert lat["p99"] == 99.55
+        assert lat["p95"] == 95.05
+        assert lat["p99"] == 99.01
         assert abs(lat["avg"] - 50.5) < 0.01
 
     def test_latency_max_samples(self):

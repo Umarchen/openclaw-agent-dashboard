@@ -67,17 +67,10 @@ class MetricsCollector:
 
     # ── well-known metric names ──────────────────────────────────
 
-    @staticmethod
-    def EVT_PUBLISHED = "events_published_total"
-
-    @staticmethod
-    def EVT_PROCESSED = "events_processed_total"
-
-    @staticmethod
-    def INGEST_LATENCY = "ingest_latency_ms"
-
-    @staticmethod
-    def STATE_UPDATE = "state_update_count"
+    EVT_PUBLISHED: str = "events_published_total"
+    EVT_PROCESSED: str = "events_processed_total"
+    INGEST_LATENCY: str = "ingest_latency_ms"
+    STATE_UPDATE: str = "state_update_count"
 
 
 # ── helpers ─────────────────────────────────────────────────────

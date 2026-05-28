@@ -80,9 +80,9 @@ class EventBus:
         for cb in callbacks:
             try:
                 cb(event)
-                count += 1
             except Exception:
                 _LOG.exception("EventBus subscriber error on topic=%r", topic)
+            count += 1
         return count
 
     def get_subscriber_count(self, topic: str) -> int:

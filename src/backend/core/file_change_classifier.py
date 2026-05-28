@@ -23,7 +23,9 @@ def extract_agent_id_from_path(filepath: str) -> Optional[str]:
     - subagents/runs.json (returns None — not agent-specific)
     """
     try:
-        path = Path(filepath)
+        # Normalize backslashes for Windows-style paths
+        normalized = filepath.replace("\\", "/")
+        path = Path(normalized)
         parts = path.parts
         try:
             agents_idx = parts.index("agents")

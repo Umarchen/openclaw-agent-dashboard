@@ -217,10 +217,19 @@ def _watcher_framework_error_count() -> int:
 
 
 def _full_resync_cache_and_push() -> None:
-    """轮询恢复 watchdog 或显式需要时：全量缓存失效 + 推送（REQ_001-SPEC-05）。"""
+    """轮询恢复 watchdog 或显式需要时：通过 EventBus 触发全量 ingest（C0 改造）。
+
+    不再直接 broadcast_full_state / invalidate cache，
+    而是发射 FileChangeEvent (agent_id=None) 由 AgentStateIngestor 处理全量 ingest。
+    """
     global _last_full_sync_iso
     try:
-        _on_file_changed(None)
+        from core.event_bus import get_event_bus, TOPIC_FILE_CHANGES
+        from core.event_types import FileChangeEvent
+
+        bus = get_event_bus()
+        event = FileChangeEvent(filepath=None, agent_id=None, change_type="modified")
+        bus.publish(TOPIC_FILE_CHANGES, event)
         _last_full_sync_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     except Exception as e:
         record_error("unknown", str(e), "file_watcher_full_resync", exc=e)
@@ -241,27 +250,32 @@ def _touch_activity() -> None:
 
 
 def _on_file_changed(filepath: Optional[str] = None) -> None:
+    """C0 核心: 文件变更 → EventBus 事件发射。
+
+    不再直接调用 broadcast_full_state 或 invalidate cache。
+    Ingestor 会处理分类、状态提取、StateStore 写入。
+    """
     global _last_error
     try:
         _touch_activity()
-        from api.websocket import broadcast_full_state
-        from status.status_cache import get_cache
-        import asyncio
+        from core.event_bus import get_event_bus, TOPIC_FILE_CHANGES, TOPIC_HEARTBEAT
+        from core.event_types import FileChangeEvent, HeartbeatTickEvent
+        from core.file_change_classifier import classify
+        from core.metrics_collector import get_metrics
 
-        cache = get_cache()
+        bus = get_event_bus()
+        metrics = get_metrics()
+
         if filepath:
-            agent_id = _extract_agent_id_from_path(filepath)
-            if agent_id:
-                cache.invalidate(agent_id)
-            else:
-                cache.invalidate()
+            # File change: classify and emit FileChangeEvent
+            event = classify(filepath)
+            bus.publish(TOPIC_FILE_CHANGES, event)
         else:
-            cache.invalidate()
+            # Polling tick: emit HeartbeatTickEvent (NO invalidate/broadcast)
+            event = HeartbeatTickEvent(source="polling")
+            bus.publish(TOPIC_HEARTBEAT, event)
 
-        loop = _event_loop
-        if loop and broadcast_full_state:
-            # fire-and-forget：避免阻塞 watchdog 线程；节流由 websocket.broadcast_full_state 负责
-            asyncio.run_coroutine_threadsafe(broadcast_full_state(), loop)
+        metrics.increment(get_metrics().EVT_PUBLISHED)
     except Exception as e:
         _last_error = str(e)
         record_error("unknown", str(e), "file_watcher_push")
@@ -383,7 +397,8 @@ def _start_polling_mode(loop) -> None:
         except Exception as e:
             record_error("unknown", str(e), "polling_tick")
         _poll_ticks += 1
-        if _poll_ticks >= 12:
+        watchdog_resume_ticks = cfg.ecs_watchdog_resume_ticks if hasattr(cfg, 'ecs_watchdog_resume_ticks') else 12
+        if _poll_ticks >= watchdog_resume_ticks:
             _poll_ticks = 0
             _try_resume_watchdog(loop)
         _poll_timer = threading.Timer(cfg.watcher_poll_interval_sec, tick)

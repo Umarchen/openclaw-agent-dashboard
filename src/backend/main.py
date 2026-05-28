@@ -36,7 +36,18 @@ async def lifespan(app: FastAPI):
             ingestor = get_ingestor()
             ingestor.initialize()  # 订阅 EventBus 事件 + C1: 加载 checkpoints
 
-            # C1: Flush checkpoints on shutdown is handled by ingestor.shutdown()
+            # C2: 初始化 CollaborationIngestor、TaskIngester
+            from ingest.collaboration_ingestor import get_collaboration_ingestor
+            from ingest.task_ingestor import get_task_ingestor
+            from ingest.performance_ingestor import get_performance_ingestor
+
+            get_collaboration_ingestor().initialize()  # 订阅 EventBus file_changes
+            get_task_ingestor().initialize()  # 订阅 EventBus file_changes
+
+            # C2: 启动 PerformanceSnapshot 慢通道循环
+            perf_ingestor = get_performance_ingestor()
+            asyncio.create_task(perf_ingestor.start())
+            _perf_ingestor = perf_ingestor  # 保存引用供 shutdown 使用
         except Exception as e:
             from core.error_handler import record_error
             record_error("unknown", str(e), "main:ecs_init", exc=e)
@@ -68,6 +79,13 @@ async def lifespan(app: FastAPI):
     try:
         if probe_stop is not None:
             probe_stop.set()
+        # C2: 停止 PerformanceIngestor
+        try:
+            from ingest.performance_ingestor import get_performance_ingestor
+            perf = get_performance_ingestor()
+            await perf.stop()
+        except Exception:
+            pass
         # C0: 关闭 Ingestor
         try:
             from core.agent_state_ingestor import get_ingestor

@@ -106,12 +106,17 @@ async def send_initial_state(websocket: WebSocket):
     try:
         from .agents import get_agents as get_agents_list
         from .subagents import get_subagents, get_tasks
-        from .api_status import get_api_status_list
         from status.status_calculator import format_last_active
+
+        api_status = []
+        try:
+            from .api_status import get_api_status_list
+            api_status = await get_api_status_list()
+        except ImportError:
+            pass
 
         agents = await get_agents_list()
         subagents = await get_subagents()
-        api_status = await get_api_status_list()
 
         for agent in agents:
             if agent.get("lastActiveAt"):

@@ -13,6 +13,14 @@ export interface RealtimeDataManagerOptions {
   reconnectMaxAttempts?: number
   reconnectDelay?: number
   pollingInterval?: number
+  /**
+   * Schema version for FullStateSnapshot negotiation (C1+).
+   * When set, the client sends a hello message after WS connect.
+   * If the server supports the same version, it responds with FullStateSnapshot (new format).
+   * If not, the server falls back to full_state (legacy format).
+   * Default: 2 (matches C1 backend).
+   */
+  schemaVersion?: number
 }
 
 export class RealtimeDataManager {
@@ -34,7 +42,8 @@ export class RealtimeDataManager {
       httpFallback: options.httpFallback ?? true,
       reconnectMaxAttempts: options.reconnectMaxAttempts ?? 5,
       reconnectDelay: options.reconnectDelay ?? 3000,
-      pollingInterval: options.pollingInterval ?? 10000
+      pollingInterval: options.pollingInterval ?? 10000,
+      schemaVersion: options.schemaVersion ?? 2
     }
   }
 
@@ -59,6 +68,13 @@ export class RealtimeDataManager {
         })
         this.startHeartbeat()
         this.stopPolling()
+        // C1: Send hello with schemaVersion for FullStateSnapshot negotiation
+        if (this.options.schemaVersion) {
+          this.send({
+            type: 'hello',
+            schemaVersion: this.options.schemaVersion
+          })
+        }
       }
 
       this.ws.onclose = () => {
@@ -172,15 +188,34 @@ export class RealtimeDataManager {
       return
     }
 
+    // C1: FullStateSnapshot (new format) — data is in payload, not data
+    if (message.type === 'FullStateSnapshot' && message.payload) {
+      const payload = message.payload as Record<string, unknown>
+      if (payload.agents) this.emit('agents', payload.agents)
+      if (payload.subagents) this.emit('subagents', payload.subagents)
+      if (payload.collaboration) this.emit('collaboration', payload.collaboration)
+      const tasksArray = Array.isArray(payload.tasks) ? payload.tasks : []
+      this.emit('tasks', { tasks: tasksArray })
+      if (payload.performance) this.emit('performance', payload.performance)
+      if (payload.workflows) this.emit('workflows', payload.workflows)
+      if (payload.apiStatus) this.emit('api_status', payload.apiStatus)
+      return
+    }
+
+    // C0 legacy: full_state (old format) — data is in message.data
     if (message.type === 'full_state' && message.data) {
       const data = message.data as Record<string, unknown>
       if (data.agents) this.emit('agents', data.agents)
       if (data.subagents) this.emit('subagents', data.subagents)
       if (data.collaboration) this.emit('collaboration', data.collaboration)
-      // 统一为 { tasks: array }，与 HTTP 轮询和组件 handleTasksUpdate 约定一致，避免形态不一致导致不更新或误覆盖
       const tasksArray = Array.isArray(data.tasks) ? data.tasks : []
       this.emit('tasks', { tasks: tasksArray })
       if (data.performance) this.emit('performance', data.performance)
+      return
+    }
+
+    // C1: ready — server confirmed schemaVersion match, no action needed
+    if (message.type === 'ready') {
       return
     }
 
@@ -193,17 +228,45 @@ export class RealtimeDataManager {
       return
     }
 
-    // C0: 单个 Agent 状态变更（EventBus → WS subscriber）
+    // C0: 单个 Agent 状态变更（EventBus → WS subscriber, old format agent_state_changed）
     // 包装为 agents_update 数组，复用现有增量 merge 逻辑
     if (message.type === 'agent_state_changed' && message.data) {
       const d = message.data as Record<string, unknown>
-      // 将 agentId → id 映射，与 agents_update 的 Agent 接口对齐
       const agentPatch: Record<string, unknown> = { id: d.agentId }
       if (d.status !== undefined) agentPatch.status = d.status
       if (d.currentTask !== undefined) agentPatch.currentTask = d.currentTask
       if (d.lastActiveAt !== undefined) agentPatch.lastActiveAt = d.lastActiveAt
       if (d.error !== undefined) agentPatch.error = d.error
       this.emit('agents_update', [agentPatch])
+      return
+    }
+
+    // C1: AgentStateChanged (new format, payload-based)
+    if (message.type === 'AgentStateChanged' && message.payload) {
+      const payload = message.payload as Record<string, unknown>
+      if (payload.agent_id) {
+        const agentPatch: Record<string, unknown> = { id: payload.agent_id }
+        // diffs is an array of {field, old_value, new_value} or {field, changed}
+        const diffs = payload.diffs as Array<Record<string, unknown>> | undefined
+        if (Array.isArray(diffs)) {
+          for (const diff of diffs) {
+            // Prefer new_value (standard format); fall back to changed (C1 backend format)
+            const val = diff.new_value !== undefined ? diff.new_value : diff.changed
+            if (diff.field && val !== undefined) {
+              // Map snake_case field names to camelCase for frontend Agent interface
+              const fieldMap: Record<string, string> = {
+                status: 'status',
+                current_task: 'currentTask',
+                last_active_at: 'lastActiveAt',
+                error: 'error',
+              }
+              const frontendKey = fieldMap[diff.field as string] || diff.field
+              agentPatch[frontendKey] = val
+            }
+          }
+        }
+        this.emit('agents_update', [agentPatch])
+      }
       return
     }
 

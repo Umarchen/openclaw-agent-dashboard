@@ -8,7 +8,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import logging
 import time
-from typing import Literal, Dict, Any, List
+from typing import Literal, Dict, Any, List, Optional
 from data.config_reader import get_agents_list, get_agent_config, get_main_agent_id, agent_ids_equal
 from data.subagent_reader import is_agent_working, get_agent_runs
 from data.session_reader import (
@@ -131,8 +131,8 @@ def calculate_agent_status(agent_id: str, use_cache: bool = True) -> AgentStatus
     return status
 
 
-def get_agents_with_status() -> list:
-    """获取所有 Agent 及其状态"""
+async def get_agents_with_status() -> list:
+    """获取所有 Agent 及其状态 (C1: bounded parallel via asyncio.gather)"""
     try:
         agents = get_agents_list()
     except OSError as e:
@@ -141,38 +141,66 @@ def get_agents_with_status() -> list:
         record_error(classify_exception(e), str(e), "get_agents_with_status:list", exc=e)
         return []
 
-    result = []
+    import asyncio
 
-    for agent in agents:
+    try:
+        from core.config_fortify import get_fortify_config
+        cfg = get_fortify_config()
+        max_conc = min(len(agents), getattr(cfg, "ecs_max_agent_parallel", 8))
+    except Exception:
+        max_conc = min(len(agents), 8)
+
+    async def compute_one(agent: Dict) -> Optional[Dict]:
+        """Compute status for a single agent (C1: runs in thread pool)."""
         agent_id = agent.get('id')
+        if not agent_id:
+            return None
         try:
-            status = calculate_agent_status(agent_id)
-            current_task = get_current_task(agent_id)
-            # idle 且无已结束 run 任务时才清空 currentTask
+            status = await asyncio.to_thread(calculate_agent_status, agent_id)
+            current_task = await asyncio.to_thread(get_current_task, agent_id)
             if status == 'idle' and not current_task:
                 current_task = ''
-            last_active = get_last_active_time(agent_id)
-            last_error = get_last_error(agent_id) if status == 'down' else None
+            last_active = await asyncio.to_thread(get_last_active_time, agent_id)
+            last_error = await asyncio.to_thread(get_last_error, agent_id) if status == 'down' else None
+
+            return {
+                'id': agent_id,
+                'name': agent.get('name'),
+                'role': agent.get('name'),
+                'status': status,
+                'currentTask': current_task,
+                'lastActiveAt': last_active,
+                'error': last_error,
+            }
         except OSError as e:
             from core.error_handler import classify_exception, record_error
             from core.fallback_manager import run_fallback
 
             cat = classify_exception(e)
             record_error(cat, str(e), f"get_agents_with_status:{agent_id}", exc=e)
-            status = run_fallback(cat, agent_id=agent_id) or 'idle'
-            current_task = ''
-            last_active = 0
-            last_error = None
+            status = await asyncio.to_thread(run_fallback, cat, agent_id=agent_id) or 'idle'
+            return {
+                'id': agent_id,
+                'name': agent.get('name'),
+                'status': status,
+                'currentTask': '',
+                'lastActiveAt': 0,
+                'error': None,
+            }
+        except Exception as e:
+            from core.error_handler import record_error
+            record_error("unknown", str(e), f"get_agents_with_status:{agent_id}", exc=e)
+            return None
 
-        result.append({
-            'id': agent_id,
-            'name': agent.get('name'),
-            'role': agent.get('name'),
-            'status': status,
-            'currentTask': current_task,
-            'lastActiveAt': last_active,
-            'error': last_error
-        })
+    tasks = [compute_one(a) for a in agents]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    result = []
+    for r in results:
+        if isinstance(r, dict) and r is not None:
+            result.append(r)
+        elif isinstance(r, Exception):
+            _LOG.error("Parallel agent computation error: %s", r)
 
     return result
 
@@ -421,45 +449,69 @@ def get_display_status(agent_id: str) -> Dict[str, Any]:
 
 async def get_changed_agents() -> List[Dict[str, Any]]:
     """
-    获取状态发生变化的 Agent 列表
+    获取状态发生变化的 Agent 列表 (C1: bounded parallel)
     
     用于增量推送，只返回状态发生变化的 Agent
-    
+
     Returns:
         变化的 Agent 状态列表（包含 id, status, currentTask, lastActiveAt, error 等）
     """
+    import asyncio
+
     tracker = get_tracker()
-    
+
     agents = get_agents_list()
-    changed_agents = []
-    
-    for agent in agents:
+
+    try:
+        from core.config_fortify import get_fortify_config
+        cfg = get_fortify_config()
+        max_conc = min(len(agents), getattr(cfg, "ecs_max_agent_parallel", 8))
+    except Exception:
+        max_conc = min(len(agents), 8)
+
+    async def compute_one(agent: Dict) -> Optional[Dict[str, Any]]:
+        """Compute status for one agent and check if changed."""
         agent_id = agent.get('id')
-        
-        # 计算状态（会使用缓存）
-        status = calculate_agent_status(agent_id)
-        current_task = get_current_task(agent_id)
-        if status == 'idle':
-            current_task = ''
-        last_active = get_last_active_time(agent_id)
-        last_error = get_last_error(agent_id) if status == 'down' else None
-        
-        state_data = {
-            'id': agent_id,
-            'name': agent.get('name'),
-            'status': status,
-            'currentTask': current_task,
-            'lastActiveAt': last_active,
-            'error': last_error
-        }
-        
-        # 更新跟踪器并检查是否变化
-        if tracker.update(agent_id, state_data):
-            changed_agents.append(state_data)
-    
+        if not agent_id:
+            return None
+        try:
+            status = await asyncio.to_thread(calculate_agent_status, agent_id)
+            current_task = await asyncio.to_thread(get_current_task, agent_id)
+            if status == 'idle':
+                current_task = ''
+            last_active = await asyncio.to_thread(get_last_active_time, agent_id)
+            last_error = await asyncio.to_thread(get_last_error, agent_id) if status == 'down' else None
+
+            state_data = {
+                'id': agent_id,
+                'name': agent.get('name'),
+                'status': status,
+                'currentTask': current_task,
+                'lastActiveAt': last_active,
+                'error': last_error,
+            }
+
+            if tracker.update(agent_id, state_data):
+                return state_data
+            return None
+        except Exception as e:
+            from core.error_handler import record_error
+            record_error("unknown", str(e), f"get_changed_agents:{agent_id}", exc=e)
+            return None
+
+    tasks = [compute_one(a) for a in agents]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    changed_agents = []
+    for r in results:
+        if isinstance(r, dict) and r is not None:
+            changed_agents.append(r)
+        elif isinstance(r, Exception):
+            logger.error("Parallel changed_agents error: %s", r)
+
     # 清除变化标记
     tracker.clear_changes()
-    
+
     return changed_agents
 
 

@@ -91,3 +91,79 @@ class FullStateSnapshotEvent(BaseEvent):
     def __post_init__(self) -> None:
         if not self.type:
             self.type = "full_state_snapshot"
+
+
+@dataclass
+class CollaborationChangedEvent(BaseEvent):
+    """C2: Emitted when collaboration data changes (agent session file change).
+
+    Contains field-level diffs compared to the previous collaboration snapshot.
+    Payload size should be < 20% of full collaboration data (AC-010-2).
+    """
+    diffs: List[Dict[str, Any]] = field(default_factory=list)
+    # Each diff: {"field": str, "old_value": Any, "new_value": Any}
+
+    def __post_init__(self) -> None:
+        if not self.type:
+            self.type = "collaboration_changed"
+
+    def to_ws_payload(self) -> Dict[str, Any]:
+        return {
+            "type": "CollaborationChanged",
+            "payload": {
+                "diffs": self.diffs,
+                "timestamp": self.timestamp,
+            },
+        }
+
+
+@dataclass
+class TaskChangedEvent(BaseEvent):
+    """C2: Emitted when a task is added, updated, or removed.
+
+    One event per task change. change can be 'added', 'updated', or 'removed'.
+    Only changed tasks are included, not unchanged ones (AC-010-3).
+    """
+    change: str = "added"  # 'added' | 'updated' | 'removed'
+    task_id: str = ""
+    task_data: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        if not self.type:
+            self.type = "task_changed"
+
+    def to_ws_payload(self) -> Dict[str, Any]:
+        return {
+            "type": "TaskChanged",
+            "payload": {
+                "change": self.change,
+                "taskId": self.task_id,
+                "taskData": self.task_data,
+                "timestamp": self.timestamp,
+            },
+        }
+
+
+@dataclass
+class PerformanceSnapshotEvent(BaseEvent):
+    """C2: Emitted periodically (every 30s) as a slow channel.
+
+    Contains current performance snapshot data. Does not follow file
+    change frequency — pushed on a fixed interval (AC-010-4).
+    """
+    agents: Dict[str, Any] = field(default_factory=dict)
+    global_stats: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.type:
+            self.type = "performance_snapshot"
+
+    def to_ws_payload(self) -> Dict[str, Any]:
+        return {
+            "type": "PerformanceSnapshot",
+            "payload": {
+                "agents": self.agents,
+                "globalStats": self.global_stats,
+                "timestamp": self.timestamp,
+            },
+        }

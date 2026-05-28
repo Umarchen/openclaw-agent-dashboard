@@ -21,6 +21,11 @@ TOPIC_HEARTBEAT = "heartbeat"
 TOPIC_AGENT_STATE_CHANGED = "agent_state_changed"
 TOPIC_STATE_UPDATES = "state_updates"
 
+# C2 topics (REQ_ECS_010)
+TOPIC_COLLABORATION_CHANGED = "collaboration_changed"
+TOPIC_TASK_CHANGED = "task_changed"
+TOPIC_PERFORMANCE_SNAPSHOT = "performance_snapshot"
+
 
 class SubscriptionHandle:
     """Opaque handle returned by subscribe(); pass to unsubscribe()."""

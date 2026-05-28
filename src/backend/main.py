@@ -62,7 +62,6 @@ async def lifespan(app: FastAPI):
                 from status.status_calculator import get_agents_with_status
 
                 # C1: get_agents_with_status is now truly async (parallel)
-                import asyncio
                 asyncio.create_task(_preload_async())
             except Exception as e:
                 from core.error_handler import record_error

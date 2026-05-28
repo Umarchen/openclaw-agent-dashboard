@@ -72,7 +72,6 @@ import VersionDisplay from './components/common/VersionDisplay.vue'
 // 数据管理
 import { getRealtimeManager, getStateManager, getEventDispatcher } from './managers'
 import type { ConnectionState } from './types'
-import type { AgentStateChangeEvent } from './types'
 
 interface Agent {
   id: string
@@ -173,7 +172,6 @@ function handleConnectionStateChange(state: ConnectionState) {
 let unsubState: (() => void) | null = null
 let unsubAgents: (() => void) | null = null
 let unsubAgentsUpdate: (() => void) | null = null
-let unsubAgentStateChanged: (() => void) | null = null
 
 onMounted(() => {
   refreshData()
@@ -206,39 +204,14 @@ onMounted(() => {
     }
   })
 
-  // C0: 订阅单个 Agent 状态变更（EventBus → WS），实现 agent card 增量更新
-  unsubAgentStateChanged = realtimeManager.subscribe('agent_state_changed', (data: unknown) => {
-    const event = data as AgentStateChangeEvent
-    const index = agents.value.findIndex(a => a.id === event.agentId)
-    if (index >= 0) {
-      // 只合并事件中存在的字段，保留已有数据
-      const patch: Partial<Agent> = { id: event.agentId }
-      if (event.status !== undefined) patch.status = event.status
-      if (event.lastActiveAt !== undefined) patch.lastActiveAt = event.lastActiveAt
-      if (event.lastActiveFormatted !== undefined) patch.lastActiveFormatted = event.lastActiveFormatted
-      if (event.currentTask !== undefined) patch.currentTask = event.currentTask
-      if (event.error !== undefined) patch.error = event.error
-      agents.value[index] = { ...agents.value[index], ...patch }
-      // 更新主 Agent / 子 Agents 引用以触发 Vue 响应式
-      if (event.agentId === mainAgentId.value) {
-        mainAgent.value = { ...mainAgent.value!, ...patch } as Agent
-      } else {
-        const subIdx = subAgents.value.findIndex(a => a.id === event.agentId)
-        if (subIdx >= 0) {
-          subAgents.value[subIdx] = { ...subAgents.value[subIdx], ...patch }
-        }
-      }
-      // 通过 EventDispatcher 通知子组件（AgentCard 等）
-      eventDispatcher.emit('agent:patch', { agentId: event.agentId, patch })
-    }
-  })
+  // C0: 单个 Agent 状态变更（EventBus → WS）已由 RealtimeDataManager
+  // 映射到 agents_update 事件，此处无需额外订阅。
 })
 
 onUnmounted(() => {
   unsubState?.()
   unsubAgents?.()
   unsubAgentsUpdate?.()
-  unsubAgentStateChanged?.()
   realtimeManager.disconnect()
 })
 </script>

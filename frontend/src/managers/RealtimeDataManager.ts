@@ -193,10 +193,17 @@ export class RealtimeDataManager {
       return
     }
 
-    // C0: 单个 Agent 状态变更（EventBus → websocket subscriber）
-    // 后端在 file change → ingest → StateStore 写入后推送此事件
+    // C0: 单个 Agent 状态变更（EventBus → WS subscriber）
+    // 包装为 agents_update 数组，复用现有增量 merge 逻辑
     if (message.type === 'agent_state_changed' && message.data) {
-      this.emit('agent_state_changed', message.data)
+      const d = message.data as Record<string, unknown>
+      // 将 agentId → id 映射，与 agents_update 的 Agent 接口对齐
+      const agentPatch: Record<string, unknown> = { id: d.agentId }
+      if (d.status !== undefined) agentPatch.status = d.status
+      if (d.currentTask !== undefined) agentPatch.currentTask = d.currentTask
+      if (d.lastActiveAt !== undefined) agentPatch.lastActiveAt = d.lastActiveAt
+      if (d.error !== undefined) agentPatch.error = d.error
+      this.emit('agents_update', [agentPatch])
       return
     }
 

@@ -463,7 +463,7 @@ async def get_changed_agents() -> List[Dict[str, Any]]:
     return changed_agents
 
 
-def get_agent_status_snapshot(agent_id: str) -> Optional[Dict[str, Any]]:
+def get_agent_status_snapshot(agent_id: str) -> dict | None:
     """Convenience wrapper for Ingestor fallback: full status snapshot for one agent.
 
     Returns a dict with: status, currentTask, lastActiveAt, error.

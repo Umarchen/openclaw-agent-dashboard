@@ -100,6 +100,9 @@ class FortifyConfig:
     ecs_max_agent_parallel: int             # bounded parallelism limit for status computation
     ecs_full_state_schema_version: int      # WS protocol schema version number
 
+    # C2 Collaboration/Performance decoupling (REQ_ECS_010)
+    ecs_perf_snapshot_interval_sec: float   # performance slow channel push interval (seconds)
+
 
 @lru_cache(maxsize=1)
 def get_fortify_config() -> FortifyConfig:
@@ -145,6 +148,8 @@ def get_fortify_config() -> FortifyConfig:
         ecs_checkpoint_flush_interval_sec=_env_float("OPENCLAW_ECS_CHECKPOINT_FLUSH_INTERVAL", 10.0),
         ecs_max_agent_parallel=_env_int("OPENCLAW_ECS_MAX_AGENT_PARALLEL", 8, min_v=1, max_v=32),
         ecs_full_state_schema_version=_env_int("OPENCLAW_ECS_SCHEMA_VERSION", 2, min_v=1, max_v=99),
+        # C2 Collaboration/Performance decoupling (REQ_ECS_010, REQ_ECS_012)
+        ecs_perf_snapshot_interval_sec=_env_float("OPENCLAW_ECS_PERF_SNAPSHOT_INTERVAL", 30.0),
     )
 
 

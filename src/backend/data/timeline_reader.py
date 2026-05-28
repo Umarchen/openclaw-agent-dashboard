@@ -160,6 +160,7 @@ def _read_text_lines(path: Path, max_lines: int = 0) -> List[str]:
         f.seek(0, 2)
         file_size = f.tell()
         if file_size <= 64 * 1024:
+            f.seek(0)
             lines = f.read().splitlines()
         else:
             # 从文件末尾读取约 1MB 再提取最后 max_lines 行

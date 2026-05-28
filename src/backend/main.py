@@ -9,6 +9,16 @@ from pathlib import Path
 import asyncio
 
 
+async def _preload_async():
+    """C1: Async cache preload — runs get_agents_with_status in parallel."""
+    try:
+        from status.status_calculator import get_agents_with_status
+        await get_agents_with_status()
+    except Exception as e:
+        from core.error_handler import record_error
+        record_error("unknown", str(e), "main:preload_async", exc=e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时启动文件监听，关闭时停止"""
@@ -24,7 +34,9 @@ async def lifespan(app: FastAPI):
             get_event_bus()  # 确保单例创建
             get_state_store()  # 确保单例创建
             ingestor = get_ingestor()
-            ingestor.initialize()  # 订阅 EventBus 事件 + 首次全量 ingest
+            ingestor.initialize()  # 订阅 EventBus 事件 + C1: 加载 checkpoints
+
+            # C1: Flush checkpoints on shutdown is handled by ingestor.shutdown()
         except Exception as e:
             from core.error_handler import record_error
             record_error("unknown", str(e), "main:ecs_init", exc=e)
@@ -38,7 +50,9 @@ async def lifespan(app: FastAPI):
             try:
                 from status.status_calculator import get_agents_with_status
 
-                get_agents_with_status()
+                # C1: get_agents_with_status is now truly async (parallel)
+                import asyncio
+                asyncio.create_task(_preload_async())
             except Exception as e:
                 from core.error_handler import record_error
 

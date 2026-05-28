@@ -6,6 +6,10 @@ bootstrap（send_initial_state）保留，仍推 type:"full_state" 旧格式。
 
 C1: 新增 schemaVersion 协商和 FullStateSnapshot 支持。
 向后兼容：无 hello 的客户端仍收到 type:"full_state"（旧格式）。
+
+C2: FullStateSnapshot 瘦身（仅 agents/subagents/apiStatus），
+新增 CollaborationChanged/TaskChanged/PerformanceSnapshot WS 广播。
+collaboration/tasks/performance/workflows 通过独立 C2 事件交付。
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Set, List, Dict, Any, Optional
@@ -18,7 +22,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.error_handler import record_error
-from core.event_types import BaseEvent, AgentStateChangedEvent, FullStateSnapshotEvent
+from core.event_types import BaseEvent, AgentStateChangedEvent, FullStateSnapshotEvent, CollaborationChangedEvent, TaskChangedEvent, PerformanceSnapshotEvent
 
 router = APIRouter()
 
@@ -27,6 +31,11 @@ active_connections: Set[WebSocket] = set()
 
 # C0: EventBus subscriber 控制标志
 _event_bus_subscribed = False
+
+# C2: C2 event subscriber control flags
+_collab_subscribed = False
+_task_subscribed = False
+_perf_subscribed = False
 
 # C1: schemaVersion negotiation timeout (seconds)
 _HELLO_TIMEOUT_SEC = 3.0
@@ -45,6 +54,31 @@ def _ensure_event_bus_subscriber() -> None:
         _event_bus_subscribed = True
     except Exception as e:
         record_error("unknown", str(e), "websocket:event_bus_subscribe", exc=e)
+
+
+def _ensure_c2_subscribers() -> None:
+    """确保 C2 事件 subscriber 已注册（仅注册一次）"""
+    global _collab_subscribed, _task_subscribed, _perf_subscribed
+    try:
+        from core.event_bus import get_event_bus, TOPIC_COLLABORATION_CHANGED, TOPIC_TASK_CHANGED, TOPIC_PERFORMANCE_SNAPSHOT
+
+        bus = get_event_bus()
+
+        if not _collab_subscribed:
+            bus.subscribe(TOPIC_COLLABORATION_CHANGED, _on_collaboration_changed)
+            _collab_subscribed = True
+
+        if not _task_subscribed:
+            bus.subscribe(TOPIC_TASK_CHANGED, _on_task_changed)
+            _task_subscribed = True
+
+        if not _perf_subscribed:
+            bus.subscribe(TOPIC_PERFORMANCE_SNAPSHOT, _on_performance_snapshot)
+            _perf_subscribed = True
+
+        _LOG.info("C2 WS subscribers registered (collab, task, perf)")
+    except Exception as e:
+        record_error("unknown", str(e), "websocket:c2_subscribe", exc=e)
 
 
 def _get_event_loop() -> asyncio.AbstractEventLoop | None:
@@ -145,6 +179,42 @@ def _on_agent_state_changed(event: BaseEvent) -> None:
         asyncio.run_coroutine_threadsafe(_do_broadcast(payload), loop)
 
 
+def _on_collaboration_changed(event: BaseEvent) -> None:
+    """C2: EventBus callback: CollaborationChangedEvent → WS broadcast."""
+    if not isinstance(event, CollaborationChangedEvent):
+        return
+    if not active_connections:
+        return
+    payload = event.to_ws_payload()
+    loop = _get_event_loop()
+    if loop and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_do_broadcast(payload), loop)
+
+
+def _on_task_changed(event: BaseEvent) -> None:
+    """C2: EventBus callback: TaskChangedEvent → WS broadcast."""
+    if not isinstance(event, TaskChangedEvent):
+        return
+    if not active_connections:
+        return
+    payload = event.to_ws_payload()
+    loop = _get_event_loop()
+    if loop and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_do_broadcast(payload), loop)
+
+
+def _on_performance_snapshot(event: BaseEvent) -> None:
+    """C2: EventBus callback: PerformanceSnapshotEvent → WS broadcast."""
+    if not isinstance(event, PerformanceSnapshotEvent):
+        return
+    if not active_connections:
+        return
+    payload = event.to_ws_payload()
+    loop = _get_event_loop()
+    if loop and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_do_broadcast(payload), loop)
+
+
 async def _send_full_state_legacy(websocket: WebSocket) -> None:
     """Send type:'full_state' (C0 legacy format) for backward compatibility.
 
@@ -160,10 +230,13 @@ async def _send_full_state_legacy(websocket: WebSocket) -> None:
 async def _send_full_state_snapshot(websocket: WebSocket, trigger: str = "bootstrap") -> None:
     """Send type:'FullStateSnapshot' (C1+ new format).
 
+    C2 slimmed: only includes agents, subagents, apiStatus.
+    collaboration/tasks/performance/workflows are delivered via independent C2 events.
+
     Used when client sends hello with matching schemaVersion.
     """
     try:
-        data = await _collect_full_state_data()
+        data = await _collect_slim_full_state_data()
         schema_ver = _get_schema_version()
         message = {
             'type': 'FullStateSnapshot',
@@ -176,6 +249,42 @@ async def _send_full_state_snapshot(websocket: WebSocket, trigger: str = "bootst
         await websocket.send_json(message)
     except Exception as e:
         record_error("unknown", str(e), "websocket:send_full_state_snapshot", exc=e)
+
+
+async def _collect_slim_full_state_data() -> Dict[str, Any]:
+    """Collect slimmed full state data for C2 FullStateSnapshot.
+
+    C2 slimmed format: only agents, subagents, apiStatus.
+    collaboration/tasks/performance/workflows removed — delivered via C2 events.
+    """
+    try:
+        from .agents import get_agents as get_agents_list
+        from .subagents import get_subagents
+        from status.status_calculator import format_last_active
+    except ImportError:
+        return {}
+
+    api_status = []
+    try:
+        from .api_status import get_api_status_list
+        api_status = await get_api_status_list()
+    except ImportError:
+        pass
+
+    agents = await get_agents_list()
+    subagents = await get_subagents()
+
+    for agent in agents:
+        if agent.get("lastActiveAt"):
+            agent["lastActiveFormatted"] = format_last_active(agent["lastActiveAt"])
+
+    data: Dict[str, Any] = {
+        'agents': agents,
+        'subagents': subagents,
+        'apiStatus': api_status,
+    }
+
+    return data
 
 
 async def _record_full_state_metric(trigger: str) -> None:
@@ -248,6 +357,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # C1: Register FullStateSnapshot subscriber on EventBus (if not already)
     _ensure_full_state_snapshot_subscriber()
+
+    # C2: Register C2 event subscribers (CollaborationChanged, TaskChanged, PerformanceSnapshot)
+    _ensure_c2_subscribers()
 
     try:
         # C1: schemaVersion negotiation

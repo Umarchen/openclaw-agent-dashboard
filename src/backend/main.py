@@ -15,6 +15,20 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     probe_stop = None
     try:
+        # C0: 初始化 EventBus、StateStore、AgentStateIngestor
+        try:
+            from core.event_bus import get_event_bus
+            from core.state_store import get_state_store
+            from core.agent_state_ingestor import get_ingestor
+
+            get_event_bus()  # 确保单例创建
+            get_state_store()  # 确保单例创建
+            ingestor = get_ingestor()
+            ingestor.initialize()  # 订阅 EventBus 事件 + 首次全量 ingest
+        except Exception as e:
+            from core.error_handler import record_error
+            record_error("unknown", str(e), "main:ecs_init", exc=e)
+
         from watchers.file_watcher import start_file_watcher
         from core.config_fortify import get_fortify_config
 
@@ -40,6 +54,12 @@ async def lifespan(app: FastAPI):
     try:
         if probe_stop is not None:
             probe_stop.set()
+        # C0: 关闭 Ingestor
+        try:
+            from core.agent_state_ingestor import get_ingestor
+            get_ingestor().shutdown()
+        except Exception:
+            pass
         from watchers.file_watcher import stop_file_watcher
 
         stop_file_watcher()

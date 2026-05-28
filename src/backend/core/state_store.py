@@ -30,15 +30,16 @@ class StateStore:
         self._lock = threading.RLock()  # re-entrant for event emission
         self._agents: Dict[str, Dict[str, Any]] = {}
         self._event_bus = event_bus or get_event_bus()
-        self._change_log: List[AgentStateChangedEvent] = []
+        self._change_log: List[tuple] = []  # (monotonic_ts, event)
         self._change_log_max = 500
 
     def update_agent(self, agent_id: str, state: Dict[str, Any]) -> None:
         """Upsert agent state. Publishes event if tracked fields changed."""
         with self._lock:
             old = self._agents.get(agent_id, {})
-            changes = self._detect_changes(old, state)
-            self._agents[agent_id] = {**old, **state}
+            merged = {**old, **state}
+            changes = self._detect_changes(old, merged)
+            self._agents[agent_id] = merged
 
             if changes:
                 event = AgentStateChangedEvent(
@@ -49,7 +50,8 @@ class StateStore:
                     error=state.get("error", old.get("error")),
                     changes=changes,
                 )
-                self._change_log.append(event)
+                # Store with monotonic timestamp for get_changed_since
+                self._change_log.append((time.monotonic(), event))
                 if len(self._change_log) > self._change_log_max:
                     self._change_log = self._change_log[-self._change_log_max:]
                 # Publish outside the scope of change detection, but still in lock
@@ -72,7 +74,7 @@ class StateStore:
     def get_changed_since(self, since_monotonic: float) -> List[AgentStateChangedEvent]:
         """Return events for agents changed since the given monotonic timestamp."""
         with self._lock:
-            return [e for e in self._change_log if _parse_monotonic(e.timestamp) > since_monotonic]
+            return [e for ts, e in self._change_log if ts > since_monotonic]
 
     def clear(self) -> None:
         with self._lock:
@@ -89,20 +91,6 @@ class StateStore:
             if old_val != new_val:
                 changes[field] = True
         return changes
-
-
-def _parse_monotonic(iso_ts: str) -> float:
-    """Parse ISO timestamp to approximate monotonic time (best-effort).
-
-    For change-log filtering, we store creation time and compare roughly.
-    A more precise approach would store monotonic timestamps directly.
-    """
-    try:
-        from datetime import datetime, timezone
-        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
-        return dt.timestamp()
-    except Exception:
-        return 0.0
 
 
 # ── module-level singleton ─────────────────────────────────────

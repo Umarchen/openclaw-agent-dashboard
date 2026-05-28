@@ -6,16 +6,21 @@ dependency required in C0) for minimal overhead.
 """
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
+
+
+def _now_iso() -> str:
+    """Return current UTC time as ISO-8601 string."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @dataclass
 class BaseEvent:
     """Common fields for all events."""
-    type: str
-    timestamp: str = field(default_factory=lambda: _now_iso())
+    type: str = ""
+    timestamp: str = field(default_factory=_now_iso)
 
 
 @dataclass
@@ -28,8 +33,6 @@ class FileChangeEvent(BaseEvent):
     def __post_init__(self) -> None:
         if not self.type:
             self.type = "file_change"
-        if not self.timestamp:
-            self.timestamp = _now_iso()
 
 
 @dataclass
@@ -40,8 +43,6 @@ class HeartbeatTickEvent(BaseEvent):
     def __post_init__(self) -> None:
         if not self.type:
             self.type = "heartbeat_tick"
-        if not self.timestamp:
-            self.timestamp = _now_iso()
 
 
 @dataclass
@@ -57,8 +58,6 @@ class AgentStateChangedEvent(BaseEvent):
     def __post_init__(self) -> None:
         if not self.type:
             self.type = "agent_state_changed"
-        if not self.timestamp:
-            self.timestamp = _now_iso()
 
     def to_ws_payload(self) -> Dict[str, Any]:
         """Convert to WebSocket payload dict (camelCase for frontend)."""
@@ -74,9 +73,3 @@ class AgentStateChangedEvent(BaseEvent):
                 "timestamp": self.timestamp,
             },
         }
-
-
-def _now_iso() -> str:
-    """Return current UTC time as ISO-8601 string."""
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

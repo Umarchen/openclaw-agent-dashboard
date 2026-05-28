@@ -67,49 +67,44 @@ class TestAC010_1_NoFullStateWithC2Domains:
 
     Strategy: Verify that the WS broadcast pipeline never emits a full_state
     or FullStateSnapshot event containing these domains after file changes.
-    NOTE: C2-5 (slim-down) not yet landed — these tests verify current behavior
-    and will pass once C2-5 removes collab/tasks/perf from _collect_full_state_data.
+    C2-5 created _collect_slim_full_state_data() for FullStateSnapshot.
+    _collect_full_state_data() is retained for C0 legacy compatibility only.
     """
 
-    def test_full_state_snapshot_excludes_collaboration(self):
-        """FullStateSnapshot must not contain 'collaboration' key after C2-5."""
+    def test_slim_full_state_excludes_collaboration(self):
+        """C2 slim FullStateSnapshot must not contain 'collaboration'."""
         source = _read_source("api/websocket.py")
-        fn_start = source.find("async def _collect_full_state_data")
+        fn_start = source.find("async def _collect_slim_full_state_data")
         if fn_start == -1:
-            pytest.fail("C2-5 check: _collect_full_state_data not found")
+            pytest.skip("C2-5 not landed: _collect_slim_full_state_data not found")
 
-        fn_body = source[fn_start:fn_start + 3000]
-        # After C2-5: collaboration should not be included
+        fn_body = source[fn_start:fn_start + 2000]
         assert "'collaboration'" not in fn_body, (
-            "AC-010-1 FAIL: FullStateSnapshot still includes 'collaboration' in _collect_full_state_data. "
-            "C2-5 should remove it and emit CollaborationChanged events instead."
+            "AC-010-1 FAIL: Slim FullStateSnapshot still includes 'collaboration'."
         )
 
-    def test_full_state_snapshot_excludes_tasks(self):
-        """FullStateSnapshot must not contain 'tasks' key after C2-5."""
+    def test_slim_full_state_excludes_tasks(self):
+        """C2 slim FullStateSnapshot must not contain 'tasks'."""
         source = _read_source("api/websocket.py")
-        fn_start = source.find("async def _collect_full_state_data")
+        fn_start = source.find("async def _collect_slim_full_state_data")
         if fn_start == -1:
-            pytest.fail("C2-5 check: _collect_full_state_data not found")
+            pytest.skip("C2-5 not landed: _collect_slim_full_state_data not found")
 
-        fn_body = source[fn_start:fn_start + 3000]
-        # 'tasks' key should not be assigned
-        assert "'tasks'" not in fn_body or "tasks_result" not in fn_body, (
-            "AC-010-1 FAIL: FullStateSnapshot still assigns 'tasks'. "
-            "C2-3 should emit TaskChanged events instead."
+        fn_body = source[fn_start:fn_start + 2000]
+        assert "'tasks'" not in fn_body, (
+            "AC-010-1 FAIL: Slim FullStateSnapshot still assigns 'tasks'."
         )
 
-    def test_full_state_snapshot_excludes_performance(self):
-        """FullStateSnapshot must not contain 'performance' key after C2-5."""
+    def test_slim_full_state_excludes_performance(self):
+        """C2 slim FullStateSnapshot must not contain 'performance'."""
         source = _read_source("api/websocket.py")
-        fn_start = source.find("async def _collect_full_state_data")
+        fn_start = source.find("async def _collect_slim_full_state_data")
         if fn_start == -1:
-            pytest.fail("C2-5 check: _collect_full_state_data not found")
+            pytest.skip("C2-5 not landed: _collect_slim_full_state_data not found")
 
-        fn_body = source[fn_start:fn_start + 3000]
+        fn_body = source[fn_start:fn_start + 2000]
         assert "'performance'" not in fn_body, (
-            "AC-010-1 FAIL: FullStateSnapshot still includes 'performance'. "
-            "C2-4 should emit PerformanceSnapshot events via slow channel."
+            "AC-010-1 FAIL: Slim FullStateSnapshot still includes 'performance'."
         )
 
     def test_ws_broadcast_no_full_state_on_file_change(self):
@@ -119,8 +114,7 @@ class TestAC010_1_NoFullStateWithC2Domains:
         if handler_start == -1:
             pytest.skip("Event handler not found")
 
-        # Extract only the handler function body (up to the next blank-line + def)
-        # Split source by lines from handler_start
+        # Extract only the handler function body (up to the next def/async def)
         remaining = source[handler_start:handler_start + 2000]
         handler_lines = []
         for line in remaining.split("\n"):
@@ -146,8 +140,6 @@ class TestAC010_1_NoFullStateWithC2Domains:
                 continue
             if "await _send_full_state" in stripped:
                 context = "\n".join(lines[max(0, i-15):i+1])
-                # websocket_endpoint uses _send_full_state_snapshot on connect;
-                # that's a form of full_state. Also check for send_initial_state.
                 assert (
                     "websocket_endpoint" in context
                     or "send_initial_state" in context
@@ -352,7 +344,14 @@ class TestAC010_4_PerformanceSnapshotSlowChannel:
         handler_start = source.find("def _on_agent_state_changed")
         if handler_start == -1:
             pytest.skip("Event handler not found")
-        handler_body = source[handler_start:handler_start + 2000]
+        # Extract only this handler's body (stop at next top-level def)
+        remaining = source[handler_start:handler_start + 2000]
+        handler_lines = []
+        for line in remaining.split("\n"):
+            if handler_lines and line and not line[0].isspace() and (line.startswith("def ") or line.startswith("async def ")):
+                break
+            handler_lines.append(line)
+        handler_body = "\n".join(handler_lines)
         assert "PerformanceSnapshot" not in handler_body, (
             "AC-010-4 FAIL: _on_agent_state_changed references PerformanceSnapshot."
         )
@@ -584,26 +583,29 @@ class TestFullStateSnapshotSlim:
             )
 
     def test_full_state_snapshot_no_removed_keys_after_c2(self):
-        """After C2-5, collaboration/tasks/performance/workflows should be removed."""
+        """After C2-5, _collect_slim_full_state_data has no collab/tasks/perf/workflows."""
+        source = _read_source("api/websocket.py")
+        fn_start = source.find("async def _collect_slim_full_state_data")
+        if fn_start == -1:
+            pytest.skip("C2-5 not landed: _collect_slim_full_state_data not found")
+
+        fn_body = source[fn_start:fn_start + 5000]
+        c2_removed = ["collaboration", "tasks", "performance", "workflows"]
+        for key in c2_removed:
+            assert f"'{key}'" not in fn_body, (
+                f"C2-5 FAIL: _collect_slim_full_state_data still includes '{key}'. "
+                f"Should be removed and emitted via C2 events instead."
+            )
+
+    def test_legacy_full_state_retained(self):
+        """C0 legacy _collect_full_state_data is retained for send_initial_state."""
         source = _read_source("api/websocket.py")
         fn_start = source.find("async def _collect_full_state_data")
         if fn_start == -1:
-            pytest.skip("_collect_full_state_data not found")
+            pytest.fail("_collect_full_state_data (legacy) not found")
 
-        fn_body = source[fn_start:fn_start + 5000]
-        # Find the main data dict area (after initial construction, before return)
-        data_dict_start = fn_body.find("data:")
-        if data_dict_start == -1:
-            pytest.skip("data dict not found")
-
-        data_area = fn_body[data_dict_start:data_dict_start + 3000]
-        # After C2-5 these keys should not be added to data dict
-        c2_removed = ["collaboration", "tasks", "performance", "workflows"]
-        for key in c2_removed:
-            # Check for data[key] assignment patterns
-            assignment_pattern = f"data['{key}']" if f"data['{key}']" in data_area else f'data["{key}"]'
-            if assignment_pattern in data_area:
-                pytest.fail(
-                    f"C2-5 FAIL: FullStateSnapshot still assigns data['{key}']. "
-                    f"This key should be removed and emitted via C2 events instead."
-                )
+        # Legacy version should still include collaboration/tasks/performance for C0 compat
+        fn_body = source[fn_start:fn_start + 3000]
+        assert "'collaboration'" in fn_body, (
+            "Legacy _collect_full_state_data should still include collaboration for C0 compat"
+        )

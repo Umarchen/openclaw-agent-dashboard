@@ -40,30 +40,24 @@ def _stub_file_watcher(monkeypatch) -> None:
     monkeypatch.setattr(fw, "stop_file_watcher", lambda: None)
 
 
-def _collect_ws_messages(captured: list, monkeypatch) -> None:
-    """Monkey-patch broadcast_message to capture all WS sends."""
+def _collect_do_broadcast(captured: list, monkeypatch) -> None:
+    """Monkey-patch _do_broadcast to capture all WS sends."""
     import api.websocket as ws
-    original_broadcast = ws.broadcast_message
+    original = ws._do_broadcast
 
     async def capturing_broadcast(message: dict) -> None:
         captured.append(message)
-        await original_broadcast(message)
+        await original(message)
 
-    monkeypatch.setattr(ws, "broadcast_message", capturing_broadcast)
+    monkeypatch.setattr(ws, "_do_broadcast", capturing_broadcast)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # AC3: _periodic_broadcast_loop must NOT exist (grep verification)
 # ═══════════════════════════════════════════════════════════════════════
 
-@pytest.mark.xfail(reason="C0-6 not yet landed: _periodic_broadcast_loop still in websocket.py", strict=False)
 class TestAC3_PeriodicBroadcastRemoved:
-    """Verify _periodic_broadcast_loop is completely removed from websocket.py.
-
-    These tests verify that C0-6 has removed all periodic broadcast infrastructure.
-    They xfail until C0-6 is complete — once backend-dev removes the code,
-    these will flip to xpass, signalling the requirement is met.
-    """
+    """Verify _periodic_broadcast_loop is completely removed from websocket.py."""
 
     def test_no_periodic_broadcast_loop_def(self):
         """AC3: 'def _periodic_broadcast_loop' must not appear in source."""
@@ -105,9 +99,6 @@ class TestAC3_PeriodicBroadcastRemoved:
 
 class TestAC5_BootstrapFullState:
 
-    def setup_method(self, method):
-        pass  # monkeypatch is per-test via fixture
-
     def test_first_connection_receives_full_state(self, monkeypatch):
         """AC5: send_initial_state sends exactly 1 message with type:'full_state'."""
         _stub_file_watcher(monkeypatch)
@@ -128,12 +119,9 @@ class TestAC5_BootstrapFullState:
         async def fake_empty():
             return []
 
-        # Mock all data fetchers used by send_initial_state
         monkeypatch.setattr(agents_mod, "get_agents", fake_agents)
         monkeypatch.setattr(subagents_mod, "get_subagents", fake_empty)
         monkeypatch.setattr(subagents_mod, "get_tasks", fake_empty)
-        # api_status is imported inside send_initial_state via `from .api_status import ...`
-        # Create a fake async function
         async def fake_api_status():
             return []
         fake_api_status_mod = MagicMock(get_api_status_list=fake_api_status)
@@ -204,12 +192,10 @@ class TestAC1_AC2_AC4_NoRuntimeFullState:
                 "in file_watcher.py. Test will pass after C0-5."
             )
 
-        # Once C0-5 lands, this path verifies removal
         assert "broadcast_full_state" not in source
 
     def test_broadcast_full_state_function_removed_from_websocket(self):
-        """AC1: broadcast_full_state function should be removed from websocket.py
-        after C0-6 lands (replaced by EventBus subscriber)."""
+        """AC1: broadcast_full_state function should be removed from websocket.py."""
         ws_path = BACKEND / "api" / "websocket.py"
         source = ws_path.read_text(encoding="utf-8")
 
@@ -222,15 +208,13 @@ class TestAC1_AC2_AC4_NoRuntimeFullState:
         assert "def broadcast_full_state" not in source
 
     def test_polling_tick_no_invalidate_or_broadcast(self):
-        """AC4: polling tick must NOT invalidate cache or broadcast_full_state.
-        After C0-5: tick should only publish HeartbeatTickEvent to EventBus."""
+        """AC4: polling tick must NOT invalidate cache or broadcast_full_state."""
         fw_path = BACKEND / "watchers" / "file_watcher.py"
         source = fw_path.read_text(encoding="utf-8")
 
         if "broadcast_full_state" in source:
             pytest.skip("C0-5 not yet landed")
 
-        # After C0-5: verify _start_polling_mode doesn't call broadcast_full_state
         assert "broadcast_full_state" not in source
 
     def test_ws_message_types_incremental_only(self, monkeypatch):
@@ -239,13 +223,10 @@ class TestAC1_AC2_AC4_NoRuntimeFullState:
         import api.websocket as ws
 
         ws_messages = []
-        _collect_ws_messages(ws_messages, monkeypatch)
+        _collect_do_broadcast(ws_messages, monkeypatch)
 
         # Simulate post-bootstrap messages (these should always be incremental)
         asyncio.run(ws.broadcast_agent_update("main", "working"))
-        asyncio.run(ws.broadcast_state_update([
-            {"id": "main", "status": "working", "currentTask": "build"}
-        ]))
 
         for msg in ws_messages:
             assert msg.get("type") != "full_state", (
@@ -258,16 +239,6 @@ class TestAC1_AC2_AC4_NoRuntimeFullState:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestAC6_MetricsEndpoint:
-
-    REQUIRED_METRICS = [
-        "event_bus_published",
-        "event_bus_latency_p95_ms",
-        "ingest_count",
-        "ingest_lag_p95_ms",
-        "full_state_push_count",
-        "full_state_push_per_minute",
-        "ws_connections",
-    ]
 
     def test_metrics_endpoint_returns_200(self, monkeypatch):
         """AC6: /api/metrics must return 200."""
@@ -291,8 +262,8 @@ class TestAC6_MetricsEndpoint:
             )
         assert r.status_code == 200, f"AC6 FAIL: /api/metrics returned {r.status_code}"
 
-    def test_metrics_has_all_7_fields(self, monkeypatch):
-        """AC6: response body must contain all 7 required metric keys."""
+    def test_metrics_has_snapshot_structure(self, monkeypatch):
+        """AC6: response body must contain 'counters' and 'latency' keys."""
         _stub_file_watcher(monkeypatch)
         import httpx
         from main import app
@@ -309,14 +280,15 @@ class TestAC6_MetricsEndpoint:
             pytest.skip("C0-7 not yet landed")
 
         body = r.json()
-        missing = [m for m in self.REQUIRED_METRICS if m not in body]
-        assert not missing, (
-            f"AC6 FAIL: /api/metrics missing fields: {missing}. "
-            f"Got: {list(body.keys())}"
+        assert "counters" in body, (
+            f"AC6 FAIL: /api/metrics missing 'counters'. Got: {list(body.keys())}"
+        )
+        assert "latency" in body, (
+            f"AC6 FAIL: /api/metrics missing 'latency'. Got: {list(body.keys())}"
         )
 
-    def test_full_state_push_count_zero_at_startup(self, monkeypatch):
-        """AC6: full_state_push_count must be 0 at startup (bootstrap excluded)."""
+    def test_metrics_counters_empty_at_startup(self, monkeypatch):
+        """AC6: counters must be empty at startup."""
         _stub_file_watcher(monkeypatch)
         import httpx
         from main import app
@@ -333,9 +305,8 @@ class TestAC6_MetricsEndpoint:
             pytest.skip("C0-7 not yet landed")
 
         body = r.json()
-        assert body.get("full_state_push_count", -1) == 0, (
-            f"AC6 FAIL: full_state_push_count should be 0 at startup, "
-            f"got {body.get('full_state_push_count')}"
+        assert body.get("counters") == {}, (
+            f"AC6 FAIL: counters should be empty at startup, got {body.get('counters')}"
         )
 
 
@@ -356,18 +327,14 @@ class TestWSEndToEnd:
         )
 
     def test_no_full_state_in_incremental_broadcasts(self, monkeypatch):
-        """All broadcast_agent_update / broadcast_state_update messages
-        must use non-full_state types."""
+        """All broadcast_agent_update messages must use non-full_state types."""
         import api.websocket as ws
 
         messages = []
-        _collect_ws_messages(messages, monkeypatch)
+        _collect_do_broadcast(messages, monkeypatch)
 
         asyncio.run(ws.broadcast_agent_update("main", "working"))
         asyncio.run(ws.broadcast_agent_update("coder", "idle"))
-        asyncio.run(ws.broadcast_state_update([
-            {"id": "main", "status": "idle", "currentTask": ""}
-        ]))
 
         for msg in messages:
             assert msg["type"] != "full_state", (

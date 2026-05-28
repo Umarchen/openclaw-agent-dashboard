@@ -270,6 +270,28 @@ export class RealtimeDataManager {
       return
     }
 
+    // C2: CollaborationChanged — emit diffs for downstream merge
+    if (message.type === 'CollaborationChanged' && message.payload) {
+      const payload = message.payload as Record<string, unknown>
+      this.emit('collaboration_update', payload)
+      return
+    }
+
+    // C2: TaskChanged — add / update / remove a single task
+    if (message.type === 'TaskChanged' && message.payload) {
+      const payload = message.payload as Record<string, unknown>
+      this.emit('task_changed', payload)
+      return
+    }
+
+    // C2: PerformanceSnapshot — 30s slow channel, full replacement
+    if (message.type === 'PerformanceSnapshot' && message.payload) {
+      const payload = message.payload as Record<string, unknown>
+      // Emit as 'performance' so existing performance consumers receive it unchanged
+      this.emit('performance', payload)
+      return
+    }
+
     if (message.channel && message.data) {
       this.emit(message.channel, message.data)
     }
